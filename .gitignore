@@ -1,0 +1,31 @@
+
+# pixi environments
+.pixi
+*.egg-info
+
+# pycache
+__pycache__/
+
+# distribution / packaging
+dist/
+
+# data files
+data/
+cache/
+
+# notes for me
+note.md
+
+#logging
+logs/
+*.log
+*.coverage
+
+# docs build
+_build/
+
+# tiff data
+*.tiff
+*.tif
+*.tiff.aux.xml
+*.tif.aux.xml
