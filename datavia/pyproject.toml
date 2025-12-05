@@ -1,0 +1,127 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "datavia"
+version = "1.0.0-dev"
+description = "Pipeline based Geospatial Data Integration System"
+authors = [
+    {name = "Michael Berg", email = "michael.berg@ufz.de"},
+]
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.12"
+keywords = ["geospatial", "gis", "data-integration", "topography", "soil", "fetcher", "processor", "getter"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: GIS",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "numpy>=2.2.0,<3.0",
+    "rasterio>=1.4.3,<2.0",
+    "pyproj>=3.7.1,<4.0",
+    "psycopg2-binary>=2.9.9,<3.0",
+    "requests>=2.32.3,<3.0",
+    "soilgrids>=0.1.0,<1.0",
+    "fastapi>=0.115.12,<1.0",
+    "uvicorn[standard]>=0.34.2,<1.0",
+    "sqlalchemy>=2.0.41,<3.0",
+    "pandas>=2.2.3,<3.0",
+    "pydantic>=2.11.4,<3.0",
+    "python-multipart>=0.0.20,<1.0",
+    "python-dotenv>=1.1.0,<2.0",
+    "pyyaml>=6.0.2,<7.0",
+    "tqdm>=4.67.1,<5.0",
+    "click>=8.1.8,<9.0",
+    "rich>=14.0.0,<15.0",
+    "matplotlib>=3.10.1,<4.0",
+    "scipy>=1.16.0,<2.0",
+    "rioxarray>=0.19.0,<0.20",
+    "tifffile>=2025.3.30",
+]
+
+[project.scripts]
+datavia = "datavia.cli:main"
+
+
+# Optional dependencies for development and testing
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0,<8.0",
+    "pytest-cov>=7.0.0,<8.0",
+    "pytest-mock>=3.14.1,<4.0",
+    "black>=22.0.0",
+    "flake8>=5.0.0",
+    "sphinx>=8.2.3,<9.0",
+    "sphinx-rtd-theme>=1.0.0",
+    "build>=1.3.0,<2.0",
+    "docker>=7.1.0,<8.0",
+]
+test = [
+    "pytest>=7.0.0,<8.0",
+    "pytest-cov>=7.0.0,<8.0",
+    "pytest-mock>=3.14.1,<4.0",
+]
+docs = [
+    "sphinx>=8.2.3,<9.0",
+    "sphinx-rtd-theme>=1.0.0",
+    "myst-parser>=0.18.0",
+    "alabaster>=1.0.0",
+    "babel>=2.17.0",
+    "docutils>=0.21.2",
+    "imagesize>=1.4.1",
+    "snowballstemmer>=3.0.1",
+    "sphinxcontrib-applehelp>=2.0.0",
+    "sphinxcontrib-devhelp>=2.0.0",
+    "sphinxcontrib-htmlhelp>=2.1.0",
+    "sphinxcontrib-jsmath>=1.0.1",
+    "sphinxcontrib-qthelp>=2.0.0",
+    "sphinxcontrib-serializinghtml>=2.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/tree-d/datavia"
+Documentation = "https://tree-d.github.io/datavia"
+Repository = "https://github.com/tree-d/datavia.git"
+Issues = "https://github.com/tree-d/datavia/issues"
+
+# Package configuration
+[tool.hatch.build]
+include = [
+    "datavia/**/*.py",
+    "datavia/**/*.conf",
+    "README.md",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["datavia"]
+
+# Development tools configuration
+[tool.black]
+line-length = 88
+target-version = ['py312']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --cov=datavia --cov-report=term-missing"
