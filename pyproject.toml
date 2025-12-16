@@ -29,7 +29,6 @@ dependencies = [
     "pyproj>=3.7.1,<4.0",
     "psycopg2-binary>=2.9.9,<3.0",
     "requests>=2.32.3,<3.0",
-    "soilgrids>=0.1.0,<1.0",
     "fastapi>=0.115.12,<1.0",
     "uvicorn[standard]>=0.34.2,<1.0",
     "sqlalchemy>=2.0.41,<3.0",
@@ -53,6 +52,26 @@ datavia = "datavia.cli:main"
 
 # Optional dependencies for development and testing
 [project.optional-dependencies]
+# Pipeline-specific dependencies (separate packages)
+elevation = [
+    "datavia-elevation>=1.0.0-dev",  # Separate elevation package
+]
+soil = [
+    "datavia-soil>=1.0.0-dev",       # Separate soil package 
+]
+weather = [
+    "datavia-weather>=1.0.0-dev",    # Future separate weather package
+]
+
+# Combined pipeline dependencies
+pipelines = [
+    "datavia[elevation]",
+    "datavia[soil]",
+]
+all = [
+    "datavia[pipelines]",
+]
+
 dev = [
     "pytest>=7.0.0,<8.0",
     "pytest-cov>=7.0.0,<8.0",
@@ -92,12 +111,24 @@ Documentation = "https://tree-d.github.io/datavia"
 Repository = "https://github.com/tree-d/datavia.git"
 Issues = "https://github.com/tree-d/datavia/issues"
 
-# Package configuration
+# Package configuration - CORE ONLY
 [tool.hatch.build]
 include = [
-    "datavia/**/*.py",
+    "datavia/__init__.py",
+    "datavia/core/**/*.py", 
+    "datavia/library/**/*.py",
+    "datavia/cli.py",
+    "datavia/config.py", 
+    "datavia/runner.py",
     "datavia/**/*.conf",
+    "datavia/docker-compose.yml",
+    "datavia/db-init/**/*",
     "README.md",
+]
+exclude = [
+    "datavia/elevation/**/*",
+    "datavia/soil/**/*",
+    "datavia/weather/**/*",
 ]
 
 [tool.hatch.build.targets.wheel]

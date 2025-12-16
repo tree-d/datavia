@@ -3,7 +3,6 @@
 A modular, pipeline-based system for integrating geospatial data sources in Germany. Datavia provides a unified interface for downloading, storing, and accessing various types of geospatial data including elevation, soil properties, and more.
 
 [![Python](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ## Overview
 
@@ -13,18 +12,19 @@ Datavia is designed for researchers who need efficient integration of multiple g
 
 - 🗺️ **Unified Data Access**: Single interface for multiple geospatial data sources
 - 🔄 **Pipeline-Based Architecture**: Modular design for easy extension to new data sources
-- 🚀 **Efficient Caching**: Automatic data caching with update management
 - 🌍 **Coordinate System Support**: Automatic CRS transformations using PyProj
 - 📊 **Spatial Interpolation**: Multiple interpolation methods for data access
 - 🐳 **Docker Integration**: Containerized PostGIS database for simplified setup
 - 📡 **REST API**: FastAPI-based web interface for data access
 
-### Current Data Sources
+### Available Pipelines (Modular Installation)
 
-- **Elevation Data**: BKG DGM200 (200m resolution German elevation model)
-- **Soil Data**: SoilGrids API integration (in development)
+- **📈 Elevation Pipeline** (`datavia[elevation]`): BKG DGM200 (200m resolution German elevation model)
+- **🌱 Soil Pipeline** (`datavia[soil]`): Still under construction - SoilGrids API integration with selective download strategy
+- **🌤️ Weather Pipeline** (`datavia[weather]`): Planned - DWD weather data integration
+- **☀️ Radiation Pipeline**: Planned - CAMS radiation data
 
-The architecture is designed to support expansion to other regions and data types beyond geospatial sources.
+Each pipeline is a separate, optional package that extends the core system with specific data source capabilities.
 
 ## Quick Start
 
@@ -33,41 +33,59 @@ The architecture is designed to support expansion to other regions and data type
 #### Option 1: pip (Recommended for most users)
 
 ```bash
-# Install core system
+# Install CORE SYSTEM ONLY (no pipeline code included)
 pip install datavia
 
-# Install with pipeline implementations
-pip install datavia[pipelines]
+# Install with specific pipelines (downloads additional packages)
+pip install datavia[elevation]     # Core + elevation pipeline code
+pip install datavia[soil]          # Core + soil pipeline code  
+pip install datavia[elevation,soil] # Core + multiple pipelines
+
+# Install everything
+pip install datavia[all]
 ```
 
-#### Option 2: pixi (Simplified dependency management)
+**Important**: The core `datavia` package contains NO pipeline implementations by design. Pipelines are separate packages (`datavia-elevation`, `datavia-soil`) that are installed only when explicitly requested.
+
+#### Option 2: pixi (Development environment)
 
 ```bash
-pixi add datavia
+pixi add --pypi datavia
+#or with elevationpipeline
+pixi add --pypi datavia[soil]
 ```
 
 ### Basic Setup
 
 1. **Start the PostGIS database** (required for metadata storage):
    ```bash
-   datavia db start
+   datavia start
    ```
 
-2. **Configure your first pipeline**:
-   ```bash
-   datavia config init
-   ```
-
-3. **Download elevation data for a region**:
-   ```bash
-   datavia pipeline run elevation --bbox 50.0 8.0 51.0 9.0
-   ```
-
-4. **Access data in your Python code**:
+2. **Configure pipelines** (needs elevation-package):
    ```python
-   # API examples need to be written based on final implementation
-   # See tests/ directory for current working examples
-   # TODO: Update after API stabilization
+   from datavia.elevation import ElevationPipeline, Datavia
+   elevation = ElevationPipeline()
+   dv = Datavia(pipelines=[elevation,])
+   dv()
+   ```
+
+3. **Use in Python code**:
+   ```python
+   from datavia import Datavia
+   
+   # Import available pipelines
+   from datavia.elevation import ElevationPipeline
+   from datavia.soil import SoilPipeline
+   
+   # Initialize system
+   dv = Datavia(pipelines=[ElevationPipeline(), SoilPipeline()])
+   dv()
+   
+   # Access data
+   import numpy as np
+   coords = np.array([[10.0, 50.0]])
+   elevation_data = dv.pipelines[0].get_data(coords, crs_coords="EPSG:4326")
    ```
 
 ## Architecture
@@ -85,19 +103,31 @@ Pipeline = Downloader + Saver + Getter
 ### Project Structure
 
 ```
-datavia/                          # Main package
-├── datavia/                      # Core system 
-│   ├── core/                     # Pipeline interfaces & implementations
-│   ├── library/                  # Shared utilities & database operations
-│   │   └── database/             # PostGIS integration
-│   ├── cli.py                    # Command-line interface
-│   └── config.py                 # Configuration management
-│
-datavia-pipelines/                # Pipeline implementations
-├── pipelines/
-│   ├── elevation.py              # German elevation data (BKG DGM200)
-│   └── soil.py                   # Soil data (SoilGrids API)
-└── tests/                        # Pipeline tests
+datavia/                          # Repository root
+├── pyproject.toml               # Main package configuration
+├── pyproject_elevation.toml     # Elevation pipeline package config
+├── pyproject_soil.toml          # Soil pipeline package config
+├── docker-compose.yml           # Database container setup
+├── datavia.conf                 # Runtime configuration
+├── build_all.sh                 # Multi-package build script
+├── README_elevation.md          # Elevation pipeline documentation
+├── README_soil.md              # Soil pipeline documentation
+├── datavia/                     # Python package
+│   ├── __init__.py              # Main namespace package
+│   ├── core/                    # Pipeline interfaces & implementations
+│   ├── library/                 # Shared utilities & database operations
+│   │   └── database/            # PostGIS integration
+│   ├── elevation/               # Elevation pipeline namespace
+│   │   ├── __init__.py          
+│   │   └── pipeline.py          # German elevation data (BKG DGM200)
+│   ├── soil/                    # Soil pipeline namespace
+│   │   ├── __init__.py
+│   │   └── pipeline.py          # Soil data (SoilGrids API)
+│   ├── weather/                 # Weather pipeline namespace (future)
+│   ├── cli.py                   # Command-line interface
+│   ├── config.py                # Configuration management
+│   └── runner.py                # Container management
+└── docs/                        # Documentation
 ```
 
 ## Usage Examples
@@ -105,19 +135,36 @@ datavia-pipelines/                # Pipeline implementations
 ### Python API
 
 ```python
-# Current working example based on tests:
-from datavia.core.datavia import Datavia
-from datavia_pipelines.pipelines.elevation import ElevationPipeline
+# Core is always available
+from datavia import Datavia
 import numpy as np
 
-# Initialize pipeline and controller
-elevation_pipeline = ElevationPipeline()
-dv = Datavia(pipelines=[elevation_pipeline])
+# Pipelines are optional - handle missing installations gracefully
+pipelines = []
 
-# Initialize system
+try:
+    from datavia.elevation import ElevationPipeline
+    elevation = ElevationPipeline()
+    pipelines.append(elevation)
+    print("✅ Elevation pipeline loaded")
+except ImportError:
+    print("❌ Elevation pipeline not installed. Install: pip install datavia[elevation]")
+    elevation = None
+
+try:
+    from datavia.soil import SoilPipeline
+    soil = SoilPipeline() 
+    pipelines.append(soil)
+    print("✅ Soil pipeline loaded")
+except ImportError:
+    print("❌ Soil pipeline not installed. Install: pip install datavia[soil]")
+    soil = None
+
+# Create controller with available pipelines
+dv = Datavia(pipelines=pipelines)
 dv()
 
-# Get elevation data for coordinates (lon, lat format)
+# Use available pipelines
 coordinates = np.array([[10.0, 50.0], [11.0, 51.0]])  # [longitude, latitude]
 elevations = dv.elevation.get_data(coords=coordinates, crs_coords="EPSG:4326")
 
@@ -127,35 +174,47 @@ elevations = dv.elevation.get_data(coords=coordinates, crs_coords="EPSG:4326")
 ### Command Line Interface
 
 ```bash
-# Database management (implemented)
-datavia db start         # Start PostGIS container
-datavia db stop          # Stop container
-datavia db status        # Check container status
+# Database management
+datavia start            # Start PostGIS container
+datavia stop             # Stop PostGIS container
 
-# Other CLI commands are under development
-# TODO: Implement pipeline management commands
-# TODO: Implement configuration commands
+# Configuration management
+datavia config init --elevation --soil  # Initialize config with selected pipelines
+datavia config validate                  # Validate configuration file
+datavia config status                    # Show installation status
+
+# Development/Testing
+python -m datavia.cli start            # Alternative CLI access
+
+# Build packages (development)
+./build_all.sh                         # Build all packages (core + pipelines)
 ```
 
 ### Configuration
 
-Create a `datavia.yml` configuration file:
+Datavia creates configuration automatically, but you can customize it:
 
 ```yaml
-database:
-  host: localhost
-  port: 5432
-  name: datavia
+# datavia_config.yaml (created by 'datavia config init')
+shared_components:
+  database:
+    host: localhost
+    port: 5432
+    name: datavia
   
 pipelines:
-  elevation:
-    enabled: true
-    resolution: 200m
-    update_interval: monthly
-    
-  soil:
-    enabled: false
-    properties: [ph, organic_carbon, bulk_density]
+  install:
+    - elevation  # Corresponds to datavia[elevation]
+    - soil      # Corresponds to datavia[soil]
+
+elevation:
+  data_source: "BKG DGM200"
+  resolution: "200m"
+  
+soil:
+  data_source: "SoilGrids"
+  properties: ["clay", "sand", "silt", "ph", "carbon"]
+  depths: ["0-5cm", "5-15cm"]
 ```
 
 ## Installation for Development
@@ -167,17 +226,22 @@ For contributors and advanced users:
 git clone https://github.com/tree-d/datavia.git
 cd datavia
 
-# Install with pixi (recommended for development)
+# Install development environment with pixi (recommended)
+cd datavia/  # Enter package directory
 pixi install
+pixi shell
 
 # Or install with pip in development mode
 pip install -e .[dev]
+
+# Build all packages
+./build_all.sh
 
 # Run tests
 pytest
 
 # Format code
-black .
+black datavia/
 ```
 
 ## System Requirements
@@ -185,15 +249,20 @@ black .
 - **Python**: 3.12+
 - **Operating System**: Linux (tested), Windows and macOS support planned
 - **Database**: PostgreSQL with PostGIS extension (provided via Docker)
-- **Storage**: Variable depending on data sources (elevation ~500MB per state)
-- **Memory**: 4GB RAM recommended for processing
+- **Storage**: 
+  - Core system: <50MB
+  - Elevation pipeline: ~500MB per German state
+  - Soil pipeline: ~280MB (selective download strategy)
+- **Memory**: 4GB RAM recommended for data processing
+- **Network**: Required for initial data downloads
 
 ## Documentation
 
 - [API Reference](docs/api/)
 - [User Guide](docs/user_guide/)
-- [Core System Documentation](datavia/README.md)
-- [Pipeline Development Guide](datavia-pipelines/README.md)
+- [Elevation Pipeline](README_elevation.md)
+- [Soil Pipeline](README_soil.md)
+- [Build System](build_all.sh) - Multi-package build process
 
 ## Contributing
 
@@ -209,7 +278,15 @@ We welcome contributions! Please see our [Coding Standards](codingStandards.md) 
 
 ### Adding New Pipelines
 
-The system is designed for easy extension. See the [Pipeline Development Guide](datavia-pipelines/README.md) for creating new data source integrations.
+The system uses namespace packages for easy extension:
+
+1. **Create namespace package**: Add `datavia/your_pipeline/` directory
+2. **Implement pipeline class**: Follow `datavia/elevation/pipeline.py` as template
+3. **Create package config**: Add `pyproject_your_pipeline.toml`
+4. **Update build script**: Add to `build_all.sh`
+5. **Add documentation**: Create `README_your_pipeline.md`
+
+See existing pipelines ([elevation](datavia/elevation/), [soil](datavia/soil/)) as examples.
 
 ## License
 

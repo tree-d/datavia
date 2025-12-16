@@ -199,10 +199,10 @@ def _update_pipeline(pipeline_name: str) -> bool:
     logger.info(f"Updating {pipeline_name} data...")
 
     try:
-        from .core import Datavia
+        from .core.datavia import Datavia
 
         # Use new Datavia controller
-        datavia = Datavia()
+        datavia = Datavia([])
         success = datavia.update_pipeline(pipeline_name)
 
         if success:
@@ -443,16 +443,6 @@ def _start():
     else:
         logger.error("Container failed to start properly.")
         return
-
-    logger.info("Initializing database...")
-    try:
-        from .core import Datavia
-
-        datavia = Datavia()
-        datavia.boot_database()
-        logger.info("Database initialized successfully.")
-    except Exception as e:
-        logger.error(f"Database initialization failed: {e}")
 
 
 def _stop():
