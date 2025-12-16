@@ -18,10 +18,10 @@ import logging
 import os
 import tempfile
 
-from datavia.core.interfaces import Pipeline, Downloader, Saver, Getter
-from datavia.core.getter_tiff import getter_tiff
-from datavia.core.saver_tiff import TiffSaver
-from datavia.library.extract_values import extract_values_at_coords
+from ..core.interfaces import Pipeline, Downloader, Saver, Getter
+from ..core.getter_tiff import getter_tiff
+from ..core.saver_tiff import TiffSaver
+from ..library.spatial_ops import extract_values_at_coords
 
 logger = logging.getLogger(__name__)
 
@@ -335,13 +335,17 @@ class SoilPipeline(Pipeline):
 
     def __init__(self, name: str = "soil"):
         """Initialize soil pipeline."""
-        super.__init__(
+        super().__init__(
             name,
             downloader=SoilGridsDownloader,
             saver=TiffSaver,
             getter=getter_tiff,
             url=None,
         )
+
+        # Default soil properties
+        self.properties = ["clay", "sand", "silt", "ph", "carbon"]
+        self.data_source = "SoilGrids"
 
     def __call__(self, *args, **kwds):
         return super().__call__(*args, **kwds)

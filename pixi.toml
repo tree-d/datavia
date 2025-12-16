@@ -187,7 +187,6 @@ pytz = { version = "==2024.1", build = "pyhd8ed1ab_0" }
 pyyaml = { version = "==6.0.2", build = "py312h178313f_2" }
 qhull = { version = "==2020.2", build = "h434a139_5" }
 qt6-main = { version = "==6.9.0", build = "h6441bc3_0" }
-rasterio = ">=1.4.3,<2"
 readline = { version = "==8.2", build = "h8c095d6_2" }
 requests = { version = "==2.32.3", build = "pyhd8ed1ab_1" }
 rich = { version = "==14.0.0", build = "pyh29332c3_0" }
@@ -252,6 +251,7 @@ zstd = { version = "==1.5.7", build = "hb8e6e7a_2" }
 pytest-mock = ">=3.14.1,<4"
 scipy = ">=1.16.0,<2"
 pytest-cov = ">=7.0.0,<8"
+rasterio = ">=1.4.3,<2"
 
 [pypi-dependencies]
 alabaster = "==1.0.0"
@@ -280,3 +280,4 @@ docker = ">=7.1.0, <8"
 rioxarray = ">=0.19.0, <0.20"
 datavia = { path = ".", editable = true }
 pytest-mock = "*"
+rasterio = "*"

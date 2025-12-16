@@ -1,10 +1,13 @@
 Datavia Documentation
 =====================
 
-**Datavia** is a modular, pipeline-based system for integrating geospatial data sources. It provides a unified interface for downloading, storing, and accessing various types of geospatial data including elevation, soil properties, and more.
+**Datavia** is a modular, pipeline-based system for integrating geospatial data sources. It uses **namespace packages** for truly modular installation - install only the data sources you need.
 
 .. note::
-   This documentation reflects the current working implementation. For the latest examples, see the ``tests/`` directory in the repository.
+   Datavia uses a multi-package architecture. The core system (``datavia``) contains NO pipeline code. Pipelines are separate packages (``datavia-elevation``, ``datavia-soil``) installed on demand.
+
+.. warning::
+   This documentation is being updated to reflect the new namespace package architecture. Some examples may be outdated.
 
 Overview
 --------
@@ -15,19 +18,30 @@ Datavia uses a modular architecture where **pipelines** combine three core compo
 * **Saver**: Stores data locally and metadata in PostGIS database
 * **Getter**: Provides coordinate-based data access with spatial interpolation
 
-Currently supported data sources:
+Available pipeline packages:
 
-* **Elevation Data**: German BKG DGM200 (200m resolution)
-* **Soil Data**: SoilGrids API integration (in development)
+* **Elevation Pipeline** (``datavia[elevation]``): German BKG DGM200 (200m resolution)
+* **Soil Pipeline** (``datavia[soil]``): SoilGrids API with selective download (280MB strategy)
+* **Weather Pipeline** (``datavia[weather]``): Planned - DWD weather data
+* **Radiation Pipeline**: Planned - CAMS radiation data
 
 Quick Start
 -----------
 
-Installation:
+Installation (Modular):
 
 .. code-block:: bash
 
-    # Install core system
+    # Core system only (NO pipeline code)
+    pip install datavia
+    
+    # Core + specific pipelines
+    pip install datavia[elevation]     # BKG elevation data
+    pip install datavia[soil]          # SoilGrids soil data
+    pip install datavia[elevation,soil] # Multiple pipelines
+    
+    # Everything
+    pip install datavia[all]
     pip install datavia
     
     # Or use pixi for development
