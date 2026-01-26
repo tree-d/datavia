@@ -1,17 +1,17 @@
 Basic Usage
 ===========
 
-This guide covers the core functionality and usage patterns of Datavia.
+This guide covers the core functionality and usage patterns of Datavia namespace packages.
 
-Pipeline Architecture
----------------------
+Namespace Package Architecture
+===============================
 
-Datavia uses a pipeline-based architecture where each data source is implemented as a pipeline with three components:
+Datavia uses namespace packages for modular installation:
 
 .. code-block:: python
 
     from datavia.core.datavia import Datavia
-    from datavia_pipelines.pipelines.elevation import ElevationPipeline
+    from datavia.elevation import ElevationPipeline
     
     # Create and initialize pipeline
     elevation_pipeline = ElevationPipeline()
@@ -27,7 +27,7 @@ Available Pipelines
 
 .. code-block:: python
 
-    from datavia_pipelines.pipelines.elevation import ElevationPipeline
+    from datavia.elevation import ElevationPipeline
     
     # German elevation data from BKG DGM200 (200m resolution)
     elevation_pipeline = ElevationPipeline()
@@ -36,7 +36,7 @@ Available Pipelines
 
 .. code-block:: python
 
-    from datavia_pipelines.pipelines.soil import SoilPipeline
+    from datavia.soil import SoilPipeline
     
     # Soil properties from SoilGrids API
     soil_pipeline = SoilPipeline()
@@ -73,14 +73,18 @@ The elevation pipeline provides German elevation data at 200m resolution:
 
 .. code-block:: python
 
-    from datavia.getter import get_data, DataSource
+    from datavia.elevation import ElevationPipeline
     import numpy as np
+    
+    # Initialize pipeline
+    pipeline = ElevationPipeline()
+    pipeline.update_data()
     
     # Define coordinates
     coords = np.array([[13.4050, 52.5200]])  # Berlin
 
     # Get elevation data
-    elevations = get_data(coords, DataSource.TOPOGRAPHY)
+    elevations = pipeline.get_data(coords=coords, crs_coords="EPSG:4326")
     
     # Results are in meters above sea level
     print(f"Elevation: {elevations[0]:.1f}m")
@@ -92,6 +96,12 @@ Efficiently process multiple coordinates at once:
 
 .. code-block:: python
 
+    from datavia.elevation import ElevationPipeline
+    import numpy as np
+    
+    # Initialize pipeline
+    pipeline = ElevationPipeline()
+    
     # Process many points efficiently
     coords = np.array([
         [13.4050, 52.5200],  # Berlin
@@ -102,7 +112,7 @@ Efficiently process multiple coordinates at once:
     ])
     
     # Single API call for all points
-    elevations = get_data(coords, DataSource.TOPOGRAPHY)
+    elevations = pipeline.get_data(coords=coords, crs_coords="EPSG:4326")
     
     # Process results
     for i, elevation in enumerate(elevations):
@@ -116,12 +126,13 @@ Handle potential errors gracefully:
 .. code-block:: python
 
     import numpy as np
-    from datavia.getter import get_data, DataSource
+    from datavia.elevation import ElevationPipeline
     
     def safe_get_elevation(coords):
         """Safely get elevation data with error handling."""
         try:
-            elevations = get_data(coords, DataSource.TOPOGRAPHY)
+            pipeline = ElevationPipeline()
+            elevations = pipeline.get_data(coords=coords, crs_coords="EPSG:4326")
             return elevations
         except Exception as e:
             print(f"Error getting elevation data: {e}")
@@ -232,5 +243,5 @@ Next Steps
 ----------
 
 * Explore :doc:`examples` for more complex use cases
-* Read the :doc:`../api/getter` API reference
-* Learn about the :doc:`../developer/architecture`
+* Read the API documentation for complete interface references
+

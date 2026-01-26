@@ -18,10 +18,10 @@ import logging
 import os
 import tempfile
 
-from ..core.interfaces import Pipeline, Downloader, Saver, Getter
-from ..core.getter_tiff import getter_tiff
-from ..core.saver_tiff import TiffSaver
-from ..library.spatial_ops import extract_values_at_coords
+from datavia.core.interfaces import Pipeline, Downloader, Saver, Getter
+from datavia.core.getter_tiff import getter_tiff
+from datavia.core.saver_tiff import TiffSaver
+from datavia.library.spatial_ops import extract_values_at_coords
 
 logger = logging.getLogger(__name__)
 

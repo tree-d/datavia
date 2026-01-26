@@ -10,7 +10,7 @@ authors = [
     {name = "Michael Berg", email = "michael.berg@ufz.de"},
 ]
 readme = "README.md"
-license = {text = "MIT"}
+license = {file = "LICENSE"}
 requires-python = ">=3.12"
 keywords = ["geospatial", "gis", "data-integration", "topography", "soil", "fetcher", "processor", "getter"]
 classifiers = [
@@ -52,15 +52,15 @@ datavia = "datavia.cli:main"
 
 # Optional dependencies for development and testing
 [project.optional-dependencies]
-# Pipeline-specific dependencies (separate packages)
+# Pipeline-specific dependencies (separate local packages)
 elevation = [
-    "datavia-elevation>=1.0.0-dev",  # Separate elevation package
+    "datavia-elevation @ file://{{DATAVIA_ROOT}}/packages/elevation",  # Local elevation package
 ]
 soil = [
-    "datavia-soil>=1.0.0-dev",       # Separate soil package 
+    "datavia-soil @ file://{{DATAVIA_ROOT}}/packages/soil",       # Local soil package 
 ]
 weather = [
-    "datavia-weather>=1.0.0-dev",    # Future separate weather package
+    "datavia-weather @ file://{{DATAVIA_ROOT}}/packages/weather",    # Local weather package
 ]
 
 # Combined pipeline dependencies
@@ -129,10 +129,15 @@ exclude = [
     "datavia/elevation/**/*",
     "datavia/soil/**/*",
     "datavia/weather/**/*",
+    "packages/**/*",
 ]
 
 [tool.hatch.build.targets.wheel]
 packages = ["datavia"]
+
+# Allow direct file references for local packages
+[tool.hatch.metadata]
+allow-direct-references = true
 
 # Development tools configuration
 [tool.black]

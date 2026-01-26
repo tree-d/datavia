@@ -287,6 +287,8 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/6e/be/10d23cfd4078fbec6aba768a357eff9e70c0b6d2a07398425985c524ad2a/tifffile-2025.3.30-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/82/8a/6b50c1dd2260d407c1a499d47cf829f59f07007e0dcebafdabb24d1d26a5/xarray-2025.6.1-py3-none-any.whl
       - pypi: ./
+      - pypi: ./packages/elevation
+      - pypi: ./packages/soil
 packages:
 - conda: https://conda.anaconda.org/conda-forge/linux-64/_libgcc_mutex-0.1-conda_forge.tar.bz2
   sha256: fe51de6107f9edc7aa4f786a70f4a883943bc9d39b3bb7307c04c41410990726
@@ -747,8 +749,8 @@ packages:
   timestamp: 1690061203707
 - pypi: ./
   name: datavia
-  version: 1.0.0.dev0
-  sha256: ce705d7e66e12e651b1a124232e9a86948f3218e1fe468ca858ba4c67ef3f674
+  version: 1.0.1.dev0
+  sha256: 4d430408c1d041d0ce5080e82b099574b766397617733fae0c44aade705692a8
   requires_dist:
   - numpy>=2.2.0,<3.0
   - rasterio>=1.4.3,<2.0
@@ -756,7 +758,7 @@ packages:
   - psycopg2-binary>=2.9.9,<3.0
   - requests>=2.32.3,<3.0
   - fastapi>=0.115.12,<1.0
-  - uvicorn[standard]>=0.34.2,<1.0
+  - uvicorn>=0.34.2,<1.0
   - sqlalchemy>=2.0.41,<3.0
   - pandas>=2.2.3,<3.0
   - pydantic>=2.11.4,<3.0
@@ -770,9 +772,9 @@ packages:
   - scipy>=1.16.0,<2.0
   - rioxarray>=0.19.0,<0.20
   - tifffile>=2025.3.30
-  - datavia-elevation>=1.0.0.dev0 ; extra == 'elevation'
-  - datavia-soil>=1.0.0.dev0 ; extra == 'soil'
-  - datavia-weather>=1.0.0.dev0 ; extra == 'weather'
+  - datavia-elevation @ file:///home/bergmi/tree-D_data-integration/datavia/packages/elevation ; extra == 'elevation'
+  - datavia-soil @ file:///home/bergmi/tree-D_data-integration/datavia/packages/soil ; extra == 'soil'
+  - datavia-weather @ file:///home/bergmi/tree-D_data-integration/datavia/packages/weather ; extra == 'weather'
   - datavia[elevation] ; extra == 'pipelines'
   - datavia[soil] ; extra == 'pipelines'
   - datavia[pipelines] ; extra == 'all'
@@ -802,6 +804,27 @@ packages:
   - sphinxcontrib-jsmath>=1.0.1 ; extra == 'docs'
   - sphinxcontrib-qthelp>=2.0.0 ; extra == 'docs'
   - sphinxcontrib-serializinghtml>=2.0.0 ; extra == 'docs'
+  requires_python: '>=3.12'
+  editable: true
+- pypi: ./packages/elevation
+  name: datavia-elevation
+  version: 1.0.1.dev0
+  sha256: 432b8f3b34f9dc9ee2df5db686619c2e7af51a0bf43e21bf944a6613392783e0
+  requires_dist:
+  - datavia>=1.0.0
+  - rasterio>=1.4.3,<2
+  - numpy>=2.0.0,<3
+  requires_python: '>=3.12'
+  editable: true
+- pypi: ./packages/soil
+  name: datavia-soil
+  version: 1.0.1.dev0
+  sha256: 97d438435b33c5c8695170410bd49ab0016363aa2fdbac91fb609db3f77f71e3
+  requires_dist:
+  - datavia>=1.0.0
+  - soilgrids>=0.1.0,<1.0
+  - requests>=2.32.3,<3.0
+  - numpy>=2.0.0,<3
   requires_python: '>=3.12'
   editable: true
 - conda: https://conda.anaconda.org/conda-forge/linux-64/dbus-1.13.6-h5008d03_3.tar.bz2

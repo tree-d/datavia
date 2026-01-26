@@ -6,14 +6,14 @@ Core components (always available):
 - datavia.core: Core system interfaces and implementations
 
 Optional pipeline components (install separately):
-- datavia.elevation: Elevation data pipeline (install: pip install datavia[elevation])  
+- datavia.elevation: Elevation data pipeline (install: pip install datavia[elevation])
 - datavia.soil: Soil data pipeline (install: pip install datavia[soil])
 - datavia.weather: Weather data pipeline (future, install: pip install datavia[weather])
 
 Example usage:
     # Core is always available
     from datavia import Datavia
-    
+
     # Pipelines require separate installation
     try:
         from datavia.elevation import ElevationPipeline
@@ -21,14 +21,14 @@ Example usage:
     except ImportError:
         print("Elevation pipeline not installed. Install with: pip install datavia[elevation]")
         elevation = None
-    
+
     try:
-        from datavia.soil import SoilPipeline  
+        from datavia.soil import SoilPipeline
         soil = SoilPipeline()
     except ImportError:
         print("Soil pipeline not installed. Install with: pip install datavia[soil]")
         soil = None
-    
+
     # Create controller with available pipelines
     available_pipelines = [p for p in [elevation, soil] if p is not None]
     dv = Datavia(pipelines=available_pipelines)
@@ -37,6 +37,7 @@ Example usage:
 
 from .core.datavia import Datavia
 
+__path__ = __import__("pkgutil").extend_path(__path__, __name__)
 # Make commonly used classes available at top level
 __all__ = ["Datavia"]
 

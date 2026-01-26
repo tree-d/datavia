@@ -6,8 +6,7 @@ Datavia Documentation
 .. note::
    Datavia uses a multi-package architecture. The core system (``datavia``) contains NO pipeline code. Pipelines are separate packages (``datavia-elevation``, ``datavia-soil``) installed on demand.
 
-.. warning::
-   This documentation is being updated to reflect the new namespace package architecture. Some examples may be outdated.
+
 
 Overview
 --------
@@ -42,7 +41,6 @@ Installation (Modular):
     
     # Everything
     pip install datavia[all]
-    pip install datavia
     
     # Or use pixi for development
     pixi install
@@ -52,7 +50,7 @@ Basic usage with elevation data:
 .. code-block:: python
 
     from datavia.core.datavia import Datavia
-    from datavia_pipelines.pipelines.elevation import ElevationPipeline
+    from datavia.elevation import ElevationPipeline
     import numpy as np
 
     # Initialize pipeline and system
@@ -72,9 +70,10 @@ Database management:
 
 .. code-block:: bash
 
-    datavia db start         # Start PostGIS container
-    datavia db stop          # Stop container
-    datavia db status        # Check status
+    datavia start            # Start PostGIS container
+    datavia stop             # Stop container
+    datavia config           # View configuration
+
 Architecture
 ------------
 
@@ -158,7 +157,6 @@ Documentation
    :maxdepth: 2
    :caption: User Guide:
 
-   user_guide/quick_start
    user_guide/basic_usage
    user_guide/examples
 

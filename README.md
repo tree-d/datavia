@@ -41,6 +41,10 @@ pip install datavia[elevation]     # Core + elevation pipeline code
 pip install datavia[soil]          # Core + soil pipeline code  
 pip install datavia[elevation,soil] # Core + multiple pipelines
 
+# or use this (as datavia is dependency of the pipeline packages)
+pip install datavia-elevation
+pip install datavia-soil
+
 # Install everything
 pip install datavia[all]
 ```
@@ -51,7 +55,7 @@ pip install datavia[all]
 
 ```bash
 pixi add --pypi datavia
-#or with elevationpipeline
+# or with elevationpipeline
 pixi add --pypi datavia[soil]
 ```
 
@@ -62,15 +66,7 @@ pixi add --pypi datavia[soil]
    datavia start
    ```
 
-2. **Configure pipelines** (needs elevation-package):
-   ```python
-   from datavia.elevation import ElevationPipeline, Datavia
-   elevation = ElevationPipeline()
-   dv = Datavia(pipelines=[elevation,])
-   dv()
-   ```
-
-3. **Use in Python code**:
+2. **Use in Python code**:
    ```python
    from datavia import Datavia
    
@@ -87,6 +83,12 @@ pixi add --pypi datavia[soil]
    coords = np.array([[10.0, 50.0]])
    elevation_data = dv.pipelines[0].get_data(coords, crs_coords="EPSG:4326")
    ```
+
+3. **Shut down database**
+   ```bash
+   datavia stop
+   ```
+
 
 ## Architecture
 
@@ -290,21 +292,7 @@ See existing pipelines ([elevation](datavia/elevation/), [soil](datavia/soil/)) 
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Citation
-
-If you use Datavia in your research, please cite:
-
-```bibtex
-@software{datavia2025,
-  author = {Berg, Michael},
-  title = {Datavia: Pipeline-based Geospatial Data Integration System},
-  year = {2025},
-  url = {https://github.com/tree-d/datavia},
-  version = {1.0.0-dev}
-}
-```
+See the [LICENSE](LICENSE) file for details.
 
 ## Support
 
