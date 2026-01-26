@@ -33,6 +33,7 @@ class DataviaConfig:
     def _find_config_file(self) -> Optional[str]:
         """Find configuration file in standard locations."""
         possible_locations = [
+            "../../datavia.conf",
             self._config_file,
             "datavia.conf",
             "config/datavia.conf",

@@ -139,6 +139,6 @@ What's Next?
 ------------
 
 * Learn about :doc:`basic_usage` for more detailed examples
-* Explore the :doc:`../api/getter` API reference
+
 * Check out more :doc:`examples`
-* Read about the :doc:`../developer/architecture`
+

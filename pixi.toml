@@ -214,7 +214,6 @@ unicodedata2 = { version = "==16.0.0", build = "py312h66e93f0_0" }
 uriparser = { version = "==0.9.8", build = "hac33072_0" }
 urllib3 = { version = "==2.4.0", build = "pyhd8ed1ab_0" }
 uvicorn = { version = "==0.34.2", build = "pyh31011fe_0" }
-uvicorn-standard = { version = "==0.34.2", build = "h31011fe_0" }
 uvloop = { version = "==0.21.0", build = "py312h66e93f0_1" }
 watchfiles = { version = "==1.0.5", build = "py312h12e396e_0" }
 wayland = { version = "==1.23.1", build = "h3e06ad9_0" }
@@ -279,5 +278,7 @@ build = ">=1.3.0, <2"
 docker = ">=7.1.0, <8"
 rioxarray = ">=0.19.0, <0.20"
 datavia = { path = ".", editable = true }
+datavia-soil = { path = "./packages/soil/", editable = true}
+datavia-elevation = { path = "./packages/elevation/", editable = true}
 pytest-mock = "*"
 rasterio = "*"

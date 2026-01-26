@@ -1,27 +1,31 @@
 Examples
 ========
 
-This section provides comprehensive examples for different use cases.
+This section provides three comprehensive examples using Datavia's namespace package architecture.
 
-Example 1: City Elevation Profile
----------------------------------
+Example 1: City Elevation Analysis
+----------------------------------
 
-Get elevation data for major German cities and create a profile:
+Get elevation data for major German cities using the elevation pipeline:
 
 .. code-block:: python
 
     #!/usr/bin/env python3
     """
-    Create an elevation profile for major German cities.
+    Analyze elevation data for major German cities.
     """
     import numpy as np
     import matplotlib.pyplot as plt
-    from datavia.getter import get_data, DataSource
+    from datavia.elevation import ElevationPipeline
 
-    def city_elevation_profile():
+    def city_elevation_analysis():
         """Create elevation profile for German cities."""
         
-        # Define major German cities
+        # Initialize elevation pipeline
+        pipeline = ElevationPipeline()
+        pipeline.update_data()
+        
+        # Define major German cities (longitude, latitude)
         cities = {
             "Hamburg": [9.9937, 53.5511],
             "Berlin": [13.4050, 52.5200],
@@ -36,11 +40,11 @@ Get elevation data for major German cities and create a profile:
         city_names = list(cities.keys())
         
         # Get elevation data
-        elevations = get_data(coords, DataSource.TOPOGRAPHY)
+        elevations = pipeline.get_data(coords=coords, crs_coords="EPSG:4326")
         
         # Create visualization
         plt.figure(figsize=(12, 6))
-        bars = plt.bar(city_names, elevations, color='skyblue', edgecolor='navy')
+        bars = plt.bar(city_names, elevations, color='lightblue', edgecolor='navy')
         plt.ylabel('Elevation (m)')
         plt.title('Elevation Profile of Major German Cities')
         plt.xticks(rotation=45)
@@ -57,300 +61,193 @@ Get elevation data for major German cities and create a profile:
         print("German Cities Elevation Summary:")
         print("-" * 40)
         for city, coord, elevation in zip(city_names, coords, elevations):
-            print(f"{city:>10}: {elevation:>6.1f}m (at {coord[1]:.2f}°N, {coord[0]:.2f}°E)")  # Fixed: coord[1]=lat, coord[0]=lon
+            print(f"{city:>10}: {elevation:>6.1f}m")
 
     if __name__ == "__main__":
-        city_elevation_profile()
+        city_elevation_analysis()
 
-Example 2: Hiking Trail Elevation
----------------------------------
+Example 2: Multi-Pipeline Environmental Data
+============================================
 
-Analyze elevation along a hiking trail:
+Combine elevation and soil data for environmental analysis:
 
 .. code-block:: python
 
     #!/usr/bin/env python3
     """
-    Create elevation profile for a hiking trail.
-    """
-    import numpy as np
-    import matplotlib.pyplot as plt
-    from datavia.getter import get_data, DataSource
-
-    def hiking_trail_elevation():
-        """Analyze elevation along a trail from Munich to Zugspitze area."""
-        
-        # Define trail points
-        trail_coords = np.array([
-            [11.5820, 48.1351],  # Munich
-            [11.6000, 48.1500],  # Munich suburbs
-            [11.7000, 48.2000],  # Leaving Munich
-            [11.8000, 48.2500],  # Approaching Alps
-            [11.9000, 48.3000],  # Alpine foothills
-            [10.9500, 47.4500],  # Near Zugspitze region
-        ])
-        
-        # Get elevation data
-        elevations = get_data(trail_coords, DataSource.TOPOGRAPHY)
-        
-        # Calculate distances (simplified - using coordinate differences)
-        distances = [0]
-        for i in range(1, len(trail_coords)):
-            lat_diff = trail_coords[i][0] - trail_coords[i-1][0]
-            lon_diff = trail_coords[i][1] - trail_coords[i-1][1]
-            # Rough distance calculation (not accurate for real navigation!)
-            dist = np.sqrt(lat_diff**2 + lon_diff**2) * 111  # ~111 km per degree
-            distances.append(distances[-1] + dist)
-        
-        # Create elevation profile
-        plt.figure(figsize=(12, 6))
-        plt.plot(distances, elevations, 'b-o', linewidth=2, markersize=6)
-        plt.fill_between(distances, elevations, alpha=0.3)
-        plt.xlabel('Distance (km)')
-        plt.ylabel('Elevation (m)')
-        plt.title('Hiking Trail Elevation Profile: Munich to Alpine Region')
-        plt.grid(True, alpha=0.3)
-        
-        # Add elevation markers
-        for i, (dist, elev) in enumerate(zip(distances, elevations)):
-            plt.annotate(f'{elev:.0f}m', (dist, elev), 
-                        textcoords="offset points", xytext=(0,10), ha='center')
-        
-        plt.tight_layout()
-        plt.show()
-        
-        # Print trail statistics
-        print("Trail Elevation Statistics:")
-        print("-" * 30)
-        print(f"Starting elevation: {elevations[0]:.1f}m")
-        print(f"Ending elevation: {elevations[-1]:.1f}m")
-        print(f"Elevation gain: {elevations[-1] - elevations[0]:.1f}m")
-        print(f"Maximum elevation: {np.max(elevations):.1f}m")
-        print(f"Total distance: {distances[-1]:.1f}km")
-
-    if __name__ == "__main__":
-        hiking_trail_elevation()
-
-Example 3: Topographic Grid Analysis
-------------------------------------
-
-Create a topographic grid for a region:
-
-.. code-block:: python
-
-    #!/usr/bin/env python3
-    """
-    Create a topographic grid analysis for a region.
-    """
-    import numpy as np
-    import matplotlib.pyplot as plt
-    from datavia.getter import get_data, DataSource
-
-    def topographic_grid_analysis():
-        """Create a topographic grid around Munich."""
-        
-        # Define grid around Munich
-        munich_lon, munich_lat = 11.5820, 48.1351
-        
-        # Create a grid (be careful not to make it too large!)
-        lat_range = np.linspace(munich_lat - 0.1, munich_lat + 0.1, 5)
-        lon_range = np.linspace(munich_lon - 0.1, munich_lon + 0.1, 5)
-        
-        # Create coordinate mesh
-        coords = []
-        for lat in lat_range:
-            for lon in lon_range:
-                coords.append([lon, lat])
-
-        coords = np.array(coords)
-        
-        # Get elevation data
-        elevations = get_data(coords, DataSource.TOPOGRAPHY)
-        
-        # Reshape for plotting
-        elevation_grid = elevations.reshape(len(lat_range), len(lon_range))
-        
-        # Create topographic map
-        plt.figure(figsize=(10, 8))
-        contour = plt.contourf(lon_range, lat_range, elevation_grid, 
-                              levels=15, cmap='terrain')
-        plt.colorbar(contour, label='Elevation (m)')
-        
-        # Add contour lines
-        plt.contour(lon_range, lat_range, elevation_grid, 
-                   levels=15, colors='black', alpha=0.5, linewidths=0.5)
-        
-        # Mark Munich center
-        plt.plot(munich_lon, munich_lat, 'r*', markersize=15, label='Munich')
-        
-        plt.xlabel('Longitude')
-        plt.ylabel('Latitude')
-        plt.title('Topographic Map around Munich')
-        plt.legend()
-        plt.tight_layout()
-        plt.show()
-        
-        # Print grid statistics
-        print("Topographic Grid Statistics:")
-        print("-" * 30)
-        print(f"Grid size: {len(lat_range)} x {len(lon_range)}")
-        print(f"Total points: {len(coords)}")
-        print(f"Elevation range: {np.min(elevations):.1f}m - {np.max(elevations):.1f}m")
-        print(f"Mean elevation: {np.mean(elevations):.1f}m")
-
-    if __name__ == "__main__":
-        topographic_grid_analysis()
-
-Example 4: Real-World Integration
----------------------------------
-
-Integrate Datavia with a real application:
-
-.. code-block:: python
-
-    #!/usr/bin/env python3
-    """
-    Real-world example: Flight path elevation analysis.
+    Environmental analysis using multiple pipelines.
     """
     import numpy as np
     import pandas as pd
-    from datavia.getter import get_data, DataSource
+    from datavia.core.datavia import Datavia
+    from datavia.elevation import ElevationPipeline  
+    from datavia.soil import SoilPipeline
 
-    class FlightPathAnalyzer:
-        """Analyze elevation along flight paths."""
+    def environmental_analysis():
+        """Analyze environmental conditions across sample locations."""
         
-        def __init__(self):
-            self.flight_data = []
+        # Initialize pipelines
+        elevation = ElevationPipeline()
+        soil = SoilPipeline()
         
-        def add_waypoint(self, name, lat, lon):
-            """Add a waypoint to the flight path."""
-            self.flight_data.append({
-                'name': name,
-                'lat': lat,
-                'lon': lon
-            })
+        # Create Datavia system with multiple pipelines
+        dv = Datavia(pipelines=[elevation, soil])
+        dv()  # Initialize all pipelines
         
-        def analyze_elevation_clearance(self, min_clearance=500):
-            """Analyze elevation clearance along flight path."""
-            if len(self.flight_data) < 2:
-                raise ValueError("Need at least 2 waypoints")
-            
-            # Convert to coordinates (longitude, latitude) - CORRECTED ORDER
-            coords = np.array([[wp['lon'], wp['lat']] for wp in self.flight_data])  # Fixed: lon first, lat second
-            
-            # Get ground elevation
-            ground_elevations = get_data(coords, DataSource.TOPOGRAPHY)
-            
-            # Create detailed analysis
-            results = []
-            for i, (wp, elevation) in enumerate(zip(self.flight_data, ground_elevations)):
-                # Typical cruise altitude for domestic flights
-                cruise_altitude = 10000  # 10km typical cruise
-                clearance = cruise_altitude - elevation
-                
-                results.append({
-                    'waypoint': wp['name'],
-                    'lat': wp['lat'],
-                    'lon': wp['lon'],
-                    'ground_elevation': elevation,
-                    'cruise_altitude': cruise_altitude,
-                    'clearance': clearance,
-                    'safe': clearance >= min_clearance
-                })
-            
-            return pd.DataFrame(results)
+        # Define sample locations across Germany
+        locations = {
+            "North Coast": [8.6821, 54.9200],     # Northern lowlands
+            "Central Plains": [10.5000, 52.0000], # Central Germany
+            "Black Forest": [8.2000, 48.0000],    # Southwestern highlands
+            "Bavarian Alps": [11.0000, 47.5000],  # Southern mountains
+        }
         
-        def print_analysis(self):
-            """Print flight path elevation analysis."""
-            df = self.analyze_elevation_clearance()
-            
-            print("Flight Path Elevation Analysis")
-            print("=" * 50)
-            print(f"{'Waypoint':<15} {'Ground(m)':<10} {'Clearance(m)':<12} {'Safe':<6}")
-            print("-" * 50)
-            
-            for _, row in df.iterrows():
-                safety = "✓" if row['safe'] else "✗"
-                print(f"{row['waypoint']:<15} {row['ground_elevation']:<10.1f} "
-                      f"{row['clearance']:<12.1f} {safety:<6}")
-            
-            # Summary
-            min_clearance = df['clearance'].min()
-            min_location = df.loc[df['clearance'].idxmin(), 'waypoint']
-            
-            print("-" * 50)
-            print(f"Minimum clearance: {min_clearance:.1f}m at {min_location}")
-            print(f"All waypoints safe: {'Yes' if df['safe'].all() else 'No'}")
-
-    def flight_path_example():
-        """Example flight path analysis."""
+        # Convert to coordinate array
+        coords = np.array(list(locations.values()))
+        location_names = list(locations.keys())
         
-        # Create analyzer
-        analyzer = FlightPathAnalyzer()
+        # Get environmental data
+        elevations = dv.elevation.get_data(coords=coords, crs_coords="EPSG:4326")
+        soil_ph = dv.soil.get_data(coords=coords, crs_coords="EPSG:4326")
         
-        # Add waypoints for a domestic German flight
-        analyzer.add_waypoint("Berlin", 52.5200, 13.4050)
-        analyzer.add_waypoint("Leipzig", 51.3397, 12.3731)
-        analyzer.add_waypoint("Nuremberg", 49.4521, 11.0767)
-        analyzer.add_waypoint("Munich", 48.1351, 11.5820)
+        # Create analysis dataframe
+        df = pd.DataFrame({
+            'Location': location_names,
+            'Longitude': coords[:, 0],
+            'Latitude': coords[:, 1],
+            'Elevation_m': elevations,
+            'Soil_pH': soil_ph
+        })
         
-        # Analyze and print results
-        analyzer.print_analysis()
+        # Display results
+        print("Environmental Analysis Results:")
+        print("=" * 50)
+        print(df.to_string(index=False, float_format='%.2f'))
+        
+        # Calculate correlations
+        correlation = df['Elevation_m'].corr(df['Soil_pH'])
+        print(f"\nElevation-Soil pH Correlation: {correlation:.3f}")
+        
+        return df
 
     if __name__ == "__main__":
-        flight_path_example()
+        environmental_analysis()
 
-Example 5: Performance Testing
-------------------------------
+Example 3: Spatial Grid Analysis
+================================
 
-Test performance with different coordinate batch sizes:
+Analyze elevation patterns across a spatial grid:
 
 .. code-block:: python
 
     #!/usr/bin/env python3
     """
-    Performance testing example.
+    Spatial grid analysis using elevation data.
     """
-    import time
     import numpy as np
-    from datavia.getter import get_data, DataSource
+    import matplotlib.pyplot as plt
+    from datavia.elevation import ElevationPipeline
 
-    def performance_test():
-        """Test performance with different batch sizes."""
+    def spatial_grid_analysis():
+        """Create elevation surface analysis over a spatial grid."""
         
-        print("Datavia Performance Testing")
-        print("=" * 40)
+        # Initialize elevation pipeline
+        pipeline = ElevationPipeline()
+        pipeline.update_data()
         
-        # Test different batch sizes
-        batch_sizes = [1, 10, 50, 100, 500]
+        # Define study area (Baden-Württemberg region)
+        lon_min, lon_max = 7.5, 10.5   # Longitude range
+        lat_min, lat_max = 47.5, 49.5  # Latitude range
         
-        for batch_size in batch_sizes:
-            # Generate random coordinates within Germany
-            lons = np.random.uniform(6.0, 15.0, batch_size)
-            lats = np.random.uniform(47.5, 55.0, batch_size)
-            coords = np.column_stack([lons, lats])
-            
-            # Time the operation
-            start_time = time.time()
-            elevations = get_data(coords, DataSource.TOPOGRAPHY)
-            end_time = time.time()
-            
-            duration = end_time - start_time
-            points_per_second = batch_size / duration if duration > 0 else float('inf')
-            
-            print(f"Batch size {batch_size:>3}: "
-                  f"{duration:>6.3f}s ({points_per_second:>6.1f} points/sec)")
+        # Create coordinate grid (coarse for demonstration)
+        lon_grid = np.linspace(lon_min, lon_max, 20)
+        lat_grid = np.linspace(lat_min, lat_max, 15)
         
-        print("\nPerformance recommendations:")
-        print("- Batch multiple coordinates for better performance")
-        print("- Typical performance: 100-1000 points/second")
-        print("- Network latency affects small batches more")
+        # Create meshgrid
+        lon_mesh, lat_mesh = np.meshgrid(lon_grid, lat_grid)
+        
+        # Flatten coordinates for pipeline input
+        coords = np.column_stack([lon_mesh.flatten(), lat_mesh.flatten()])
+        
+        # Get elevation data
+        elevations = pipeline.get_data(coords=coords, crs_coords="EPSG:4326")
+        
+        # Reshape back to grid
+        elevation_grid = elevations.reshape(lon_mesh.shape)
+        
+        # Create visualization
+        plt.figure(figsize=(12, 8))
+        
+        # Main contour plot
+        contour = plt.contourf(lon_mesh, lat_mesh, elevation_grid, 
+                              levels=20, cmap='terrain', alpha=0.8)
+        plt.colorbar(contour, label='Elevation (m)')
+        
+        # Add contour lines
+        contour_lines = plt.contour(lon_mesh, lat_mesh, elevation_grid, 
+                                   levels=10, colors='black', alpha=0.4, linewidths=0.5)
+        plt.clabel(contour_lines, inline=True, fontsize=8, fmt='%dm')
+        
+        # Add major cities
+        cities = {
+            "Stuttgart": [9.1829, 48.7758],
+            "Karlsruhe": [8.4037, 49.0069], 
+            "Freiburg": [7.8521, 47.9990],
+        }
+        
+        for city, (lon, lat) in cities.items():
+            plt.plot(lon, lat, 'ro', markersize=8, markeredgecolor='black')
+            plt.text(lon+0.1, lat, city, fontsize=10, fontweight='bold')
+        
+        plt.xlabel('Longitude (°E)')
+        plt.ylabel('Latitude (°N)')
+        plt.title('Elevation Analysis - Baden-Württemberg Region')
+        plt.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.show()
+        
+        # Calculate statistics
+        print("Spatial Grid Statistics:")
+        print("-" * 30)
+        print(f"Grid size: {elevation_grid.shape}")
+        print(f"Min elevation: {np.min(elevations):.1f}m")
+        print(f"Max elevation: {np.max(elevations):.1f}m")
+        print(f"Mean elevation: {np.mean(elevations):.1f}m")
+        print(f"Std elevation: {np.std(elevations):.1f}m")
 
     if __name__ == "__main__":
-        performance_test()
+        spatial_grid_analysis()
 
-Running the Examples
---------------------
+Installation and Setup
+======================
+
+To run these examples, install the required packages:
+
+.. code-block:: bash
+
+    # Install datavia with pipelines
+    pip install datavia[elevation,soil]
+    
+    # Install visualization dependencies
+    pip install matplotlib pandas
+    
+    # Start the database
+    datavia start
+
+Each example can be run independently and demonstrates different aspects of the Datavia system:
+
+- **Example 1**: Basic single-pipeline usage with elevation data
+- **Example 2**: Multi-pipeline integration combining elevation and soil data  
+- **Example 3**: Advanced spatial analysis with grid-based data access
+
+Notes
+-----
+
+* All examples use the new namespace package imports (``datavia.elevation``, ``datavia.soil``)
+* Coordinates are provided in WGS84 format (EPSG:4326) as (longitude, latitude)
+* The examples include proper error handling and data initialization
+* Visualization examples require matplotlib and pandas packages
 
 All examples can be run directly:
 
@@ -368,6 +265,5 @@ Make sure you have the required dependencies:
 Next Steps
 ----------
 
-* Read the :doc:`../api/getter` for detailed API documentation
-* Learn about :doc:`../developer/architecture`
+* Read the API documentation for detailed interface references
 * Explore the source code in the repository
