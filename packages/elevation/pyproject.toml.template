@@ -23,6 +23,8 @@ classifiers = [
 ]
 dependencies = [
     "datavia @ file://{{DATAVIA_ROOT}}",  # Local core datavia package
+    "rasterio>=1.4.3,<2",
+    "numpy>=2.0.0,<3",
 ]
 
 [project.urls]
@@ -34,12 +36,7 @@ Issues = "https://github.com/tree-d/datavia/issues"
 [tool.hatch.build]
 include = [
     "datavia/elevation/**/*.py",
-]
-exclude = [
-    "datavia/core/**/*",
-    "datavia/library/**/*", 
-    "datavia/soil/**/*",
-    "datavia/weather/**/*",
+    "datavia/__init__.py",
 ]
 
 [tool.hatch.build.targets.wheel]
