@@ -42,3 +42,8 @@ __path__ = __import__("pkgutil").extend_path(__path__, __name__)
 __all__ = ["Datavia"]
 
 __version__ = "1.0.0-dev"
+
+
+
+
+# Pipeline imports - auto-generated based on installation
