@@ -11,6 +11,9 @@ This repository uses a multi-package structure with local file references that n
    ```
 
 2. **Run the setup script:**
+   If you want to run this inside pixi you  first need to commend out the lines where datavia is mentioned in the pixi.toml.
+   Since Pixi can't setup a project without any pyproject.toml in there and just now there are no such files since you are just about to build them.
+
    ```bash
    ./setup-local-dev.sh
    ```

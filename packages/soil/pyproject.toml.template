@@ -24,6 +24,8 @@ classifiers = [
 dependencies = [
     "datavia @ file://{{DATAVIA_ROOT}}",        # Local core datavia package
     "soilgrids>=0.1.0,<1.0",     # Soil-specific dependency
+    "requests>=2.32.3,<3.0",
+    "numpy>=2.0.0,<3",
 ]
 
 [project.urls]
@@ -31,16 +33,11 @@ Homepage = "https://github.com/tree-d/datavia"
 Repository = "https://github.com/tree-d/datavia.git"
 Issues = "https://github.com/tree-d/datavia/issues"
 
-# Package configuration - SOIL ONLY
+# Package configuration
 [tool.hatch.build]
 include = [
     "datavia/soil/**/*.py",
-]
-exclude = [
-    "datavia/core/**/*",
-    "datavia/library/**/*",
-    "datavia/elevation/**/*", 
-    "datavia/weather/**/*",
+    "datavia/__init__.py",
 ]
 
 [tool.hatch.build.targets.wheel]

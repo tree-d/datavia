@@ -34,3 +34,6 @@ _build/
 *.tif
 *.tiff.aux.xml
 *.tif.aux.xml
+
+# copilotinstructions
+.github/copilot-instructions.md
