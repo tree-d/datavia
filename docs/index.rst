@@ -109,13 +109,13 @@ Current Data Sources
 **✅ Elevation Data (Working)**
 
 * **Source**: BKG DGM200 German elevation model (200m resolution)
-* **Pipeline**: ``ElevationPipeline`` in ``datavia-pipelines``
+* **Pipeline**: ``ElevationPipeline`` in ``datavia.elevation`` namespace package
 * **Usage**: Fully functional, tested with Berlin (~35.5m), Munich (~511.9m)
 
 **🔄 Soil Data (In Development)**
 
 * **Source**: SoilGrids API (properties like clay%, pH, organic carbon)
-* **Pipeline**: ``SoilPipeline`` in ``datavia-pipelines``
+* **Pipeline**: ``SoilPipeline`` in ``datavia.soil`` namespace package
 * **Status**: API integration in progress
 
 System Management
@@ -141,10 +141,13 @@ Development Setup
     git clone https://github.com/tree-d/datavia.git
     cd datavia
     
-    # Install with pixi (recommended)
+    # Install with pixi (recommended for development)
     pixi install
     
-    # Or install with pip
+    # Run setup script for local development
+    pixi run ./setup-local-dev.sh
+    
+    # Or install with pip (requires manual dependency management)
     pip install -e .[dev]
     
     # Run tests
@@ -157,6 +160,7 @@ Documentation
    :maxdepth: 2
    :caption: User Guide:
 
+   user_guide/quick_start
    user_guide/basic_usage
    user_guide/examples
 
