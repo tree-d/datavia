@@ -37,3 +37,7 @@ _build/
 
 # copilotinstructions
 .github/copilot-instructions.md
+
+
+# pytest cache
+.pytest_cache/

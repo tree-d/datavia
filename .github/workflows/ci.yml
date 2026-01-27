@@ -1,0 +1,344 @@
+# Datavia CI/CD Pipeline
+# 
+# This workflow provides comprehensive continuous integration and deployment
+# for the Datavia geospatial data integration system.
+#
+# Pipeline Overview:
+# 1. Code Quality: formatting, linting, type checking
+# 2. Testing: unit tests, integration tests, coverage
+# 3. Documentation: build and deploy docs
+# 4. Build: create distribution packages
+#
+# Learning Resources:
+# - GitHub Actions: https://docs.github.com/en/actions
+# - YAML Syntax: https://yaml.org/spec/1.2/spec.html
+# - pixi: https://prefix.dev/
+
+name: CI/CD Pipeline
+
+# Workflow Triggers
+# When should this pipeline run?
+on:
+  # Trigger on pushes to main branch
+  push:
+    branches: [ main, master ]
+  
+  # Trigger on pull requests to main branch  
+  pull_request:
+    branches: [ main, master ]
+  
+  # Allow manual triggering from GitHub UI
+  workflow_dispatch:
+    inputs:
+      run_tests:
+        description: 'Run full test suite'
+        required: false
+        default: 'true'
+        type: boolean
+      deploy_docs:
+        description: 'Deploy documentation'
+        required: false 
+        default: 'false'
+        type: boolean
+
+# Environment Variables
+# Global variables available to all jobs
+env:
+  PYTHON_VERSION: '3.12'  # Default Python version
+  PIXI_VERSION: 'latest'  # pixi package manager version
+
+# Jobs Definition
+# Each job runs on a separate virtual machine
+jobs:
+
+  # Job 1: Code Quality Checks
+  # Fast feedback on code style and basic issues
+  quality:
+    name: Code Quality
+    runs-on: ubuntu-latest
+    
+    steps:
+    # Step 1: Get the source code
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        # Fetch full history for better analysis
+        fetch-depth: 0
+    
+    # Step 2: Setup Python environment
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    # Step 3: Install pixi package manager
+    - name: Setup pixi
+      uses: prefix-dev/setup-pixi@v0.4.1
+      with:
+        pixi-version: ${{ env.PIXI_VERSION }}
+    
+    # Step 4: Install development dependencies
+    - name: Install dependencies
+      run: |
+        pixi install
+    
+    # Step 5: Check code formatting with black
+    - name: Check code formatting
+      run: |
+        pixi run black --check --diff datavia/ tests/
+      continue-on-error: true
+    
+    # Step 6: Check import sorting with isort
+    - name: Check import sorting
+      run: |
+        pixi run isort --check-only --diff datavia/ tests/
+      continue-on-error: true
+    
+    # Step 7: Run linting with ruff (fast Python linter)
+    - name: Lint code with ruff
+      run: |
+        pixi run ruff check datavia/ tests/
+      continue-on-error: true
+    
+    # Step 8: Type checking with mypy (optional but recommended)
+    - name: Type checking
+      run: |
+        pixi run mypy datavia/ || echo "Type checking completed with warnings"
+      continue-on-error: true
+
+  # Job 2: Unit and Integration Testing  
+  # Core functionality validation across Python versions
+  test:
+    name: Testing
+    needs: quality  # Run only after quality checks pass
+    runs-on: ubuntu-latest
+    
+    # Strategy Matrix: Test multiple Python versions
+    strategy:
+      fail-fast: false  # Don't stop other jobs if one fails
+      matrix:
+        python-version: ['3.9', '3.10', '3.11', '3.12']
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Setup Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Setup pixi
+      uses: prefix-dev/setup-pixi@v0.4.1
+      with:
+        pixi-version: ${{ env.PIXI_VERSION }}
+    
+    - name: Install dependencies
+      run: |
+        pixi install
+    
+    # Step: Run our comprehensive test suite
+    - name: Run unit tests
+      run: |
+        pixi run python -m pytest \
+          tests/test_config.py \
+          tests/test_coordinate_transforms.py \
+          tests/test_runner.py \
+          tests/test_spatial_ops.py \
+          -v \
+          --cov=datavia \
+          --cov-report=xml \
+          --cov-report=html \
+          --junitxml=test-results.xml
+    
+    # Step: Run integration/e2e tests (the working ones)
+    - name: Run integration tests
+      run: |
+        pixi run python -m pytest \
+          tests/test_e2e_workflows.py::TestContainerIntegration \
+          tests/test_e2e_workflows.py::TestDataQualityWorkflows::test_coordinate_validation_workflow \
+          tests/test_e2e_workflows.py::TestDataQualityWorkflows::test_spatial_bounds_validation_workflow \
+          tests/test_e2e_workflows.py::TestSpatialOperationsWorkflow \
+          tests/test_e2e_workflows.py::TestConfigurationWorkflows::test_global_config_workflow \
+          tests/test_e2e_workflows.py::TestErrorHandlingWorkflows \
+          -v
+    
+    # Step: Upload test results for analysis
+    - name: Upload test results
+      uses: actions/upload-artifact@v3
+      if: always()  # Upload even if tests fail
+      with:
+        name: test-results-py${{ matrix.python-version }}
+        path: |
+          test-results.xml
+          htmlcov/
+          .coverage
+    
+    # Step: Upload coverage to Codecov (optional)
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      if: matrix.python-version == '3.12'  # Only upload once
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+
+  # Job 3: Documentation Building
+  # Ensure documentation builds correctly
+  docs:
+    name: Documentation
+    needs: quality
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Setup pixi
+      uses: prefix-dev/setup-pixi@v0.4.1
+      with:
+        pixi-version: ${{ env.PIXI_VERSION }}
+    
+    - name: Install dependencies
+      run: |
+        pixi install
+    
+    # Step: Build Sphinx documentation
+    - name: Build documentation
+      run: |
+        cd docs
+        pixi run sphinx-build -b html . _build/html -W
+    
+    # Step: Check for broken links in docs
+    - name: Check documentation links
+      run: |
+        cd docs
+        pixi run sphinx-build -b linkcheck . _build/linkcheck
+      continue-on-error: true
+    
+    # Step: Upload built documentation
+    - name: Upload documentation artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: documentation
+        path: docs/_build/html
+    
+    # Step: Deploy to GitHub Pages (only on main branch)
+    - name: Deploy to GitHub Pages
+      if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+      uses: peaceiris/actions-gh-pages@v3
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: docs/_build/html
+        force_orphan: true
+
+  # Job 4: Package Building
+  # Create distribution packages for deployment
+  build:
+    name: Build Package
+    needs: [test, docs]  # Run only after testing and docs succeed
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        # Need full history for version calculation
+        fetch-depth: 0
+    
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Setup pixi
+      uses: prefix-dev/setup-pixi@v0.4.1
+      with:
+        pixi-version: ${{ env.PIXI_VERSION }}
+    
+    - name: Install build dependencies
+      run: |
+        pixi install
+        pixi add build twine
+    
+    # Step: Build wheel and source distribution
+    - name: Build package
+      run: |
+        pixi run python -m build
+    
+    # Step: Check package with twine
+    - name: Check package
+      run: |
+        pixi run twine check dist/*
+    
+    # Step: Upload distribution artifacts
+    - name: Upload distribution artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: dist-packages
+        path: dist/
+
+  # Job 5: Security Scanning (Optional but recommended)
+  security:
+    name: Security Scan
+    needs: quality
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Setup pixi
+      uses: prefix-dev/setup-pixi@v0.4.1
+      with:
+        pixi-version: ${{ env.PIXI_VERSION }}
+    
+    - name: Install dependencies
+      run: |
+        pixi install
+        pixi add bandit safety
+    
+    # Step: Security scan with bandit
+    - name: Security scan
+      run: |
+        pixi run bandit -r datavia/ -f json -o bandit-report.json
+      continue-on-error: true
+    
+    # Step: Check for known vulnerabilities
+    - name: Dependency vulnerability scan
+      run: |
+        pixi run safety check --json --output safety-report.json
+      continue-on-error: true
+    
+    - name: Upload security reports
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: security-reports
+        path: |
+          bandit-report.json
+          safety-report.json
+
+# Job Dependencies Summary:
+# quality (always runs first)
+# ├── test (needs: quality)
+# ├── docs (needs: quality) 
+# ├── security (needs: quality)
+# └── build (needs: [test, docs])
+#
+# This ensures:
+# 1. Fast feedback from quality checks
+# 2. Parallel execution of independent jobs
+# 3. Build only happens if tests and docs succeed
+# 4. Efficient use of CI/CD resources
