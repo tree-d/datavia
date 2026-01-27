@@ -49,7 +49,7 @@ Basic Usage
 .. code-block:: python
 
     from datavia.core.datavia import Datavia
-    from datavia_pipelines.pipelines.elevation import ElevationPipeline
+    from datavia.elevation import ElevationPipeline
     import numpy as np
     
     # Create pipeline and controller
