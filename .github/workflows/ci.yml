@@ -21,11 +21,11 @@ name: CI/CD Pipeline
 on:
   # Trigger on pushes to main branch
   push:
-    branches: [ main, master ]
+    branches: [ main ]
   
   # Trigger on pull requests to main branch  
   pull_request:
-    branches: [ main, master ]
+    branches: [ main ]
   
   # Allow manual triggering from GitHub UI
   workflow_dispatch:
@@ -81,6 +81,7 @@ jobs:
     - name: Install dependencies
       run: |
         pixi install
+        pixi add black isort ruff mypy
     
     # Step 5: Check code formatting with black
     - name: Check code formatting
@@ -268,14 +269,15 @@ jobs:
         pixi add build twine
     
     # Step: Build wheel and source distribution
-    - name: Build package
+    - name: Build packages
       run: |
-        pixi run python -m build
+        chmod +x build_packages.sh
+        ./build_packages.sh
     
-    # Step: Check package with twine
-    - name: Check package
+    # Step: Check packages with twine
+    - name: Check packages
       run: |
-        pixi run twine check dist/*
+        pixi run twine check dist/*.whl packages/*/dist/*.whl
     
     # Step: Upload distribution artifacts
     - name: Upload distribution artifacts

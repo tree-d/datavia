@@ -3,8 +3,8 @@
 Contains elevation-related pipeline implementations.
 """
 
-from .pipeline import ElevationPipeline, ElevationTransformer
+from .pipeline import ElevationPipeline
 
-__all__ = ["ElevationPipeline", "ElevationTransformer"]
+__all__ = ["ElevationPipeline"]
 
 __path__ = __import__("pkgutil").extend_path(__path__, __name__)

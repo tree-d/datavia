@@ -41,15 +41,3 @@ class ElevationPipeline(Pipeline):
         else:
             logger.info("Elevation data already up to date.")
             return True
-
-
-class ElevationTransformer:
-    """Transformer for elevation data."""
-
-    def transform(self, data: np.ndarray) -> np.ndarray:
-        """Apply transformation to elevation data."""
-        # Example transformation: normalize elevation values
-        min_val = np.min(data)
-        max_val = np.max(data)
-        normalized_data = (data - min_val) / (max_val - min_val)
-        return normalized_data
