@@ -83,6 +83,11 @@ class TiffSaver(Saver):
 
             session = SessionLocal()
 
+            logger.info(
+                f"Checking data existence for source {self.source_name} in {self.data_dir}"
+            )
+            logger.info(f"Found {len(tiff_files)} TIFF files in data directory.")
+
             try:
                 # Get existing layers from database for this source
                 db_layers = {
@@ -134,6 +139,7 @@ class TiffSaver(Saver):
                 layer_name + ".tif",
             )
             self._import_raster_metadata_with_bands(file_path, layer_name)
+            found_files.add(layer_name)
             logger.info(f"Added metadata for new file: {layer_name}")
         return found_files
 
