@@ -41,3 +41,7 @@ _build/
 
 # pytest cache
 .pytest_cache/
+
+
+# datavia config file
+datavia_config.py
