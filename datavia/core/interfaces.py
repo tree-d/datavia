@@ -118,7 +118,16 @@ class Pipeline:
         interpolation_order: int = 3,
         **kwargs,
     ) -> np.ndarray:
-        """Get data values at specified coordinates."""
+        """Get data values at specified coordinates.
+
+        Args:
+            coords (np.ndarray): Array of coordinates in specified CRS.
+                            - EPSG:4326: (lon, lat) pairs
+                            - EPSG:25832: (x, y) pairs
+                            - Shape: (n_points, 2)
+            crs_coords (str): CRS of input coordinates. Defaults to "EPSG:4326".
+            interpolation_order (int): Interpolation order for raster sampling.
+        """
         if not self.getter:
             raise RuntimeError("Pipeline not initialized. Call pipeline() first.")
         return self.getter.get_data(

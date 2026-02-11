@@ -66,6 +66,7 @@ Get elevation data for major German cities using the elevation pipeline:
     if __name__ == "__main__":
         city_elevation_analysis()
 
+
 Example 2: Multi-Pipeline Environmental Data
 ============================================
 

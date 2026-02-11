@@ -32,14 +32,23 @@ class DataviaConfig:
 
     def _find_config_file(self) -> Optional[str]:
         """Find configuration file in standard locations."""
+        # If a specific config file is provided, try that first
+        if self._config_file and os.path.exists(self._config_file):
+            logger.info(f"Found config file: {self._config_file}")
+            return self._config_file
+
+        # Auto-detect project root and look for datavia.conf there
+        project_root = self._auto_detect_base_directory()
+        project_config = os.path.join(project_root, "datavia.conf")
+        if os.path.exists(project_config):
+            logger.info(f"Found config file at project root: {project_config}")
+            return project_config
+
+        # Fallback to other locations
         possible_locations = [
-            "../../datavia.conf",
-            self._config_file,
-            "datavia.conf",
-            "config/datavia.conf",
-            "../config/datavia.conf",
-            os.path.expanduser("~/.datavia/config.conf"),
-            "/etc/datavia/config.conf",
+            "datavia.conf",  # Current directory
+            os.path.expanduser("~/.datavia/config.conf"),  # User home
+            "/etc/datavia/config.conf",  # System-wide
         ]
 
         for location in possible_locations:

@@ -53,32 +53,23 @@ class TestDataviaE2EWorkflows:
             config = DataviaConfig(str(config_file))
 
             # Initialize Datavia instance
-            with patch("datavia.core.datavia.DataviaConfig") as mock_config_class:
+            with patch("datavia.config.DataviaConfig") as mock_config_class:
                 mock_config_class.return_value = config
-                datavia = Datavia()
+                datavia = Datavia(pipelines=["elevation"])
 
                 # Mock pipeline components
-                with patch("datavia.elevation.ElevationPipeline") as mock_pipeline:
+                with patch("datavia.elevation") as mock_pipeline:
                     # Mock elevation data response
-                    mock_elevation_data = {
-                        "elevation_values": np.array([500.0, 100.0, 50.0, 300.0]),
-                        "coordinates": sample_coordinates,
-                        "source": "SRTM",
-                        "resolution": "30m",
-                    }
+                    mock_elevation_data = np.array([500.0, 100.0, 50.0, 300.0])
                     mock_pipeline.return_value.process.return_value = (
                         mock_elevation_data
                     )
 
                     # Test pipeline execution
-                    result = datavia.run_pipeline(
-                        "elevation", coordinates=sample_coordinates
-                    )
+                    result = datavia.elevation.get_data(coords=sample_coordinates)
 
                     # Verify results
-                    assert "elevation_values" in result
-                    assert len(result["elevation_values"]) == len(sample_coordinates)
-                    assert result["source"] == "SRTM"
+                    assert len(result) == len(sample_coordinates)
 
                     # Verify pipeline was called correctly
                     mock_pipeline.assert_called_once()

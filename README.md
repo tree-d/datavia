@@ -72,11 +72,11 @@ pixi add --pypi datavia[soil]
    
    # Import available pipelines
    from datavia.elevation import ElevationPipeline
-   from datavia.soil import SoilPipeline
    
    # Initialize system
-   dv = Datavia(pipelines=[ElevationPipeline(), SoilPipeline()])
+   dv = Datavia(pipelines=[ElevationPipeline()])
    dv()
+   dv.elevation.update_data()
    
    # Access data
    import numpy as np
@@ -166,6 +166,9 @@ except ImportError:
 dv = Datavia(pipelines=pipelines)
 dv()
 
+#update data
+dv.elevation.update_data()
+
 # Use available pipelines
 coordinates = np.array([[10.0, 50.0], [11.0, 51.0]])  # [longitude, latitude]
 elevations = dv.elevation.get_data(coords=coordinates, crs_coords="EPSG:4326")
@@ -194,29 +197,12 @@ python -m datavia.cli start            # Alternative CLI access
 
 ### Configuration
 
-Datavia creates configuration automatically, but you can customize it:
+Datavia creates configuration via CLI, but you can customize it.
 
-```yaml
-# datavia_config.yaml (created by 'datavia config init')
-shared_components:
-  database:
-    host: localhost
-    port: 5432
-    name: datavia
-  
-pipelines:
-  install:
-    - elevation  # Corresponds to datavia[elevation]
-    - soil      # Corresponds to datavia[soil]
+Just use this cmd in the terminal:
 
-elevation:
-  data_source: "BKG DGM200"
-  resolution: "200m"
-  
-soil:
-  data_source: "SoilGrids"
-  properties: ["clay", "sand", "silt", "ph", "carbon"]
-  depths: ["0-5cm", "5-15cm"]
+```bash
+datavia config init --elevation #this will add datavia_config.py with elevation pipeline to your current dir
 ```
 
 ## Installation for Development
@@ -273,10 +259,11 @@ We welcome contributions! Please see our [Coding Standards](codingStandards.md) 
 ### Development Workflow
 
 1. Fork the repository
-2. Create a feature branch
-3. Make your changes following our coding standards
-4. Add tests for new functionality
-5. Submit a pull request
+2. Read through Markdowns in docs/development/
+3. Create a feature branch
+4. Make your changes following our coding standards
+5. Add tests for new functionality
+6. Submit a pull request
 
 ### Adding New Pipelines
 

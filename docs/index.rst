@@ -145,7 +145,7 @@ Development Setup
     pixi install
     
     # Run setup script for local development
-    pixi run ./setup-local-dev.sh
+    pixi run ./scripts/setup-local-dev.sh
     
     # Or install with pip (requires manual dependency management)
     pip install -e .[dev]
