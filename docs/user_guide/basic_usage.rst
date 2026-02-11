@@ -20,6 +20,7 @@ Datavia uses namespace packages for modular installation:
     # Initialize system (downloads data if needed)
     dv()
 
+
 Available Pipelines
 -------------------
 

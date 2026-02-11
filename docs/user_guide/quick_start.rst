@@ -54,7 +54,8 @@ Basic Usage
     
     # Create pipeline and controller
     elevation_pipeline = ElevationPipeline()
-    dv = Datavia(pipelines=[elevation_pipeline, ])
+    dv = Datavia(pipelines=[elevation_pipeline])
+
 
 **Step 2: Initialize system**
 
@@ -79,11 +80,11 @@ Basic Usage
 
    .. code-block:: python
 
-       # Coordinates as (longitude, latitude) pairs
-       coords = np.array([
-           [13.4050, 52.5200],  # Berlin
-           [11.5820, 48.1351],  # Munich
-       ])
+    # Coordinates as (longitude, latitude) pairs
+    coords = np.array([
+        [13.4050, 52.5200],  # Berlin
+        [11.5820, 48.1351],  # Munich
+    ])
 
 3. **Get elevation data**:
 
