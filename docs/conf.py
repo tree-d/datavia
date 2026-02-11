@@ -31,6 +31,7 @@ extensions = [
     "sphinx.ext.intersphinx",
     "sphinx.ext.todo",
     "sphinx.ext.coverage",
+    "sphinx.ext.doctest",
 ]
 
 templates_path = ["_templates"]
@@ -47,6 +48,27 @@ autodoc_default_options = {
     "inherited-members": True,
     "show-inheritance": True,
 }
+
+# -- Doctest configuration --------------------------------------------------
+doctest_global_setup = """
+import os
+import sys
+import numpy as np
+from pathlib import Path
+
+# Add project paths for testing
+sys.path.insert(0, os.path.abspath('..'))
+sys.path.insert(0, os.path.abspath('../datavia'))
+sys.path.insert(0, os.path.abspath('../packages/elevation'))
+sys.path.insert(0, os.path.abspath('../packages/soil'))
+
+# Set up test environment
+os.environ['DATAVIA_TEST_MODE'] = '1'
+test_data_dir = Path('../tests/data')
+test_data_dir.mkdir(exist_ok=True)
+"""
+
+doctest_test_doctest_blocks = "default"
 
 # -- Napoleon settings -------------------------------------------------------
 napoleon_google_docstring = True
