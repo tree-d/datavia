@@ -230,32 +230,32 @@ jobs:
         name: documentation-pr
         path: docs/_build/html
 
-  # Job 4: Documentation Code Test (Temporarily disabled)
-  # docs-test:
-  #   name: Test Documentation Examples
-  #   needs: format
-  #   runs-on: ubuntu-latest
-  #   
-  #   steps:
-  #   - name: Checkout repository
-  #     uses: actions/checkout@v4
+  # Job 5: Documentation Code Test
+  docs-test:
+    name: Test Documentation Examples
+    needs: format
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
-  #   - name: Setup Python
-  #     uses: actions/setup-python@v4
-  #     with:
-  #       python-version: ${{ env.PYTHON_VERSION }}
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
 
-  #   - name: Setup pixi
-  #     uses: prefix-dev/setup-pixi@v0.4.1
-  #     with:
-  #       pixi-version: ${{ env.PIXI_VERSION }}
+    - name: Setup pixi
+      uses: prefix-dev/setup-pixi@v0.4.1
+      with:
+        pixi-version: ${{ env.PIXI_VERSION }}
 
-  #   - name: Install dependencies
-  #     run: pixi install
+    - name: Install dependencies
+      run: pixi install
 
-  #   - name: Test documentation code examples
-  #     run: |
-  #       python scripts/test_docs.py --verbose
+    - name: Test documentation code examples
+      run: |
+        pixi run python scripts/test_docs_modern.py --format sphinx --verbose
 
   # Job 5: Security Scan
   security:

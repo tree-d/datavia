@@ -76,6 +76,7 @@ dev = [
     "pytest>=7.0.0,<8.0",
     "pytest-cov>=7.0.0,<8.0",
     "pytest-mock>=3.14.1,<4.0",
+    "xdoctest>=1.1.0,<2.0",
     "black>=22.0.0",
     "flake8>=5.0.0",
     "sphinx>=8.2.3,<9.0",
@@ -92,6 +93,7 @@ docs = [
     "sphinx>=8.2.3,<9.0",
     "sphinx-rtd-theme>=1.0.0",
     "myst-parser>=0.18.0",
+    "xdoctest>=1.1.0,<2.0",
     "alabaster>=1.0.0",
     "babel>=2.17.0",
     "docutils>=0.21.2",
@@ -161,3 +163,14 @@ extend-exclude = '''
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v --cov=datavia --cov-report=term-missing"
+# Enable doctest discovery
+doctest_optionflags = ["NORMALIZE_WHITESPACE", "IGNORE_EXCEPTION_DETAIL"]
+# Add doctests from docs and source
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+# Configuration for running doctests with pytest
+[tool.xdoctest]
+style = "google"
+options = "+NORMALIZE_WHITESPACE"

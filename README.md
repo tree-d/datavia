@@ -15,7 +15,6 @@ Datavia is designed for researchers who need efficient integration of multiple g
 - 🌍 **Coordinate System Support**: Automatic CRS transformations using PyProj
 - 📊 **Spatial Interpolation**: Multiple interpolation methods for data access
 - 🐳 **Docker Integration**: Containerized PostGIS database for simplified setup
-- 📡 **REST API**: FastAPI-based web interface for data access
 
 ### Available Pipelines (Modular Installation)
 
