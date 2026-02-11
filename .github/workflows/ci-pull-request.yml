@@ -1,20 +1,23 @@
+---
 # Datavia CI Pipeline for Pull Requests
-# 
+#
 # This workflow provides continuous integration checks for pull requests.
-# It focuses on code quality, testing, and providing fast feedback to developers.
+# It focuses on code quality, testing, and providing fast feedback to
+# developers.
 #
 # Features:
-# - Auto-fixes formatting issues by committing back to PR
+# - Fail-fast code quality checks (formatting, linting, type checking)
 # - Comprehensive testing across Python versions
 # - Security scanning
 # - Documentation validation
+# - No auto-commits - developers must fix issues locally
 
 name: CI - Pull Request
 
 # Trigger only on pull requests
-on:
+"on":
   pull_request:
-    branches: [ dev ]
+    branches: [dev]
   # Allow manual triggering
   workflow_dispatch:
 
@@ -23,320 +26,293 @@ env:
   PIXI_VERSION: 'latest'
 
 jobs:
-  # Job 1: Auto-fix Code Formatting 
-  format:
-    name: Auto-fix Formatting
+  # Job 1: Code Formatting Check (fail-fast)
+  format-check:
+    name: Code Formatting Check
     runs-on: ubuntu-latest
-    permissions:
-      contents: write  # Needed to push formatting fixes
-    
+
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-        fetch-depth: 0
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Setup Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ env.PYTHON_VERSION }}
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
 
-    - name: Setup pixi
-      uses: prefix-dev/setup-pixi@v0.4.1
-      with:
-        pixi-version: ${{ env.PIXI_VERSION }}
+      - name: Setup pixi
+        uses: prefix-dev/setup-pixi@v0.4.1
+        with:
+          pixi-version: ${{ env.PIXI_VERSION }}
 
-    - name: Install formatting tools
-      run: |
-        pixi install
-        pixi add black isort ruff
+      - name: Install formatting tools
+        run: |
+          pixi install
+          pixi add black isort ruff
 
-    # Check if formatting is needed
-    - name: Check formatting
-      id: format_check
-      run: |
-        echo "checking=true" >> $GITHUB_OUTPUT
-        if ! pixi run black --check --quiet datavia/ tests/; then
-          echo "needs_black=true" >> $GITHUB_OUTPUT
-        fi
-        if ! pixi run isort --check-only --quiet datavia/ tests/; then
-          echo "needs_isort=true" >> $GITHUB_OUTPUT
-        fi
+      # Fail-fast formatting checks
+      - name: Check code formatting (black)
+        run: pixi run black --check datavia/ tests/
 
-    # Apply formatting fixes
-    - name: Apply black formatting
-      if: steps.format_check.outputs.needs_black == 'true'
-      run: pixi run black datavia/ tests/
-
-    - name: Apply isort formatting  
-      if: steps.format_check.outputs.needs_isort == 'true'
-      run: pixi run isort datavia/ tests/
-
-    # Commit formatting changes back to PR
-    - name: Commit formatting fixes
-      if: steps.format_check.outputs.needs_black == 'true' || steps.format_check.outputs.needs_isort == 'true'
-      run: |
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-        git add .
-        git diff --cached --exit-code || (git commit -m "Auto-fix: Apply code formatting [skip ci]" && git push)
+      - name: Check import sorting (isort)
+        run: pixi run isort --check-only datavia/ tests/
 
   # Job 2: Code Quality Analysis
   quality:
     name: Code Quality
-    needs: format  # Run after formatting is applied
+    needs: format-check  # Run after formatting check passes
     runs-on: ubuntu-latest
-    
+
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    - name: Setup Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ env.PYTHON_VERSION }}
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
 
-    - name: Setup pixi
-      uses: prefix-dev/setup-pixi@v0.4.1
-      with:
-        pixi-version: ${{ env.PIXI_VERSION }}
+      - name: Setup pixi
+        uses: prefix-dev/setup-pixi@v0.4.1
+        with:
+          pixi-version: ${{ env.PIXI_VERSION }}
 
-    - name: Install dependencies
-      run: |
-        pixi install
-        pixi add ruff mypy
+      - name: Install dependencies
+        run: |
+          pixi install
+          pixi add ruff mypy
 
-    - name: Lint with ruff
-      run: |
-        pixi run ruff check datavia/ tests/ --output-format=github
+      - name: Lint with ruff
+        run: |
+          pixi run ruff check datavia/ tests/ --output-format=github
 
-    - name: Type checking with mypy
-      run: |
-        pixi run mypy datavia/ --ignore-missing-imports
-      continue-on-error: true  # Don't fail CI on type issues yet
+      - name: Type checking with mypy
+        run: |
+          pixi run mypy datavia/ --ignore-missing-imports
 
   # Job 3: Testing Matrix
   test:
     name: Test Python ${{ matrix.python-version }}
-    needs: format
+    needs: format-check
     runs-on: ubuntu-latest
-    
+
     strategy:
       fail-fast: true
       matrix:
         python-version: ['3.9', '3.10', '3.11', '3.12']
-    
+
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Setup Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ matrix.python-version }}
+      - name: Setup Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
 
-    - name: Setup pixi
-      uses: prefix-dev/setup-pixi@v0.4.1
-      with:
-        pixi-version: ${{ env.PIXI_VERSION }}
+      - name: Setup pixi
+        uses: prefix-dev/setup-pixi@v0.4.1
+        with:
+          pixi-version: ${{ env.PIXI_VERSION }}
 
-    - name: Install dependencies
-      run: pixi install
+      - name: Install dependencies
+        run: pixi install
 
-    - name: Run unit tests
-      run: |
-        pixi run python -m pytest \
-          tests/test_config.py \
-          tests/test_coordinate_transforms.py \
-          tests/test_runner.py \
-          tests/test_spatial_ops.py \
-          -v \
-          --cov=datavia \
-          --cov-report=xml \
-          --cov-report=html \
-          --junitxml=test-results-py${{ matrix.python-version }}.xml
+      - name: Run unit tests
+        run: |
+          pixi run python -m pytest \
+            tests/test_config.py \
+            tests/test_coordinate_transforms.py \
+            tests/test_runner.py \
+            tests/test_spatial_ops.py \
+            -v \
+            --cov=datavia \
+            --cov-report=xml \
+            --cov-report=html \
+            --junitxml=test-results-py${{ matrix.python-version }}.xml
 
-    - name: Run integration tests
-      run: |
-        pixi run python -m pytest \
-          tests/test_e2e_workflows.py::TestContainerIntegration \
-          tests/test_e2e_workflows.py::TestDataQualityWorkflows::test_coordinate_validation_workflow \
-          tests/test_e2e_workflows.py::TestDataQualityWorkflows::test_spatial_bounds_validation_workflow \
-          tests/test_e2e_workflows.py::TestSpatialOperationsWorkflow \
-          tests/test_e2e_workflows.py::TestConfigurationWorkflows::test_global_config_workflow \
-          tests/test_e2e_workflows.py::TestErrorHandlingWorkflows \
-          -v
+      - name: Run integration tests
+        run: |
+          F="tests/test_e2e_workflows.py"
+          T="TestDataQualityWorkflows"
+          pixi run python -m pytest \
+            "$F::TestContainerIntegration" \
+            "$F::$T::test_coordinate_validation_workflow" \
+            "$F::$T::test_spatial_bounds_validation_workflow" \
+            "$F::TestSpatialOperationsWorkflow" \
+            "$F::TestConfigurationWorkflows::test_global_config_workflow" \
+            "$F::TestErrorHandlingWorkflows" \
+            -v
 
-    - name: Upload test results
-      uses: actions/upload-artifact@v3
-      if: always()
-      with:
-        name: test-results-py${{ matrix.python-version }}
-        path: |
-          test-results-py${{ matrix.python-version }}.xml
-          htmlcov/
-          .coverage
+      - name: Upload test results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: test-results-py${{ matrix.python-version }}
+          path: |
+            test-results-py${{ matrix.python-version }}.xml
+            htmlcov/
+            .coverage
 
     # Only upload coverage from one Python version
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v3
-      if: matrix.python-version == '3.12'
-      with:
-        file: ./coverage.xml
-        flags: unittests
-        name: codecov-umbrella
-        fail_ci_if_error: false
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        if: matrix.python-version == '3.12'
+        with:
+          file: ./coverage.xml
+          flags: unittests
+          name: codecov-umbrella
+          fail_ci_if_error: false
 
   # Job 4: Documentation Build
   docs:
     name: Documentation
-    needs: format
+    needs: format-check
     runs-on: ubuntu-latest
-    
+
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Setup Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ env.PYTHON_VERSION }}
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
 
-    - name: Setup pixi
-      uses: prefix-dev/setup-pixi@v0.4.1
-      with:
-        pixi-version: ${{ env.PIXI_VERSION }}
+      - name: Setup pixi
+        uses: prefix-dev/setup-pixi@v0.4.1
+        with:
+          pixi-version: ${{ env.PIXI_VERSION }}
 
-    - name: Install dependencies
-      run: pixi install
+      - name: Install dependencies
+        run: pixi install
 
-    - name: Build documentation
-      run: |
-        cd docs
-        pixi run sphinx-build -b html . _build/html -W
+      - name: Build documentation
+        run: |
+          cd docs
+          pixi run sphinx-build -b html . _build/html -W
 
-    - name: Check documentation links
-      run: |
-        cd docs
-        pixi run sphinx-build -b linkcheck . _build/linkcheck
-      continue-on-error: true
+      - name: Check documentation links
+        run: |
+          cd docs
+          pixi run sphinx-build -b linkcheck . _build/linkcheck
 
-    - name: Upload documentation
-      uses: actions/upload-artifact@v3
-      with:
-        name: documentation-pr
-        path: docs/_build/html
+      - name: Upload documentation
+        uses: actions/upload-artifact@v3
+        with:
+          name: documentation-pr
+          path: docs/_build/html
 
   # Job 5: Documentation Code Test
   docs-test:
     name: Test Documentation Examples
-    needs: format
+    needs: format-check
     runs-on: ubuntu-latest
-    
+
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Setup Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ env.PYTHON_VERSION }}
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
 
-    - name: Setup pixi
-      uses: prefix-dev/setup-pixi@v0.4.1
-      with:
-        pixi-version: ${{ env.PIXI_VERSION }}
+      - name: Setup pixi
+        uses: prefix-dev/setup-pixi@v0.4.1
+        with:
+          pixi-version: ${{ env.PIXI_VERSION }}
 
-    - name: Install dependencies
-      run: pixi install
+      - name: Install dependencies
+        run: pixi install
 
-    - name: Test documentation code examples
-      run: |
-        pixi run python scripts/test_docs_modern.py --format sphinx --verbose
+      - name: Test documentation code examples
+        run: |
+          pixi run python scripts/test_docs_modern.py --format sphinx --verbose
 
   # Job 5: Security Scan
   security:
     name: Security
-    needs: format
+    needs: format-check
     runs-on: ubuntu-latest
-    
+
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Setup Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ env.PYTHON_VERSION }}
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
 
-    - name: Setup pixi
-      uses: prefix-dev/setup-pixi@v0.4.1
-      with:
-        pixi-version: ${{ env.PIXI_VERSION }}
+      - name: Setup pixi
+        uses: prefix-dev/setup-pixi@v0.4.1
+        with:
+          pixi-version: ${{ env.PIXI_VERSION }}
 
-    - name: Install security tools
-      run: |
-        pixi install
-        pixi add bandit safety
+      - name: Install security tools
+        run: |
+          pixi install
+          pixi add bandit safety
 
-    - name: Security scan with bandit
-      run: |
-        pixi run bandit -r datavia/ -f json -o bandit-report.json || true
+      - name: Security scan with bandit
+        run: |
+          pixi run bandit -r datavia/ -f json -o bandit-report.json || true
 
-    - name: Check dependencies with safety
-      run: |
-        pixi run safety check --json --output safety-report.json || true
+      - name: Check dependencies with safety
+        run: |
+          pixi run safety check --json --output safety-report.json || true
 
-    - name: Upload security reports
-      uses: actions/upload-artifact@v3
-      if: always()
-      with:
-        name: security-reports
-        path: |
-          bandit-report.json
-          safety-report.json
+      - name: Upload security reports
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: security-reports
+          path: |
+            bandit-report.json
+            safety-report.json
 
   # Job 6: Build Check (verify package builds correctly)
   build-check:
     name: Build Check
     needs: [quality, test]
     runs-on: ubuntu-latest
-    
+
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    - name: Setup Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ env.PYTHON_VERSION }}
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
 
-    - name: Setup pixi
-      uses: prefix-dev/setup-pixi@v0.4.1
-      with:
-        pixi-version: ${{ env.PIXI_VERSION }}
+      - name: Setup pixi
+        uses: prefix-dev/setup-pixi@v0.4.1
+        with:
+          pixi-version: ${{ env.PIXI_VERSION }}
 
-    - name: Install build tools
-      run: |
-        pixi install
-        pixi add build twine
+      - name: Install build tools
+        run: |
+          pixi install
+          pixi add build twine
 
-    - name: Build packages
-      run: |
-        chmod +x scripts/build_packages.sh
-        ./scripts/build_packages.sh
+      - name: Build packages
+        run: |
+          chmod +x scripts/build_packages.sh
+          ./scripts/build_packages.sh
 
-    - name: Check packages
-      run: |
-        pixi run twine check dist/*.whl || echo "Package check completed with warnings"
+      - name: Check packages
+        run: |
+          pixi run twine check dist/*.whl || \
+            echo "Package check completed with warnings"
 
-    - name: Upload build artifacts
-      uses: actions/upload-artifact@v3
-      with:
-        name: dist-packages-pr
-        path: dist/
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: dist-packages-pr
+          path: dist/

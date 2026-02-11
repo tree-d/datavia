@@ -1,7 +1,8 @@
+---
 # Datavia Release Pipeline for PyPI Publishing
-# 
-# This workflow handles official releases to PyPI when code is pushed to the release branch
-# or when a release tag is created.
+#
+# This workflow handles official releases to PyPI when code is pushed to the
+# release branch or when a release tag is created.
 #
 # Features:
 # - Full test suite execution
@@ -16,9 +17,9 @@
 name: Release - PyPI Publishing
 
 # Trigger on pushes to release branch or release tags
-on:
+"on":
   push:
-    branches: [ release ]
+    branches: [release]
     tags:
       - 'v*.*.*'
   workflow_dispatch:
@@ -46,32 +47,353 @@ jobs:
       fail-fast: true
       matrix:
         python-version: ['3.9', '3.10', '3.11', '3.12']
-    
+
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    - name: Setup Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ matrix.python-version }}
+      - name: Setup Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
 
-    - name: Setup pixi
-      uses: prefix-dev/setup-pixi@v0.4.1
-      with:
-        pixi-version: ${{ env.PIXI_VERSION }}
+      - name: Setup pixi
+        uses: prefix-dev/setup-pixi@v0.4.1
+        with:
+          pixi-version: ${{ env.PIXI_VERSION }}
 
-    - name: Install dependencies
-      run: pixi install
+      - name: Install dependencies
+        run: pixi install
 
-    # Run ALL tests including slower integration tests
-    - name: Run comprehensive test suite
-      run: |
-        pixi run python -m pytest \\\n          tests/ \\\n          -v \\\n          --cov=datavia \\\n          --cov-report=xml \\\n          --cov-report=html \\\n          --junitxml=test-results-release-py${{ matrix.python-version }}.xml \\\n          --timeout=300  # 5 minute timeout for longer tests
+      # Run ALL tests including slower integration tests
+      - name: Run comprehensive test suite
+        run: |
+          pixi run python -m pytest \
+            tests/ \
+            -v \
+            --cov=datavia \
+            --cov-report=xml \
+            --cov-report=html \
+            --junitxml=test-results-release-py${{ matrix.python-version }}.xml \
+            --timeout=300  # 5 minute timeout for longer tests
 
-    - name: Upload test results
-      uses: actions/upload-artifact@v3\n      if: always()\n      with:\n        name: test-results-release-py${{ matrix.python-version }}\n        path: |\n          test-results-release-py${{ matrix.python-version }}.xml\n          htmlcov/\n          .coverage
+      - name: Upload test results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: test-results-release-py${{ matrix.python-version }}
+          path: |
+            test-results-release-py${{ matrix.python-version }}.xml
+            htmlcov/
+            .coverage
 
-  # Job 2: Code Quality Gate (must pass for release)\n  quality-gate:\n    name: Release Quality Gate\n    runs-on: ubuntu-latest\n    \n    steps:\n    - name: Checkout repository\n      uses: actions/checkout@v4\n      with:\n        fetch-depth: 0\n\n    - name: Setup Python\n      uses: actions/setup-python@v4\n      with:\n        python-version: ${{ env.PYTHON_VERSION }}\n\n    - name: Setup pixi\n      uses: prefix-dev/setup-pixi@v0.4.1\n      with:\n        pixi-version: ${{ env.PIXI_VERSION }}\n\n    - name: Install dependencies\n      run: |\n        pixi install\n        pixi add black isort ruff mypy bandit safety\n\n    # All quality checks must pass for release\n    - name: Check code formatting (black)\n      run: pixi run black --check datavia/ tests/\n\n    - name: Check import sorting (isort)\n      run: pixi run isort --check-only datavia/ tests/\n\n    - name: Lint code (ruff)\n      run: pixi run ruff check datavia/ tests/\n\n    - name: Type checking (mypy)\n      run: pixi run mypy datavia/ --ignore-missing-imports\n\n    - name: Security scan (bandit)\n      run: pixi run bandit -r datavia/ -ll\n\n    - name: Dependency vulnerability check (safety)\n      run: pixi run safety check\n\n  # Job 3: Version Management\n  version:\n    name: Manage Version\n    needs: [test, quality-gate]\n    runs-on: ubuntu-latest\n    outputs:\n      version: ${{ steps.version.outputs.version }}\n      tag: ${{ steps.version.outputs.tag }}\n    \n    steps:\n    - name: Checkout repository\n      uses: actions/checkout@v4\n      with:\n        fetch-depth: 0\n\n    - name: Determine version\n      id: version\n      run: |\n        if [[ \"${{ github.event_name }}\" == \"workflow_dispatch\" ]]; then\n          # Manual trigger with specified version\n          VERSION=\"${{ github.event.inputs.version }}\"\n        elif [[ \"${{ github.ref }}\" == refs/tags/v* ]]; then\n          # Tagged release\n          VERSION=${GITHUB_REF#refs/tags/v}\n        else\n          # Branch release - extract version from pyproject.toml and ensure it's a release version\n          VERSION=$(grep '^version = ' pyproject.toml | sed 's/version = \"\\(.*\\)\"/\\1/' | tr -d '\"')\n          # Remove -dev suffix if present\n          VERSION=${VERSION%-dev}\n        fi\n        \n        echo \"version=$VERSION\" >> $GITHUB_OUTPUT\n        echo \"tag=v$VERSION\" >> $GITHUB_OUTPUT\n        echo \"Release version: $VERSION\"\n\n    - name: Update version in pyproject.toml\n      run: |\n        sed -i 's/version = \".*\"/version = \"${{ steps.version.outputs.version }}\"/g' pyproject.toml\n        git config --local user.email \"action@github.com\"\n        git config --local user.name \"GitHub Action\"\n        git add pyproject.toml\n        git diff --cached --exit-code || git commit -m \"Bump version to ${{ steps.version.outputs.version }}\"\n\n  # Job 4: Build Release Packages\n  build:\n    name: Build Release Packages\n    needs: version\n    runs-on: ubuntu-latest\n    \n    steps:\n    - name: Checkout repository\n      uses: actions/checkout@v4\n      with:\n        fetch-depth: 0\n\n    - name: Setup Python\n      uses: actions/setup-python@v4\n      with:\n        python-version: ${{ env.PYTHON_VERSION }}\n\n    - name: Setup pixi\n      uses: prefix-dev/setup-pixi@v0.4.1\n      with:\n        pixi-version: ${{ env.PIXI_VERSION }}\n\n    - name: Install build dependencies\n      run: |\n        pixi install\n        pixi add build twine\n\n    - name: Update version in pyproject.toml\n      run: |\n        sed -i 's/version = \".*\"/version = \"${{ needs.version.outputs.version }}\"/g' pyproject.toml\n        \n    - name: Build packages\n      run: |\n        chmod +x scripts/build_packages.sh\n        ./scripts/build_packages.sh\n\n    - name: Verify packages\n      run: |\n        pixi run twine check dist/*.whl dist/*.tar.gz\n        \n    # Test installation\n    - name: Test package installation\n      run: |\n        python -m venv test_env\n        source test_env/bin/activate\n        pip install dist/*.whl\n        python -c \"import datavia; print(f'Successfully imported datavia version: {datavia.__version__}')\"\n\n    - name: Upload build artifacts\n      uses: actions/upload-artifact@v3\n      with:\n        name: release-packages-${{ needs.version.outputs.version }}\n        path: dist/\n\n  # Job 5: Publish to TestPyPI (for testing)\n  publish-test:\n    name: Publish to TestPyPI\n    needs: [version, build]\n    runs-on: ubuntu-latest\n    if: github.event.inputs.test_pypi_only == 'true' || github.ref == 'refs/heads/release'\n    environment:\n      name: testpypi\n      url: https://test.pypi.org/p/datavia\n    \n    steps:\n    - name: Download artifacts\n      uses: actions/download-artifact@v3\n      with:\n        name: release-packages-${{ needs.version.outputs.version }}\n        path: dist/\n\n    - name: Publish to TestPyPI\n      uses: pypa/gh-action-pypi-publish@release/v1\n      with:\n        password: ${{ secrets.TEST_PYPI_API_TOKEN }}\n        repository-url: https://test.pypi.org/legacy/\n        skip-existing: true\n\n  # Job 6: Publish to PyPI (production)\n  publish-pypi:\n    name: Publish to PyPI\n    needs: [version, build, publish-test]\n    runs-on: ubuntu-latest\n    if: github.event.inputs.test_pypi_only != 'true' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/release')\n    environment:\n      name: pypi\n      url: https://pypi.org/p/datavia\n    \n    steps:\n    - name: Download artifacts\n      uses: actions/download-artifact@v3\n      with:\n        name: release-packages-${{ needs.version.outputs.version }}\n        path: dist/\n\n    - name: Publish to PyPI\n      uses: pypa/gh-action-pypi-publish@release/v1\n      with:\n        password: ${{ secrets.PYPI_API_TOKEN }}\n\n  # Job 7: Create GitHub Release\n  github-release:\n    name: Create GitHub Release\n    needs: [version, build, publish-pypi]\n    runs-on: ubuntu-latest\n    if: success() && github.event.inputs.test_pypi_only != 'true'\n    \n    steps:\n    - name: Checkout repository\n      uses: actions/checkout@v4\n      with:\n        fetch-depth: 0\n\n    - name: Download artifacts\n      uses: actions/download-artifact@v3\n      with:\n        name: release-packages-${{ needs.version.outputs.version }}\n        path: dist/\n\n    # Generate changelog\n    - name: Generate changelog\n      id: changelog\n      run: |\n        # Simple changelog generation\n        LAST_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo \"\")\n        if [[ -n \"$LAST_TAG\" ]]; then\n          CHANGELOG=$(git log --oneline $LAST_TAG..HEAD --pretty=format:\"- %s (%h)\")\n        else\n          CHANGELOG=$(git log --oneline --pretty=format:\"- %s (%h)\" | head -20)\n        fi\n        echo \"CHANGELOG<<EOF\" >> $GITHUB_OUTPUT\n        echo \"$CHANGELOG\" >> $GITHUB_OUTPUT\n        echo \"EOF\" >> $GITHUB_OUTPUT\n\n    - name: Create Release\n      uses: softprops/action-gh-release@v1\n      with:\n        tag_name: ${{ needs.version.outputs.tag }}\n        name: Release ${{ needs.version.outputs.version }}\n        body: |\n          🎉 **Datavia ${{ needs.version.outputs.version }}**\n          \n          This release has been published to PyPI and is available for installation:\n          \n          ```bash\n          pip install datavia==${{ needs.version.outputs.version }}\n          ```\n          \n          ## Changes\n          ${{ steps.changelog.outputs.CHANGELOG }}\n          \n          ## Installation\n          \n          - **PyPI**: https://pypi.org/project/datavia/${{ needs.version.outputs.version }}/\n          - **Documentation**: https://tree-d.github.io/datavia\n          \n          ## Checksums\n          \n          See attached files for package checksums.\n        files: |\n          dist/*.whl\n          dist/*.tar.gz\n        draft: false\n        prerelease: false\n\n  # Job 8: Post-release tasks\n  post-release:\n    name: Post-release Tasks\n    needs: [version, github-release]\n    runs-on: ubuntu-latest\n    if: success()\n    \n    steps:\n    - name: Checkout repository\n      uses: actions/checkout@v4\n      with:\n        token: ${{ secrets.GITHUB_TOKEN }}\n        fetch-depth: 0\n\n    # Merge release branch back to main\n    - name: Merge release to main\n      if: github.ref == 'refs/heads/release'\n      run: |\n        git config --local user.email \"action@github.com\"\n        git config --local user.name \"GitHub Action\"\n        git fetch origin main\n        git checkout main\n        git merge origin/release --no-ff -m \"Merge release ${{ needs.version.outputs.version }} to main\"\n        git push origin main\n\n    # Update version to next development version\n    - name: Bump to next development version\n      if: github.ref == 'refs/heads/release'\n      run: |\n        # This would increment version and add -dev suffix\n        # You might want to create a script for this\n        echo \"Next development version bump would happen here\"\n        \n    - name: Notify team\n      run: |\n        echo \"🎉 Release ${{ needs.version.outputs.version }} completed successfully!\"\n        echo \"📦 Published to PyPI: https://pypi.org/project/datavia/${{ needs.version.outputs.version }}/\"\n        echo \"🏷️ GitHub release created: ${{ needs.version.outputs.tag }}\"\n        # Add Slack/Discord/email notifications here
+  # Job 2: Code Quality Gate (must pass for release)
+  quality-gate:
+    name: Release Quality Gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Setup pixi
+        uses: prefix-dev/setup-pixi@v0.4.1
+        with:
+          pixi-version: ${{ env.PIXI_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          pixi install
+          pixi add black isort ruff mypy bandit safety
+
+      # All quality checks must pass for release
+      - name: Check code formatting (black)
+        run: pixi run black --check datavia/ tests/
+
+      - name: Check import sorting (isort)
+        run: pixi run isort --check-only datavia/ tests/
+
+      - name: Lint code (ruff)
+        run: pixi run ruff check datavia/ tests/
+
+      - name: Type checking (mypy)
+        run: pixi run mypy datavia/ --ignore-missing-imports
+
+      - name: Security scan (bandit)
+        run: pixi run bandit -r datavia/ -ll
+
+      - name: Dependency vulnerability check (safety)
+        run: pixi run safety check
+  # Job 3: Version Management
+  version:
+    name: Manage Version
+    needs: [test, quality-gate]
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            # Manual trigger with specified version
+            VERSION="${{ github.event.inputs.version }}"
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            # Tagged release
+            VERSION=${GITHUB_REF#refs/tags/v}
+          else
+            # Branch release - extract version from pyproject.toml
+            VERSION=$(grep '^version = ' pyproject.toml | \
+              sed 's/version = "\(.*\)"/\1/' | tr -d '"')
+            # Remove -dev suffix if present
+            VERSION=${VERSION%-dev}
+          fi
+
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=v$VERSION" >> $GITHUB_OUTPUT
+          echo "Release version: $VERSION"
+
+      - name: Update version in pyproject.toml
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          sed -i "s/version = \".*\"/version = \"$VERSION\"/g" pyproject.toml
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add pyproject.toml
+          git diff --cached --exit-code || \
+            git commit -m "Bump version to $VERSION"
+
+  # Job 4: Build Release Packages
+  build:
+    name: Build Release Packages
+    needs: version
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Setup pixi
+        uses: prefix-dev/setup-pixi@v0.4.1
+        with:
+          pixi-version: ${{ env.PIXI_VERSION }}
+
+      - name: Install build dependencies
+        run: |
+          pixi install
+          pixi add build twine
+
+      - name: Update version in pyproject.toml
+        run: |
+          VERSION="${{ needs.version.outputs.version }}"
+          sed -i "s/version = \".*\"/version = \"$VERSION\"/g" pyproject.toml
+
+      - name: Build packages
+        run: |
+          chmod +x scripts/build_packages.sh
+          ./scripts/build_packages.sh
+
+      - name: Verify packages
+        run: |
+          pixi run twine check dist/*.whl dist/*.tar.gz
+
+      # Test installation
+      - name: Test package installation
+        run: |
+          python -m venv test_env
+          source test_env/bin/activate
+          pip install dist/*.whl
+          python -c "import datavia; print(f'Version: {datavia.__version__}')"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: release-packages-${{ needs.version.outputs.version }}
+          path: dist/
+
+  # Job 5: Publish to TestPyPI (for testing)
+  publish-test:
+    name: Publish to TestPyPI
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    if: >
+      github.event.inputs.test_pypi_only == 'true' ||
+      github.ref == 'refs/heads/release'
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/datavia
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: release-packages-${{ needs.version.outputs.version }}
+          path: dist/
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.TEST_PYPI_API_TOKEN }}
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
+
+  # Job 6: Publish to PyPI (production)
+  publish-pypi:
+    name: Publish to PyPI
+    needs: [version, build, publish-test]
+    runs-on: ubuntu-latest
+    if: >
+      github.event.inputs.test_pypi_only != 'true' &&
+      (startsWith(github.ref, 'refs/tags/v') ||
+      github.ref == 'refs/heads/release')
+    environment:
+      name: pypi
+      url: https://pypi.org/p/datavia
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: release-packages-${{ needs.version.outputs.version }}
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
+
+  # Job 7: Create GitHub Release
+  github-release:
+    name: Create GitHub Release
+    needs: [version, build, publish-pypi]
+    runs-on: ubuntu-latest
+    if: success() && github.event.inputs.test_pypi_only != 'true'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: release-packages-${{ needs.version.outputs.version }}
+          path: dist/
+
+      # Generate changelog
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Simple changelog generation
+          LAST_TAG=$(git describe --tags --abbrev=0 HEAD^ \
+            2>/dev/null || echo "")
+          if [[ -n "$LAST_TAG" ]]; then
+            CHANGELOG=$(git log --oneline $LAST_TAG..HEAD \
+              --pretty=format:"- %s (%h)")
+          else
+            CHANGELOG=$(git log --oneline \
+              --pretty=format:"- %s (%h)" | head -20)
+          fi
+          echo "CHANGELOG<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGELOG" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: Release ${{ env.VERSION }}
+          body: |
+            🎉 **Datavia ${{ env.VERSION }}**
+
+            This release has been published to PyPI and is available for
+            installation:
+
+            ```bash
+            pip install datavia==${{ env.VERSION }}
+            ```
+
+            ## Changes
+            ${{ steps.changelog.outputs.CHANGELOG }}
+
+            ## Installation
+
+            - **PyPI**: https://pypi.org/project/datavia/${{ env.VERSION }}/
+            - **Documentation**: https://tree-d.github.io/datavia
+
+            ## Checksums
+
+            See attached files for package checksums.
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
+          draft: false
+          prerelease: false
+
+  # Job 8: Post-release tasks
+  post-release:
+    name: Post-release Tasks
+    needs: [version, github-release]
+    runs-on: ubuntu-latest
+    if: success()
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      # Merge release branch back to main
+      - name: Merge release to main
+        if: github.ref == 'refs/heads/release'
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git fetch origin main
+          git checkout main
+          git merge origin/release --no-ff \
+            -m "Merge release ${{ needs.version.outputs.version }} to main"
+          git push origin main
+
+      # Update version to next development version
+      - name: Bump to next development version
+        if: github.ref == 'refs/heads/release'
+        run: |
+          # This would increment version and add -dev suffix
+          # You might want to create a script for this
+          echo "Next development version bump would happen here"
+
+      - name: Notify team
+        run: |
+          Version="${{ needs.version.outputs.version }}"
+          echo "🎉 Release $Version completed successfully!"
+          echo "📦 Published to PyPI: https://pypi.org/project/datavia/$Version/"
+          echo "🏷️ GitHub release created: $Version"
+          # Add Slack/Discord/email notifications here
