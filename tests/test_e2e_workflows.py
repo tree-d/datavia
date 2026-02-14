@@ -1,15 +1,17 @@
 """End-to-end integration tests for Datavia pipeline workflows."""
 
-import pytest
-import numpy as np
-import tempfile
 import json
+import tempfile
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
+import numpy as np
+import pytest
 
 from datavia.config import DataviaConfig
 from datavia.core.datavia import Datavia
-from datavia.runner import start_container, stop_container, get_container_status
+from datavia.runner import (get_container_status, start_container,
+                            stop_container)
 
 
 class TestDataviaE2EWorkflows:
@@ -340,10 +342,8 @@ class TestSpatialOperationsWorkflow:
     @patch("datavia.library.spatial_ops.rasterio")
     def test_metadata_extraction_workflow(self, mock_rasterio):
         """Test complete metadata extraction workflow."""
-        from datavia.library.spatial_ops import (
-            read_geotiff_metadata,
-            get_geotiff_bounds,
-        )
+        from datavia.library.spatial_ops import (get_geotiff_bounds,
+                                                 read_geotiff_metadata)
 
         # Mock TIFF metadata
         mock_src = MagicMock()

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Comprehensive namespace package debugging test."""
 
-import sys
-import os
 import importlib.util
+import os
+import sys
 
 
 def debug_installation():

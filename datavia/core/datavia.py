@@ -1,7 +1,8 @@
 import logging
 from typing import List
-from .interfaces import Pipeline
+
 from ..library.database.start import initialize_database
+from .interfaces import Pipeline
 
 
 class Datavia:

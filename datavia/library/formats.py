@@ -11,7 +11,8 @@ All processor format functionality migrated here.
 """
 
 import logging
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
+
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -35,8 +36,8 @@ except ImportError:
     VECTOR_AVAILABLE = False
 
 try:
-    import xarray as xr
     import netCDF4
+    import xarray as xr
 
     NETCDF_AVAILABLE = True
 except ImportError:

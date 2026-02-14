@@ -6,13 +6,14 @@ Handles Datavia instance management, pipeline operations, and container manageme
 Separated from main CLI for better maintainability and reusability.
 """
 
-import os
-import sys
 import importlib.util
 import logging
+import os
+import sys
 import time
 from typing import Optional
-from .runner import start_container, stop_container, get_container_status
+
+from .runner import get_container_status, start_container, stop_container
 
 logger = logging.getLogger(__name__)
 

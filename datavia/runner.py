@@ -1,7 +1,7 @@
-from pathlib import Path
+import logging
 import subprocess
 import time
-import logging
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 compose_dir = Path(__file__).parent

@@ -11,18 +11,19 @@ Contains all TIFF/raster operations with full processor functionality:
 All functions are thread-safe for parallel pipeline use.
 """
 
-import numpy as np
-from typing import Tuple, Dict, Any, Optional, List
 import logging
+from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
 # Try to import rasterio - required for TIFF operations
 try:
     import rasterio
-    from rasterio.transform import from_bounds
     from rasterio import features, mask
-    from rasterio.warp import reproject, Resampling
+    from rasterio.transform import from_bounds
+    from rasterio.warp import Resampling, reproject
 
     RASTERIO_AVAILABLE = True
 except ImportError:

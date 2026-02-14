@@ -1,9 +1,12 @@
 """Tests for container management functions in datavia.runner."""
 
 import subprocess
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
-from datavia.runner import get_container_status, start_container, stop_container
+
+from datavia.runner import (get_container_status, start_container,
+                            stop_container)
 
 
 class TestContainerManagement:
