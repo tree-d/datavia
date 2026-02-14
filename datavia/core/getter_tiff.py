@@ -20,7 +20,7 @@ from .interfaces import Getter
 logger = logging.getLogger(__name__)
 
 
-class getter_tiff(Getter):
+class GetterTiff(Getter):
     """Getter class for retrieving data from TIFF files."""
 
     def __init__(self, source_name: str, *args, **kwds):

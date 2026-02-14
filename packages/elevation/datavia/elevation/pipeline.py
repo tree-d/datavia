@@ -4,15 +4,12 @@ Elevation Pipeline (renamed from Topography).
 Self-contained pipeline for elevation data using generic TIFF handling.
 """
 
-import numpy as np
-from typing import Dict, Any
 import logging
-import os
 
-from datavia.core.interfaces import Pipeline
-from datavia.core.getter_tiff import getter_tiff
-from datavia.core.saver_tiff import TiffSaver
 from datavia.core.downloader_url import TiffDownloader
+from datavia.core.getter_tiff import GetterTiff
+from datavia.core.interfaces import Pipeline
+from datavia.core.saver_tiff import TiffSaver
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +25,7 @@ class ElevationPipeline(Pipeline):
         """Initialize the elevation pipeline with TIFF handlers."""
         downloader = TiffDownloader
         saver = TiffSaver
-        getter = getter_tiff
+        getter = GetterTiff
         super().__init__(name, downloader, saver, getter, url=url)
 
     def update_data(self):
