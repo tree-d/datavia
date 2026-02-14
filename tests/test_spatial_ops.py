@@ -3,7 +3,6 @@
 from unittest.mock import MagicMock, patch
 
 import numpy as np
-import pytest
 
 from datavia.library.spatial_ops import (
     extract_values_at_coords,

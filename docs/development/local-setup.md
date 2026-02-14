@@ -42,3 +42,20 @@ datavia/
 
 1. **Local Development:** All packages are installed in editable mode
 2. **Multi-package:** Core + extension packages work together
+
+```bash
+# Code quality tasks (use dev environment)
+pixi run -e dev format          # Auto-format code
+pixi run -e dev format-check    # Check formatting without changes
+pixi run -e dev lint            # Run ruff linting
+pixi run -e dev type-check      # Run mypy type checking
+pixi run -e dev security-scan   # Run bandit security scan
+
+# Testing tasks
+pixi run -e dev test-unit       # Run unit tests
+pixi run -e dev test-integration # Run integration tests  
+pixi run -e dev test-all        # Run all tests with coverage
+
+# Complete CI check
+pixi run -e dev ci-check        # Run all checks like CI pipeline
+```

@@ -291,7 +291,7 @@ def get_geotiff_bounds(tiff_path: str) -> tuple[float, float, float, float] | No
                 return (bounds.left, bounds.bottom, bounds.right, bounds.top)
             else:
                 # Assume it's a tuple in (left, bottom, right, top) order
-                return bounds
+                return tuple(bounds)
     except Exception as e:
         logger.error(f"Error getting bounds from {tiff_path}: {e}")
         return None
