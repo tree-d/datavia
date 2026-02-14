@@ -11,8 +11,7 @@ from datavia.elevation import ElevationPipeline
 
 from datavia.core.datavia import Datavia
 from datavia.library.database.start import initialize_database
-from datavia.runner import (get_container_status, start_container,
-                            stop_container)
+from datavia.runner import get_container_status, start_container, stop_container
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

@@ -10,8 +10,7 @@ import pytest
 
 from datavia.config import DataviaConfig
 from datavia.core.datavia import Datavia
-from datavia.runner import (get_container_status, start_container,
-                            stop_container)
+from datavia.runner import get_container_status, start_container, stop_container
 
 
 class TestDataviaE2EWorkflows:
@@ -342,8 +341,10 @@ class TestSpatialOperationsWorkflow:
     @patch("datavia.library.spatial_ops.rasterio")
     def test_metadata_extraction_workflow(self, mock_rasterio):
         """Test complete metadata extraction workflow."""
-        from datavia.library.spatial_ops import (get_geotiff_bounds,
-                                                 read_geotiff_metadata)
+        from datavia.library.spatial_ops import (
+            get_geotiff_bounds,
+            read_geotiff_metadata,
+        )
 
         # Mock TIFF metadata
         mock_src = MagicMock()

@@ -5,13 +5,15 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from datavia.library.quality_control import (_detect_outliers_iqr,
-                                             _detect_outliers_modified_zscore,
-                                             _detect_outliers_zscore,
-                                             apply_quality_filters,
-                                             check_data_quality,
-                                             detect_outliers,
-                                             validate_coordinate_bounds)
+from datavia.library.quality_control import (
+    _detect_outliers_iqr,
+    _detect_outliers_modified_zscore,
+    _detect_outliers_zscore,
+    apply_quality_filters,
+    check_data_quality,
+    detect_outliers,
+    validate_coordinate_bounds,
+)
 
 
 class TestCoordinateValidation:

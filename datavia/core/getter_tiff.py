@@ -10,8 +10,11 @@ import logging
 import numpy as np
 
 from ..library import spatial_ops
-from ..library.database.query import (check_source_exists, get_raster_metadata,
-                                      get_raster_paths)
+from ..library.database.query import (
+    check_source_exists,
+    get_raster_metadata,
+    get_raster_paths,
+)
 from ..library.interpolation import spatial_interpolate
 from .interfaces import Getter
 

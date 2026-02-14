@@ -7,12 +7,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import logging
 
 import numpy as np
+
 # Import from namespace package (works with installed packages)
 from datavia.elevation import ElevationPipeline
 
 from datavia.library.database.start import initialize_database
-from datavia.runner import (get_container_status, start_container,
-                            stop_container)
+from datavia.runner import get_container_status, start_container, stop_container
 
 logging.basicConfig(level=logging.INFO)
 

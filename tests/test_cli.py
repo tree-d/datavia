@@ -16,9 +16,12 @@ from unittest.mock import MagicMock, call, mock_open, patch
 import pytest
 
 from datavia.cli_config import create_config_file
-from datavia.cli_utils import (get_pipeline_dependencies,
-                               start_datavia_environment,
-                               stop_datavia_environment, update_pipeline)
+from datavia.cli_utils import (
+    get_pipeline_dependencies,
+    start_datavia_environment,
+    stop_datavia_environment,
+    update_pipeline,
+)
 
 
 # Create wrapper functions that match test expectations

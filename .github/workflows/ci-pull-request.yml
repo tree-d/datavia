@@ -48,7 +48,7 @@ jobs:
       - name: Install formatting tools
         run: |
           pixi install
-          pixi add black isort ruff
+          pixi add black isort
 
       # Fail-fast formatting checks
       - name: Check code formatting (black)
