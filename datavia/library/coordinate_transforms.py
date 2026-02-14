@@ -67,11 +67,12 @@ def transform_coordinates(
     try:
         transformer = get_transformer(source_crs, target_crs)
 
-        # Transform coordinates
-        x_coords, y_coords = transformer.transform(coords[:, 0], coords[:, 1])
+        # Transform coordinates using itransform - designed for arrays
+        # itransform expects an iterable of coordinate pairs
+        transformed_coords = list(transformer.itransform(coords))
 
-        # Return as coordinate array
-        return np.column_stack([x_coords, y_coords])
+        # Convert back to numpy array
+        return np.array(transformed_coords)
 
     except Exception as e:
         logger.error(
