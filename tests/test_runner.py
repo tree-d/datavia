@@ -146,6 +146,7 @@ class TestContainerManagement:
         mock_run.assert_any_call(
             ["docker", "compose", "down", "--remove-orphans"],
             cwd="/home/bergmi/tree-D_data-integration/datavia/datavia",
+            check=False,
         )
 
 

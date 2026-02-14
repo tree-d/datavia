@@ -286,7 +286,12 @@ def get_geotiff_bounds(tiff_path: str) -> tuple[float, float, float, float] | No
     try:
         with rasterio.open(tiff_path) as src:
             bounds = src.bounds
-            return (bounds.left, bounds.bottom, bounds.right, bounds.top)
+            # Handle both BoundingBox objects and plain tuples
+            if hasattr(bounds, "left"):
+                return (bounds.left, bounds.bottom, bounds.right, bounds.top)
+            else:
+                # Assume it's a tuple in (left, bottom, right, top) order
+                return bounds
     except Exception as e:
         logger.error(f"Error getting bounds from {tiff_path}: {e}")
         return None
