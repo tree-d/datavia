@@ -38,7 +38,8 @@ class Saver(ABC):
     def sync_files_and_database(self) -> bool:
         """Sync files with database records.
         Returns:
-            bool: True if files and database are successfully synced, False if there is nothing to sync."""
+            bool: True if files and database are successfully synced, False if there is nothing to sync.
+        """
         raise NotImplementedError("Sync method must be implemented by subclasses.")
 
     @abstractmethod
