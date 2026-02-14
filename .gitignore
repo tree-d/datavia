@@ -38,6 +38,14 @@ _build/
 # pytest cache
 .pytest_cache/
 
+# CI/CD generated files
+test-results-*.xml
+htmlcov/
+coverage.xml
+bandit-report.json  
+safety-report.json
+docs/_build/
+.coverage
 
 # datavia config file
 datavia_config.py

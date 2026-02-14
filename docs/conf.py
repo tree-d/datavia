@@ -82,13 +82,12 @@ napoleon_include_private_with_doc = False
 html_theme = "alabaster"
 html_static_path = ["_static"]
 
-# Theme options
+# Theme options for alabaster theme
 html_theme_options = {
-    "navigation_depth": 4,
-    "collapse_navigation": False,
-    "sticky_navigation": True,
-    "includehidden": True,
-    "titles_only": False,
+    "description": "Datavia - Data integration framework",
+    "github_user": "tree-d",
+    "github_repo": "datavia",
+    "show_powered_by": False,
 }
 
 # -- Intersphinx mapping ----------------------------------------------------

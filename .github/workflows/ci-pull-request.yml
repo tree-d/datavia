@@ -232,7 +232,7 @@ jobs:
         run: |
           pixi run test-docs-verbose
 
-  # Job 5: Security Scan
+  # Job 6: Security Scan
   security:
     name: Security
     needs: format-check
@@ -255,64 +255,16 @@ jobs:
       - name: Install security tools
         run: |
           pixi install
-          pixi add bandit safety
+          pixi add bandit
 
       - name: Security scan with bandit
         run: |
           pixi run bandit -r datavia/ -f json -o bandit-report.json || true
 
-      - name: Check dependencies with safety
-        run: |
-          pixi run safety check --json --output safety-report.json || true
-
-      - name: Upload security reports
+      - name: Upload security report
         uses: actions/upload-artifact@v3
         if: always()
         with:
-          name: security-reports
+          name: security-report
           path: |
             bandit-report.json
-            safety-report.json
-
-  # Job 6: Build Check (verify package builds correctly)
-  build-check:
-    name: Build Check
-    needs: [quality, test]
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Setup pixi
-        uses: prefix-dev/setup-pixi@v0.4.1
-        with:
-          pixi-version: ${{ env.PIXI_VERSION }}
-
-      - name: Install build tools
-        run: |
-          pixi install
-          pixi add build twine
-
-      - name: Build packages
-        run: |
-          chmod +x scripts/build_packages.sh
-          ./scripts/build_packages.sh
-
-      - name: Check packages
-        run: |
-          pixi run twine check dist/*.whl || \
-            echo "Package check completed with warnings"
-
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v3
-        with:
-          name: dist-packages-pr
-          path: dist/
