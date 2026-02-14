@@ -203,9 +203,9 @@ class TiffSaver(Saver):
             session.execute(
                 text(
                     """
-                    INSERT INTO raster_layers 
+                    INSERT INTO raster_layers
                     (layer_name, source_name, bbox, resolution_x, resolution_y, crs, uri, acquisition_time)
-                    VALUES (:layer_name, :source_name, ST_GeomFromText(:bbox_wkt, :srid), 
+                    VALUES (:layer_name, :source_name, ST_GeomFromText(:bbox_wkt, :srid),
                             :res_x, :res_y, :crs, :uri, :acq_time)
                 """
                 ),
