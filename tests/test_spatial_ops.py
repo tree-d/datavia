@@ -36,22 +36,22 @@ class TestValueExtraction:
         assert result[1] == 20.3
         mock_src.sample.assert_called_once_with(coords, indexes=1)
 
-    @pytest.mark.skip(
-        reason="Complex coordinate transformation test - core functionality tested in other tests"
-    )
     @patch("datavia.library.spatial_ops.rasterio")
     def test_extract_values_at_coords_with_crs_transform(self, mock_rasterio):
         """Test value extraction with coordinate transformation."""
         # Mock rasterio dataset
         mock_src = MagicMock()
         mock_src.crs.to_string.return_value = "EPSG:3857"
-        mock_src.sample.return_value = [np.array([15.0])]
+        mock_src.nodata = None  # No nodata value
+
+        # Mock sample method to return an iterator of arrays
+        mock_src.sample.return_value = iter([np.array([15.0])])
         mock_rasterio.open.return_value.__enter__.return_value = mock_src
 
         coords = np.array([[1.0, 2.0]])
 
         with patch(
-            "datavia.library.coordinate_transforms.transform_coordinates"
+            "datavia.library.spatial_ops.transform_coordinates"
         ) as mock_transform:
             mock_transform.return_value = np.array([[111319.5, 222684.2]])
             result = extract_values_at_coords(

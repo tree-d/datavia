@@ -192,8 +192,7 @@ class TestConfigModule:
         self.test_dir = Path(tempfile.mkdtemp())
         self.config_file = self.test_dir / "test_datavia.conf"
         # Clear global config between tests
-
-        datavia.config._config = None
+        datavia.config._CONFIG_STATE["config"] = None
 
     def teardown_method(self):
         """Clean up after tests."""
@@ -201,12 +200,13 @@ class TestConfigModule:
         if self.test_dir.exists():
             shutil.rmtree(self.test_dir)
         # Clear global config after tests
-
-        datavia.config._config = None
+        datavia.config._CONFIG_STATE["config"] = None
 
     @patch("datavia.config.DataviaConfig")
     def test_get_config_returns_singleton(self, mock_config_class):
         """Test get_config returns the same instance on multiple calls."""
+        # Clear any existing cached config
+        datavia.config._CONFIG_STATE["config"] = None
 
         config1 = get_config()
         config2 = get_config()
@@ -217,6 +217,9 @@ class TestConfigModule:
     @patch("datavia.config.DataviaConfig")
     def test_reload_config_creates_new_instance(self, mock_config_class):
         """Test reload_config forces creation of new config instance."""
+        # Clear any existing cached config
+        datavia.config._CONFIG_STATE["config"] = None
+
         get_config()
         reload_config()
         get_config()

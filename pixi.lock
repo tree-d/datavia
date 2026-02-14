@@ -887,7 +887,7 @@ packages:
 - pypi: ./
   name: datavia
   version: 1.0.0.dev0
-  sha256: b3e28acdfda34933bc7347e2bb12e0a76a30bb9ab6b65b782df868d241db00de
+  sha256: 098de7578ff134949ff5de9f4e6300075b7734a6f794cc864858e278c98189af
   requires_dist:
   - numpy>=2.2.0,<3.0
   - rasterio>=1.4.3,<2.0
