@@ -48,6 +48,21 @@ pip install datavia-soil
 pip install datavia[all]
 ```
 
+**Vector data (shapefiles)**: To enable Fiona-based shapefile support, install GDAL first, then install the `vector` extra:
+
+```bash
+# Linux (conda-forge)
+conda install -c conda-forge gdal
+
+# pixi
+pixi add gdal
+
+# Then install datavia with vector support
+pip install datavia[vector]
+```
+
+If GDAL is missing, Fiona will fail to build with errors about `gdal-config`.
+
 **Important**: The core `datavia` package contains NO pipeline implementations by design. Pipelines are separate packages (`datavia-elevation`, `datavia-soil`) that are installed only when explicitly requested.
 
 #### Option 2: pixi (Development environment)
@@ -56,6 +71,10 @@ pip install datavia[all]
 pixi add --pypi datavia
 # or with elevationpipeline
 pixi add --pypi datavia[soil]
+
+# Vector support (requires GDAL from conda-forge in your pixi.toml)
+pixi add gdal -c conda-forge
+pixi add --pypi datavia[vector]
 ```
 
 ### Basic Setup

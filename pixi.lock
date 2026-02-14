@@ -883,7 +883,7 @@ packages:
 - pypi: ./
   name: datavia
   version: 1.0.0.dev0
-  sha256: 28d6ace1a7fab3de2109343fe2df8de26fca0e694d999e77a7f63a931e233e94
+  sha256: b3e28acdfda34933bc7347e2bb12e0a76a30bb9ab6b65b782df868d241db00de
   requires_dist:
   - numpy>=2.2.0,<3.0
   - rasterio>=1.4.3,<2.0
@@ -905,13 +905,15 @@ packages:
   - scipy>=1.16.0,<2.0
   - rioxarray>=0.19.0,<0.20
   - tifffile>=2025.3.30
-  - fiona>=1.10.1,<2
   - datavia-elevation @ file:///$PROJECT_ROOT/packages/elevation ; extra == 'elevation'
   - datavia-soil @ file:///$PROJECT_ROOT/packages/soil ; extra == 'soil'
   - datavia-weather @ file:///$PROJECT_ROOT/packages/weather ; extra == 'weather'
+  - fiona>=1.10.1,<2 ; extra == 'vector'
+  - shapely>=2.0.4,<3.0 ; extra == 'vector'
   - datavia[elevation] ; extra == 'pipelines'
   - datavia[soil] ; extra == 'pipelines'
   - datavia[pipelines] ; extra == 'all'
+  - datavia[vector] ; extra == 'all'
   - pytest>=7.0.0,<8.0 ; extra == 'dev'
   - pytest-cov>=7.0.0,<8.0 ; extra == 'dev'
   - pytest-mock>=3.14.1,<4.0 ; extra == 'dev'
