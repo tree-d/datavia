@@ -6,12 +6,14 @@ Tests configuration management, file creation, validation, and environment handl
 """
 
 import os
+import shutil
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
+import datavia.config
 from datavia.config import DataviaConfig, get_config, reload_config
 
 
@@ -26,7 +28,6 @@ class TestDataviaConfig:
     def teardown_method(self):
         """Clean up after each test."""
         # Clean up temporary files
-        import shutil
 
         if self.test_dir.exists():
             shutil.rmtree(self.test_dir)
@@ -191,25 +192,21 @@ class TestConfigModule:
         self.test_dir = Path(tempfile.mkdtemp())
         self.config_file = self.test_dir / "test_datavia.conf"
         # Clear global config between tests
-        import datavia.config
 
         datavia.config._config = None
 
     def teardown_method(self):
         """Clean up after tests."""
-        import shutil
 
         if self.test_dir.exists():
             shutil.rmtree(self.test_dir)
         # Clear global config after tests
-        import datavia.config
 
         datavia.config._config = None
 
     @patch("datavia.config.DataviaConfig")
     def test_get_config_returns_singleton(self, mock_config_class):
         """Test get_config returns the same instance on multiple calls."""
-        mock_instance = mock_config_class.return_value
 
         config1 = get_config()
         config2 = get_config()
@@ -220,11 +217,9 @@ class TestConfigModule:
     @patch("datavia.config.DataviaConfig")
     def test_reload_config_creates_new_instance(self, mock_config_class):
         """Test reload_config forces creation of new config instance."""
-        mock_instance1 = mock_config_class.return_value
-
-        config1 = get_config()
+        get_config()
         reload_config()
-        config2 = get_config()
+        get_config()
 
         # Should be called twice - once for initial, once for reload
         assert mock_config_class.call_count == 2

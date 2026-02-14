@@ -8,6 +8,7 @@ pipeline management, and container operations.
 
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -21,7 +22,6 @@ from datavia.cli_config import create_config_file
 # Create wrapper functions that match test expectations
 def _create_config_file(config_file):
     """Wrapper for create_config_file with expected signature."""
-    from pathlib import Path
 
     # Check if file exists (like old implementation)
     if Path(config_file).exists():
@@ -46,13 +46,12 @@ def _get_pipeline_dependencies(pipeline_name):
 
 def _install_pipeline_dependencies(dependency_list):
     """Install dependencies from a list (test-expected signature)."""
-    import subprocess
 
     if not dependency_list:
         return True
 
     try:
-        cmd = ["pip", "install"] + dependency_list
+        cmd = ["pip", "install", *dependency_list]
         subprocess.run(cmd, check=True, capture_output=True)
         return True
     except subprocess.CalledProcessError:
@@ -74,9 +73,7 @@ def _stop():
 def _update_pipeline(pipeline_name):
     """Update pipeline with dependency installation (test-expected behavior)."""
     dependencies = _get_pipeline_dependencies(pipeline_name)
-    if not _install_pipeline_dependencies(dependencies):
-        return False
-    return True
+    return _install_pipeline_dependencies(dependencies)
 
 
 # Mock missing functions that were replaced
@@ -125,7 +122,6 @@ class TestConfigFileCreation:
 
     def teardown_method(self):
         """Clean up test environment."""
-        import shutil
 
         if self.test_dir.exists():
             shutil.rmtree(self.test_dir)

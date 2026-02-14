@@ -90,7 +90,7 @@ class TestValueExtraction:
         mock_rasterio.open.return_value.__enter__.return_value = mock_src
 
         coords = np.array([[1.0, 2.0]])
-        result = extract_values_at_coords("test.tiff", coords, band=3)
+        extract_values_at_coords("test.tiff", coords, band=3)
 
         mock_src.sample.assert_called_once_with(coords, indexes=3)
 
@@ -140,7 +140,7 @@ class TestRasterSampling:
             "datavia.library.spatial_ops.extract_values_at_coords"
         ) as mock_extract:
             mock_extract.return_value = np.array([10.0])
-            result = raster_sample("test.tiff", coords, method="nearest")
+            raster_sample("test.tiff", coords, method="nearest")
 
             # Should call the extract function for nearest method
             mock_extract.assert_called_once()
@@ -329,8 +329,8 @@ class TestIntegration:
         assert bounds == (0.0, 0.0, 10.0, 10.0)
 
         valid_mask = validate_coordinates_in_bounds(coords, bounds)
-        assert valid_mask[0] == True  # first point is valid
-        assert valid_mask[1] == False  # second point is invalid
+        assert valid_mask[0]  # first point is valid
+        assert not valid_mask[1]  # second point is invalid
 
         # Extract values only for valid coordinates
         valid_coords = coords[valid_mask]

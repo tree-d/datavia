@@ -10,33 +10,32 @@ Supports all geospatial formats used by pipelines:
 All processor format functionality migrated here.
 """
 
+import contextlib
 import logging
 from typing import Any
 
+import fiona
 import numpy as np
+from rasterio.transform import from_bounds
 
 logger = logging.getLogger(__name__)
 
 # Import dependencies with fallbacks
 try:
     import rasterio
-    from rasterio.crs import CRS
 
     RASTERIO_AVAILABLE = True
 except ImportError:
     RASTERIO_AVAILABLE = False
 
 try:
-    import fiona
     import shapely.geometry as geom
-    from shapely.prepared import prep
 
     VECTOR_AVAILABLE = True
 except ImportError:
     VECTOR_AVAILABLE = False
 
 try:
-    import netCDF4
     import xarray as xr
 
     NETCDF_AVAILABLE = True
@@ -77,10 +76,8 @@ def read_tiff_metadata(filepath: str) -> dict[str, Any]:
                         "description": None,
                     }
 
-                    try:
+                    with contextlib.suppress(Exception):
                         band_meta["description"] = src.get_band_description(i)
-                    except Exception:
-                        pass
 
                     bands.append(band_meta)
 
@@ -98,7 +95,7 @@ def write_tiff_data(
     filepath: str,
     crs: str = "EPSG:4326",
     transform: Any = None,
-    nodata: float = None,
+    nodata: float | None = None,
 ) -> bool:
     """Write array data to GeoTIFF with proper geospatial metadata."""
     if not RASTERIO_AVAILABLE:
@@ -120,7 +117,6 @@ def write_tiff_data(
         # Create transform if not provided
         if transform is None:
             # Simple identity transform - should be provided by caller
-            from rasterio.transform import from_bounds
 
             transform = from_bounds(-180, -90, 180, 90, width, height)
 

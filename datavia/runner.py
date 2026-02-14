@@ -42,7 +42,9 @@ def stop_container():
         logger.error(f"Error during container shutdown: {e}")
         # Force cleanup even if graceful stop failed
         subprocess.run(
-            ["docker", "compose", "down", "--remove-orphans"], cwd=str(compose_dir)
+            ["docker", "compose", "down", "--remove-orphans"],
+            cwd=str(compose_dir),
+            check=False,
         )
         raise
 

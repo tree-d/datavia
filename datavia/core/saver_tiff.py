@@ -4,6 +4,7 @@ Handles saving TIFF files to designated folder and managing metadata in PostGIS.
 Enhanced with multi-band TIFF support.
 """
 
+import contextlib
 import datetime
 import logging
 import os
@@ -298,10 +299,8 @@ class TiffSaver(Saver):
 
                     # Fallback to get_band_description
                     if not desc:
-                        try:
+                        with contextlib.suppress(Exception):
                             desc = src.get_band_description(i)
-                        except Exception:
-                            pass
 
                     # Final fallback: tags or generated name
                     if not desc:

@@ -3,13 +3,21 @@
 import json
 import tempfile
 from pathlib import Path
+from subprocess import CalledProcessError
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
 
-from datavia.config import DataviaConfig
+from datavia.config import DataviaConfig, get_config, reload_config
 from datavia.core.datavia import Datavia
+from datavia.library.quality_control import detect_outliers, validate_coordinate_bounds
+from datavia.library.spatial_ops import (
+    extract_values_at_coords,
+    get_geotiff_bounds,
+    read_geotiff_metadata,
+    validate_coordinates_in_bounds,
+)
 from datavia.runner import get_container_status, start_container, stop_container
 
 
@@ -230,7 +238,6 @@ class TestDataQualityWorkflows:
 
     def test_coordinate_validation_workflow(self):
         """Test complete coordinate validation workflow."""
-        from datavia.library.quality_control import validate_coordinate_bounds
 
         # Mixed quality coordinates
         coords = np.array(
@@ -254,7 +261,6 @@ class TestDataQualityWorkflows:
 
     def test_outlier_detection_workflow(self):
         """Test complete outlier detection workflow."""
-        from datavia.library.quality_control import detect_outliers
 
         # Dataset with clear outliers
         elevation_data = np.array([100, 120, 110, 105, 115, 1000, 95, 108, 2000, 102])
@@ -271,7 +277,6 @@ class TestDataQualityWorkflows:
 
     def test_spatial_bounds_validation_workflow(self):
         """Test spatial bounds validation in pipeline context."""
-        from datavia.library.spatial_ops import validate_coordinates_in_bounds
 
         # Test coordinates around Europe
         coords = np.array(
@@ -294,10 +299,10 @@ class TestDataQualityWorkflows:
         valid_mask = validate_coordinates_in_bounds(coords, europe_bounds)
 
         # Should validate European coordinates
-        assert valid_mask[0] == True  # Germany
-        assert valid_mask[1] == False  # Asia
-        assert valid_mask[2] == True  # France
-        assert valid_mask[3] == False  # Atlantic
+        assert valid_mask[0]  # Germany
+        assert not valid_mask[1]  # Asia
+        assert valid_mask[2]  # France
+        assert not valid_mask[3]  # Atlantic
 
 
 class TestSpatialOperationsWorkflow:
@@ -306,7 +311,6 @@ class TestSpatialOperationsWorkflow:
     @patch("datavia.library.spatial_ops.rasterio")
     def test_tiff_value_extraction_workflow(self, mock_rasterio):
         """Test complete TIFF value extraction workflow."""
-        from datavia.library.spatial_ops import extract_values_at_coords
 
         # Mock TIFF data
         mock_src = MagicMock()
@@ -341,10 +345,6 @@ class TestSpatialOperationsWorkflow:
     @patch("datavia.library.spatial_ops.rasterio")
     def test_metadata_extraction_workflow(self, mock_rasterio):
         """Test complete metadata extraction workflow."""
-        from datavia.library.spatial_ops import (
-            get_geotiff_bounds,
-            read_geotiff_metadata,
-        )
 
         # Mock TIFF metadata
         mock_src = MagicMock()
@@ -384,7 +384,7 @@ class TestConfigurationWorkflows:
 
         # Verify default values
         assert config.get("log_level") == "INFO"
-        assert config.get("cache_enabled") == True
+        assert config.get("cache_enabled")
         assert "data" in config.get("data_dir")
 
         # Test config modification
@@ -401,7 +401,6 @@ class TestConfigurationWorkflows:
 
     def test_global_config_workflow(self):
         """Test global configuration instance workflow."""
-        from datavia.config import get_config, reload_config
 
         # Test global instance
         config1 = get_config()
@@ -423,7 +422,6 @@ class TestErrorHandlingWorkflows:
 
     def test_missing_file_workflow(self):
         """Test handling of missing TIFF files."""
-        from datavia.library.spatial_ops import extract_values_at_coords
 
         coords = np.array([[10.0, 50.0]])
 
@@ -435,7 +433,6 @@ class TestErrorHandlingWorkflows:
 
     def test_invalid_coordinates_workflow(self):
         """Test handling of invalid coordinate inputs."""
-        from datavia.library.quality_control import validate_coordinate_bounds
 
         # Test with invalid coordinate format
         invalid_coords = np.array([10.0, 50.0])  # Should be 2D
@@ -450,10 +447,12 @@ class TestErrorHandlingWorkflows:
     def test_container_failure_workflow(self, mock_run):
         """Test handling of container operation failures."""
         # Mock container start failure
-        mock_run.side_effect = Exception("Docker not available")
+        mock_run.side_effect = CalledProcessError(
+            returncode=1, cmd="docker run", output="Docker not available"
+        )
 
         # Should handle docker failures gracefully
-        with pytest.raises(Exception):
+        with pytest.raises(CalledProcessError):
             start_container()
 
 

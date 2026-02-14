@@ -17,16 +17,6 @@ from .coordinate_transforms import transform_coordinates
 
 logger = logging.getLogger(__name__)
 
-# Optional dependencies
-try:
-    from scipy.interpolate import CubicSpline, griddata, interp1d
-    from scipy.spatial.distance import cdist
-
-    SCIPY_AVAILABLE = True
-except ImportError:
-    SCIPY_AVAILABLE = False
-    logger.warning("scipy not available - advanced interpolation limited")
-
 
 def spatial_interpolate(
     tiff_path: str,
