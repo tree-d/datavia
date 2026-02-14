@@ -8,9 +8,10 @@ Data quality functions for all pipelines:
 - Quality flags and metadata
 """
 
-import numpy as np
-from typing import Dict, List, Tuple, Optional, Any
 import logging
+from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
 
 logger = logging.getLogger(__name__)
 

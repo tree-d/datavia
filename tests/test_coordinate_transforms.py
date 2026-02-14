@@ -5,11 +5,13 @@ Unit tests for datavia.library.coordinate_transforms module.
 Tests coordinate transformations between different CRS systems.
 """
 
-import pytest
-import numpy as np
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
-from datavia.library.coordinate_transforms import get_transformer, transform_coordinates
+import numpy as np
+import pytest
+
+from datavia.library.coordinate_transforms import (get_transformer,
+                                                   transform_coordinates)
 
 
 class TestCoordinateTransforms:

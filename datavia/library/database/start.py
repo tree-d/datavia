@@ -5,9 +5,11 @@ Checks schema and runs init.sql if needed.
 """
 
 import logging
-from sqlalchemy import text
-from .connection import engine
 from pathlib import Path
+
+from sqlalchemy import text
+
+from .connection import engine
 
 logger = logging.getLogger(__name__)
 

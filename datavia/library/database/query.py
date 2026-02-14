@@ -4,8 +4,10 @@ Part of the Library component - provides database operations for Core components
 """
 
 import logging
-from typing import List, Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
+
 from sqlalchemy import text
+
 from .connection import SessionLocal
 
 logger = logging.getLogger(__name__)

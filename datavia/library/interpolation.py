@@ -7,20 +7,22 @@ All spatial and temporal interpolation methods for pipeline use:
 - Quality-aware interpolation with outlier detection
 """
 
-import numpy as np
-from typing import List, Optional, Tuple, Dict, Any
 import logging
 from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
 import rasterio
 from rasterio.warp import transform as rio_transform
 from scipy.ndimage import map_coordinates
+
 from .coordinate_transforms import transform_coordinates
 
 logger = logging.getLogger(__name__)
 
 # Optional dependencies
 try:
-    from scipy.interpolate import griddata, interp1d, CubicSpline
+    from scipy.interpolate import CubicSpline, griddata, interp1d
     from scipy.spatial.distance import cdist
 
     SCIPY_AVAILABLE = True

@@ -6,21 +6,19 @@ Tests command line interface functions including config file creation,
 pipeline management, and container operations.
 """
 
-import pytest
-import tempfile
-import os
 import json
+import os
 import subprocess
+import tempfile
 from pathlib import Path
-from unittest.mock import patch, mock_open, MagicMock, call
+from unittest.mock import MagicMock, call, mock_open, patch
+
+import pytest
 
 from datavia.cli_config import create_config_file
-from datavia.cli_utils import (
-    get_pipeline_dependencies,
-    start_datavia_environment,
-    stop_datavia_environment,
-    update_pipeline,
-)
+from datavia.cli_utils import (get_pipeline_dependencies,
+                               start_datavia_environment,
+                               stop_datavia_environment, update_pipeline)
 
 
 # Create wrapper functions that match test expectations

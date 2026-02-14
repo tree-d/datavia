@@ -5,9 +5,11 @@ Provides engine and session for all components (Fetcher, Processor, Getter).
 Reads config from datavia/config.py.
 """
 
+import logging
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-import logging
+
 from ...config import get_config
 
 logger = logging.getLogger(__name__)

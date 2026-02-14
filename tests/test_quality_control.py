@@ -1,18 +1,17 @@
 """Tests for data quality control and validation functions."""
 
-import pytest
-import numpy as np
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
-from datavia.library.quality_control import (
-    validate_coordinate_bounds,
-    detect_outliers,
-    check_data_quality,
-    apply_quality_filters,
-    _detect_outliers_iqr,
-    _detect_outliers_zscore,
-    _detect_outliers_modified_zscore,
-)
+import numpy as np
+import pytest
+
+from datavia.library.quality_control import (_detect_outliers_iqr,
+                                             _detect_outliers_modified_zscore,
+                                             _detect_outliers_zscore,
+                                             apply_quality_filters,
+                                             check_data_quality,
+                                             detect_outliers,
+                                             validate_coordinate_bounds)
 
 
 class TestCoordinateValidation:

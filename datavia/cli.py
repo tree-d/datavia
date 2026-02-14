@@ -1,20 +1,16 @@
-import click
+import importlib.util
+import logging
 import os
 import sys
-import importlib.util
-from .cli_utils import (
-    get_datavia_instance,
-    update_pipeline,
-    get_pipeline_dependencies,
-    install_pipeline_dependencies,
-    start_datavia_environment,
-    stop_datavia_environment,
-    validate_config_file,
-    get_pipeline_status,
-    get_available_pipelines,
-)
+
+import click
+
 from .cli_config import create_config_file
-import logging
+from .cli_utils import (get_available_pipelines, get_datavia_instance,
+                        get_pipeline_dependencies, get_pipeline_status,
+                        install_pipeline_dependencies,
+                        start_datavia_environment, stop_datavia_environment,
+                        update_pipeline, validate_config_file)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

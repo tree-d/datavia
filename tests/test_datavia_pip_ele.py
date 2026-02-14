@@ -1,15 +1,18 @@
-import sys
 import os
+import sys
 
 # Add the parent directory (datavia-pipelines) to Python path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from datavia.elevation import ElevationPipeline
-from datavia.core.datavia import Datavia
-from datavia.runner import start_container, stop_container, get_container_status
-from datavia.library.database.start import initialize_database
 import logging
+
 import numpy as np
+from datavia.elevation import ElevationPipeline
+
+from datavia.core.datavia import Datavia
+from datavia.library.database.start import initialize_database
+from datavia.runner import (get_container_status, start_container,
+                            stop_container)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

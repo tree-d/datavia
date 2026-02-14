@@ -3,11 +3,11 @@ URLDownloader - Clean implementation of Downloader interface for URL-based downl
 Provides robust error handling, retry logic, and content-type validation.
 """
 
-import os
 import logging
+import os
 import random
-import time
 import tempfile
+import time
 from http.client import IncompleteRead
 from typing import Optional
 

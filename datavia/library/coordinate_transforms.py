@@ -5,9 +5,10 @@ Thread-safe coordinate reference system transformations
 used by multiple pipelines for coordinate conversions.
 """
 
-import numpy as np
-from typing import Tuple
 import logging
+from typing import Tuple
+
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
