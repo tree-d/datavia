@@ -11,6 +11,33 @@ test = {cmd = "PYTHONPATH=. pixi run python examples/basic_workflow.py"}
 test-docs = {cmd = "python scripts/test_docs_modern.py --format sphinx"}
 test-docs-verbose = {cmd = "python scripts/test_docs_modern.py --format sphinx --verbose"}
 
+# Development workflow tasks (require dev feature to be active)
+format = {cmd = "black datavia/ tests/ && isort datavia/ tests/"}
+format-check = {cmd = "black --check datavia/ tests/ && isort --check-only datavia/ tests/"}
+lint = {cmd = "ruff check datavia/ tests/"}
+type-check = {cmd = "mypy datavia/ --ignore-missing-imports"}
+security-scan = {cmd = "bandit -r datavia/ -f json -o bandit-report.json"}
+test-unit = {cmd = "python -m pytest tests/test_config.py tests/test_coordinate_transforms.py tests/test_runner.py tests/test_spatial_ops.py -v"}
+test-integration = {cmd = "python -m pytest tests/test_e2e_workflows.py::TestContainerIntegration tests/test_e2e_workflows.py::TestDataQualityWorkflows::test_coordinate_validation_workflow tests/test_e2e_workflows.py::TestDataQualityWorkflows::test_spatial_bounds_validation_workflow tests/test_e2e_workflows.py::TestSpatialOperationsWorkflow tests/test_e2e_workflows.py::TestConfigurationWorkflows::test_global_config_workflow tests/test_e2e_workflows.py::TestErrorHandlingWorkflows -v"}
+test-all = {cmd = "python -m pytest tests/ -v --cov=datavia --cov-report=xml --cov-report=html"}
+ci-check = {cmd = "pixi run format-check && pixi run lint && pixi run type-check && pixi run test-all"}
+
+# Development feature for CI/CD tools
+[feature.dev.dependencies]
+ruff = ">=0.8.0,<1.0"
+mypy = ">=1.13.0,<2.0"
+bandit = ">=1.9.3,<2.0"
+black = ">=24.0.0,<25.0"
+isort = ">=5.13.0,<6.0"
+pytest = ">=8.0.0,<9.0"
+pytest-cov = ">=7.0.0,<8.0"
+pytest-mock = ">=3.14.1,<4.0"
+
+# Environments
+[environments]
+default = { solve-group = "default" }
+dev = { features = ["dev"], solve-group = "default" }
+
 [dependencies]
 _libgcc_mutex = { version = "==0.1", build = "conda_forge" }
 _openmp_mutex = { version = "==4.5", build = "2_gnu" }
