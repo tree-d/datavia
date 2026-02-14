@@ -201,12 +201,14 @@ class TiffSaver(Saver):
 
             # Insert new metadata with source_name
             session.execute(
-                text("""
+                text(
+                    """
                     INSERT INTO raster_layers 
                     (layer_name, source_name, bbox, resolution_x, resolution_y, crs, uri, acquisition_time)
                     VALUES (:layer_name, :source_name, ST_GeomFromText(:bbox_wkt, :srid), 
                             :res_x, :res_y, :crs, :uri, :acq_time)
-                """),
+                """
+                ),
                 {
                     "layer_name": layer_name,
                     "source_name": self.source_name,
@@ -325,10 +327,12 @@ class TiffSaver(Saver):
             # Insert new band metadata - using 'band_index' to match schema
             for band_index, band_desc in descriptions:
                 session.execute(
-                    text("""
+                    text(
+                        """
                         INSERT INTO raster_band_metadata (layer_name, source_name, band_index, description)
                         VALUES (:layer_name, :source_name, :band_index, :description)
-                    """),
+                    """
+                    ),
                     {
                         "layer_name": layer_name,
                         "source_name": self.source_name,

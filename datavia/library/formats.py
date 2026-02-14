@@ -312,9 +312,9 @@ def process_temporal_netcdf(
                     results[f"point_{i}"] = {
                         "coordinates": coord.tolist(),
                         "values": point_data.values.tolist(),
-                        "time": ds.time.values.tolist()
-                        if "time" in ds.coords
-                        else None,
+                        "time": (
+                            ds.time.values.tolist() if "time" in ds.coords else None
+                        ),
                     }
 
                 except Exception as e:

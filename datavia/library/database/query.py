@@ -52,13 +52,15 @@ def get_raster_metadata(source_name: str) -> List[Dict]:
     session = SessionLocal()
     try:
         result = session.execute(
-            text("""
+            text(
+                """
                 SELECT layer_name, uri, crs, resolution_x, resolution_y, 
                         ST_AsText(bbox) as bbox_wkt, acquisition_time
                 FROM raster_layers 
                 WHERE source_name = :source_name
                 ORDER BY layer_name
-            """),
+            """
+            ),
             {"source_name": source_name},
         ).fetchall()
 
@@ -100,12 +102,14 @@ def get_band_metadata(source_name: str) -> Dict[str, List[Dict]]:
     session = SessionLocal()
     try:
         result = session.execute(
-            text("""
+            text(
+                """
                 SELECT layer_name, band_index, description
                 FROM raster_band_metadata 
                 WHERE source_name = :source_name
                 ORDER BY layer_name, band_index
-            """),
+            """
+            ),
             {"source_name": source_name},
         ).fetchall()
 
@@ -147,22 +151,26 @@ def get_layer_by_name(
     try:
         if source_name:
             result = session.execute(
-                text("""
+                text(
+                    """
                     SELECT layer_name, uri, crs, resolution_x, resolution_y, 
                             ST_AsText(bbox) as bbox_wkt, acquisition_time, source_name
                     FROM raster_layers 
                     WHERE layer_name = :layer_name AND source_name = :source_name
-                """),
+                """
+                ),
                 {"layer_name": layer_name, "source_name": source_name},
             ).fetchone()
         else:
             result = session.execute(
-                text("""
+                text(
+                    """
                     SELECT layer_name, uri, crs, resolution_x, resolution_y, 
                             ST_AsText(bbox) as bbox_wkt, acquisition_time, source_name
                     FROM raster_layers 
                     WHERE layer_name = :layer_name
-                """),
+                """
+                ),
                 {"layer_name": layer_name},
             ).fetchone()
 

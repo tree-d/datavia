@@ -307,9 +307,9 @@ def apply_quality_filters(
             "valid_mask": valid_mask,
             "valid_indices": np.where(valid_mask)[0].tolist(),
             "removed_count": original_length - len(filtered_data),
-            "quality_score": len(filtered_data) / original_length
-            if original_length > 0
-            else 0.0,
+            "quality_score": (
+                len(filtered_data) / original_length if original_length > 0 else 0.0
+            ),
             "filter_stats": {
                 "original_count": original_length,
                 "finite_removed": np.sum(~finite_mask),
