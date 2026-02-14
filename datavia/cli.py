@@ -6,11 +6,17 @@ import sys
 import click
 
 from .cli_config import create_config_file
-from .cli_utils import (get_available_pipelines, get_datavia_instance,
-                        get_pipeline_dependencies, get_pipeline_status,
-                        install_pipeline_dependencies,
-                        start_datavia_environment, stop_datavia_environment,
-                        update_pipeline, validate_config_file)
+from .cli_utils import (
+    get_available_pipelines,
+    get_datavia_instance,
+    get_pipeline_dependencies,
+    get_pipeline_status,
+    install_pipeline_dependencies,
+    start_datavia_environment,
+    stop_datavia_environment,
+    update_pipeline,
+    validate_config_file,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

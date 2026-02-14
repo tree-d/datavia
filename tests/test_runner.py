@@ -5,8 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from datavia.runner import (get_container_status, start_container,
-                            stop_container)
+from datavia.runner import get_container_status, start_container, stop_container
 
 
 class TestContainerManagement:
