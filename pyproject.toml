@@ -44,7 +44,6 @@ dependencies = [
     "scipy>=1.16.0,<2.0",
     "rioxarray>=0.19.0,<0.20",
     "tifffile>=2025.3.30",
-    "fiona>=1.10.1,<2",
 ]
 
 [project.scripts]
@@ -63,6 +62,10 @@ soil = [
 weather = [
     "datavia-weather @ file:///$PROJECT_ROOT/packages/weather",    # Local weather package
 ]
+vector = [
+    "fiona>=1.10.1,<2",
+    "shapely>=2.0.4,<3.0",
+]
 
 # Combined pipeline dependencies
 pipelines = [
@@ -71,6 +74,7 @@ pipelines = [
 ]
 all = [
     "datavia[pipelines]",
+    "datavia[vector]",
 ]
 
 dev = [

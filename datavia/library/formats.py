@@ -14,7 +14,6 @@ import contextlib
 import logging
 from typing import Any
 
-import fiona
 import numpy as np
 from rasterio.transform import from_bounds
 
@@ -29,11 +28,20 @@ except ImportError:
     RASTERIO_AVAILABLE = False
 
 try:
+    import fiona
+
+    FIONA_AVAILABLE = True
+except ImportError:
+    FIONA_AVAILABLE = False
+
+try:
     import shapely.geometry as geom
 
-    VECTOR_AVAILABLE = True
+    SHAPELY_AVAILABLE = True
 except ImportError:
-    VECTOR_AVAILABLE = False
+    SHAPELY_AVAILABLE = False
+
+VECTOR_AVAILABLE = FIONA_AVAILABLE and SHAPELY_AVAILABLE
 
 try:
     import xarray as xr
