@@ -119,12 +119,12 @@ def detect_outliers(
 
 def _detect_outliers_iqr(data: np.ndarray, threshold: float = 1.5) -> dict[str, Any]:
     """IQR-based outlier detection."""
-    Q1 = np.percentile(data, 25)
-    Q3 = np.percentile(data, 75)
-    IQR = Q3 - Q1
+    q1 = np.percentile(data, 25)
+    q3 = np.percentile(data, 75)
+    iqr = q3 - q1
 
-    lower_bound = Q1 - threshold * IQR
-    upper_bound = Q3 + threshold * IQR
+    lower_bound = q1 - threshold * iqr
+    upper_bound = q3 + threshold * iqr
 
     outlier_mask = (data < lower_bound) | (data > upper_bound)
     outlier_indices = np.where(outlier_mask)[0]
@@ -132,9 +132,9 @@ def _detect_outliers_iqr(data: np.ndarray, threshold: float = 1.5) -> dict[str, 
     return {
         "indices": outlier_indices,
         "statistics": {
-            "Q1": Q1,
-            "Q3": Q3,
-            "IQR": IQR,
+            "Q1": q1,
+            "Q3": q3,
+            "IQR": iqr,
             "lower_bound": lower_bound,
             "upper_bound": upper_bound,
         },

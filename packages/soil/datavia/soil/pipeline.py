@@ -19,7 +19,7 @@ import os
 import tempfile
 
 from datavia.core.interfaces import Pipeline, Downloader, Saver, Getter
-from datavia.core.getter_tiff import getter_tiff
+from datavia.core.getter_tiff import GetterTiff
 from datavia.core.saver_tiff import TiffSaver
 from datavia.library.spatial_ops import extract_values_at_coords
 
@@ -339,7 +339,7 @@ class SoilPipeline(Pipeline):
             name,
             downloader=SoilGridsDownloader,
             saver=TiffSaver,
-            getter=getter_tiff,
+            getter=GetterTiff,
             url=None,
         )
 
