@@ -21,14 +21,14 @@ logger = logging.getLogger(__name__)
 
 
 @click.group()
-def main():
+def main() -> None:
     """Datavia - Modular pipeline architecture for geospatial data integration."""
     pass
 
 
 # Infrastructure commands (unchanged)
 @main.command()
-def start():
+def start() -> None:
     """Start the PostGIS database container."""
     if start_datavia_environment():
         logger.info("✅ Container startup completed successfully")
@@ -38,7 +38,7 @@ def start():
 
 
 @main.command()
-def stop():
+def stop() -> None:
     """Stop the PostGIS database container."""
     if stop_datavia_environment():
         logger.info("✅ Container shutdown completed successfully")
@@ -49,7 +49,7 @@ def stop():
 
 # Configuration commands
 @main.group()
-def config():
+def config() -> None:
     """Manage Datavia configuration and selective installation."""
     pass
 
@@ -62,7 +62,9 @@ def config():
 @click.option(
     "--config-file", default="datavia_config.py", help="Configuration file path"
 )
-def init(elevation, soil, weather, radiation, config_file):
+def init(
+    elevation: bool, soil: bool, weather: bool, radiation: bool, config_file: str
+) -> None:
     """Initialize Datavia configuration with selected pipelines."""
     selected_pipelines = []
 
@@ -90,7 +92,7 @@ def init(elevation, soil, weather, radiation, config_file):
 @click.option(
     "--config-file", default="datavia_config.py", help="Configuration file path"
 )
-def validate(config_file):
+def validate(config_file: str) -> None:
     """Validate Datavia configuration file."""
     is_valid, message = validate_config_file(config_file)
 
@@ -110,7 +112,7 @@ def validate(config_file):
 @click.option(
     "--config-file", default="datavia_config.py", help="Configuration file path"
 )
-def status(config_file):
+def status(config_file: str) -> None:
     """Show current Datavia installation and configuration status."""
     logger.info("=== Datavia Installation Status ===")
 
@@ -133,7 +135,7 @@ def status(config_file):
 
 # Dynamic pipeline update commands
 @main.group()
-def update():
+def update() -> None:
     """Update data for installed pipelines."""
     pass
 
@@ -142,7 +144,7 @@ def update():
 @click.option(
     "--config-file", default="datavia_config.py", help="Configuration file path"
 )
-def elevation(config_file):
+def elevation(config_file: str) -> None:
     """Update elevation data."""
     if update_pipeline("elevation", config_file):
         logger.info("✅ Elevation update completed")
@@ -155,7 +157,7 @@ def elevation(config_file):
 @click.option(
     "--config-file", default="datavia_config.py", help="Configuration file path"
 )
-def soil(config_file):
+def soil(config_file: str) -> None:
     """Update soil data."""
     if update_pipeline("soil", config_file):
         logger.info("✅ Soil update completed")
@@ -168,7 +170,7 @@ def soil(config_file):
 @click.option(
     "--config-file", default="datavia_config.py", help="Configuration file path"
 )
-def weather(config_file):
+def weather(config_file: str) -> None:
     """Update weather data."""
     if update_pipeline("weather", config_file):
         logger.info("✅ Weather update completed")
@@ -181,7 +183,7 @@ def weather(config_file):
 @click.option(
     "--config-file", default="datavia_config.py", help="Configuration file path"
 )
-def radiation(config_file):
+def radiation(config_file: str) -> None:
     """Update radiation data."""
     if update_pipeline("radiation", config_file):
         logger.info("✅ Radiation update completed")
@@ -194,7 +196,7 @@ def radiation(config_file):
 @click.option(
     "--config-file", default="datavia_config.py", help="Configuration file path"
 )
-def all(config_file):
+def all(config_file: str) -> None:
     """Update all configured pipelines."""
     pipeline_names = get_available_pipelines(config_file)
     if not pipeline_names:
@@ -221,7 +223,7 @@ def all(config_file):
 @click.option(
     "--dry-run", is_flag=True, help="Show what would be installed without installing"
 )
-def install(config_file, dry_run):
+def install(config_file: str, dry_run: bool) -> None:
     """Install dependencies for pipelines specified in configuration."""
     pipeline_names = get_available_pipelines(config_file)
     if not pipeline_names:

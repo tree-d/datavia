@@ -194,7 +194,7 @@ def check_data_quality(
 ) -> dict[str, Any]:
     """Comprehensive data quality assessment."""
     try:
-        quality_report = {
+        quality_report: dict[str, Any] = {
             "total_points": len(data),
             "valid_points": 0,
             "missing_points": 0,
@@ -239,7 +239,7 @@ def check_data_quality(
         if len(data) > 0:
             base_score = valid_count / len(data)  # Proportion of valid data
             outlier_penalty = (
-                quality_report["outlier_points"] / len(data)
+                int(quality_report["outlier_points"]) / len(data)
             ) * 0.1  # Small penalty for outliers
             quality_report["quality_score"] = max(0.0, base_score - outlier_penalty)
 

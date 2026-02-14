@@ -211,18 +211,20 @@ def read_shapefile_data(filepath: str) -> dict[str, Any]:
         return {}
 
 
-def query_shapefile_by_coords(filepath: str, coords: np.ndarray) -> list[dict]:
+def query_shapefile_by_coords(
+    filepath: str, coords: np.ndarray
+) -> list[dict[str, Any]]:
     """Query shapefile features by coordinate points (for BÜK classification)."""
     if not VECTOR_AVAILABLE:
         return []
 
     try:
-        results = []
+        results: list[dict[str, Any]] = []
         points = [geom.Point(coord[0], coord[1]) for coord in coords]
 
         with fiona.open(filepath) as src:
             for point in points:
-                found = None
+                found: dict[str, Any] | None = None
                 for feature in src:
                     polygon = geom.shape(feature["geometry"])
                     if polygon.contains(point):
@@ -231,7 +233,8 @@ def query_shapefile_by_coords(filepath: str, coords: np.ndarray) -> list[dict]:
                             "coordinates": [point.x, point.y],
                         }
                         break
-                results.append(found)
+                if found is not None:
+                    results.append(found)
 
         return results
 
@@ -308,7 +311,7 @@ def process_temporal_netcdf(
                 selected_ds = ds
 
             # Extract data at coordinates
-            results = {}
+            results: dict[str, Any] = {}
             for i, coord in enumerate(coords):
                 try:
                     # Select nearest grid point

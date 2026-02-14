@@ -110,7 +110,7 @@ def raster_sample(
         return np.full(len(coords), np.nan)
 
 
-def _bilinear_sample(src, coords: np.ndarray) -> np.ndarray:
+def _bilinear_sample(src: Any, coords: np.ndarray) -> np.ndarray:
     """Bilinear interpolation sampling."""
     try:
         # Read full array for bilinear interpolation
@@ -285,7 +285,8 @@ def get_geotiff_bounds(tiff_path: str) -> tuple[float, float, float, float] | No
 
     try:
         with rasterio.open(tiff_path) as src:
-            return src.bounds
+            bounds = src.bounds
+            return (bounds.left, bounds.bottom, bounds.right, bounds.top)
     except Exception as e:
         logger.error(f"Error getting bounds from {tiff_path}: {e}")
         return None

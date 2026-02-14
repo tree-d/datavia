@@ -9,6 +9,7 @@ import random
 import tempfile
 import time
 from http.client import IncompleteRead
+from typing import Any
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -224,7 +225,7 @@ class URLDownloader(Downloader):
                 logger.error(f"Download failed: {e}")
                 return False
 
-    def _write_chunk_with_retries(self, file_handle, chunk: bytes) -> bool:
+    def _write_chunk_with_retries(self, file_handle: Any, chunk: bytes) -> bool:
         """Write chunk to file with retry logic."""
         for attempt in range(self.max_retries):
             try:

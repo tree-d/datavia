@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from typing import Any
 
 import numpy as np
 
@@ -7,7 +8,7 @@ class Downloader(ABC):
     """Abstract base class for data downloaders."""
 
     @abstractmethod
-    def __init__(self, url: str):
+    def __init__(self, url: str) -> None:
         """Initialize downloader with URL."""
         self.url = url
 
@@ -34,8 +35,10 @@ class Saver(ABC):
         raise NotImplementedError("Check method must be implemented by subclasses.")
 
     @abstractmethod
-    def sync_files_and_database(self):
-        """Sync files with database records."""
+    def sync_files_and_database(self) -> bool:
+        """Sync files with database records.
+        Returns:
+            bool: True if files and database are successfully synced, False if there is nothing to sync."""
         raise NotImplementedError("Sync method must be implemented by subclasses.")
 
     @abstractmethod
@@ -48,12 +51,12 @@ class Getter(ABC):
     """Abstract base class for data getters."""
 
     @abstractmethod
-    def __init__(self, source_name: str):
+    def __init__(self, source_name: str) -> None:
         """Initialize getter with source name."""
         self.source_name = source_name
 
     @abstractmethod
-    def get_data(self, coords: np.ndarray, **kwargs) -> np.ndarray:
+    def get_data(self, coords: np.ndarray, **kwargs: Any) -> np.ndarray:
         """Get data values at specified coordinates."""
         raise NotImplementedError("Get method must be implemented by subclasses.")
 
@@ -67,8 +70,8 @@ class Pipeline:
         downloader: type[Downloader],
         saver: type[Saver],
         getter: type[Getter],
-        url=None,
-    ):
+        url: str | None = None,
+    ) -> None:
         """Initialize the pipeline."""
         self.name = name
         self.downloader_class = downloader
@@ -77,20 +80,22 @@ class Pipeline:
         self.url = url
 
         # Instances created on demand
-        self.downloader = None
-        self.saver = None
-        self.getter = None
+        self.downloader: Downloader | None = None
+        self.saver: Saver | None = None
+        self.getter: Getter | None = None
 
-    def __call__(self, *args, **kwds):
+    def __call__(self, *args: Any, **kwds: Any) -> "Pipeline":
         """Initialize pipeline components - lazy instantiation."""
+        if self.url is None:
+            raise ValueError("URL is required for pipeline initialization")
         self.downloader = self.downloader_class(self.url)
         self.saver = self.saver_class(self.name)
         self.getter = self.getter_class(self.name)
         return self
 
-    def update_data(self):
+    def update_data(self) -> bool:
         """Update data by downloading and saving new data."""
-        if not self.downloader:
+        if not self.downloader or not self.saver:
             raise RuntimeError("Pipeline not initialized. Call pipeline() first.")
         data_path = self.downloader.download()
         if data_path == "failed":
@@ -98,14 +103,14 @@ class Pipeline:
         success = self.saver.save(data_path)
         return success
 
-    def find_files(self) -> set:
+    def find_files(self) -> set[Any]:
         """Find existing files in storage and database."""
         if not self.saver:
             raise RuntimeError("Pipeline not initialized. Call pipeline() first.")
         existing_files, _, _ = self.saver.check_data_exists()
         return existing_files
 
-    def sync_files_and_database(self):
+    def sync_files_and_database(self) -> None:
         """Sync files with database records."""
         if not self.saver:
             raise RuntimeError("Pipeline not initialized. Call pipeline() first.")
@@ -116,7 +121,7 @@ class Pipeline:
         coords: np.ndarray,
         crs_coords: str = "EPSG:4326",
         interpolation_order: int = 3,
-        **kwargs,
+        **kwargs: Any,
     ) -> np.ndarray:
         """Get data values at specified coordinates.
 

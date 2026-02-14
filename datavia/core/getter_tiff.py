@@ -6,6 +6,7 @@ Now uses shared processor library for coordinate transformations and spatial que
 """
 
 import logging
+from typing import Any
 
 import numpy as np
 
@@ -23,7 +24,7 @@ logger = logging.getLogger(__name__)
 class GetterTiff(Getter):
     """Getter class for retrieving data from TIFF files."""
 
-    def __init__(self, source_name: str, *args, **kwds):
+    def __init__(self, source_name: str, *args: Any, **kwds: Any) -> None:
         """Initialize getter with source name."""
         self.source_name = source_name
 
@@ -32,6 +33,7 @@ class GetterTiff(Getter):
         coords: np.ndarray,
         crs_coords: str = "EPSG:4326",
         interpolation_order: int = 3,
+        **kwargs: Any,
     ) -> np.ndarray:
         """
         Handles requests for TIFF data sources.

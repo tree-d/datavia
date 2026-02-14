@@ -8,6 +8,7 @@ All spatial and temporal interpolation methods for pipeline use:
 """
 
 import logging
+from typing import Any, cast, Literal
 
 import numpy as np
 import rasterio
@@ -66,13 +67,32 @@ def spatial_interpolate(
         coord_array = np.vstack([rows, cols])
 
         # Perform interpolation for all points simultaneously
+        # Ensure proper types for scipy.ndimage.map_coordinates
+        input_array = np.asarray(band, dtype=np.float64)
+        coordinates = np.asarray(coord_array, dtype=np.float64)
+
+        # Ensure order is one of the accepted literal values
+        order_val = min(max(interpolation_order, 0), 5)
+        if order_val == 0:
+            order_literal: Literal[0, 1, 2, 3, 4, 5] = 0
+        elif order_val == 1:
+            order_literal = 1
+        elif order_val == 2:
+            order_literal = 2
+        elif order_val == 3:
+            order_literal = 3
+        elif order_val == 4:
+            order_literal = 4
+        else:
+            order_literal = 5
+
         interpolated_values = map_coordinates(
-            band.astype(np.float64),  # Ensure float type for NaN handling
-            coord_array,
-            order=interpolation_order,  # cubic interpolation
-            cval=np.nan,  # Out-of-bounds value
+            input_array,
+            coordinates,
+            order=order_literal,
+            cval=np.nan,
             prefilter=interpolation_order > 1,
-            mode="constant",  # Use cval for out-of-bounds
+            mode="constant",
         )
 
-        return interpolated_values
+        return np.asarray(interpolated_values)

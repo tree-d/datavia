@@ -59,7 +59,7 @@ class DataviaConfig:
         logger.warning("No config file found, using defaults")
         return None
 
-    def _load_config(self):
+    def _load_config(self) -> None:
         """Load configuration from file or set defaults."""
         config_file = self._find_config_file()
 
@@ -74,7 +74,7 @@ class DataviaConfig:
             except Exception as e:
                 logger.error(f"Failed to load config file {config_file}: {e}")
 
-    def _set_defaults(self):
+    def _set_defaults(self) -> None:
         """Set default configuration values."""
         # Database configuration
         self.config["database"] = {
@@ -196,7 +196,7 @@ class DataviaConfig:
         """Get maximum number of API retries."""
         return int(self.config["api"]["max_retries"])
 
-    def ensure_directories(self):
+    def ensure_directories(self) -> None:
         """Create directories if they don't exist."""
         if self.config["paths"].getboolean("create_missing"):
             directories = [self.data_directory, self.log_directory]
@@ -208,7 +208,7 @@ class DataviaConfig:
                 except Exception as e:
                     logger.error(f"Failed to create directory {directory}: {e}")
 
-    def validate_paths(self):
+    def validate_paths(self) -> None:
         """Validate that required paths exist."""
         if (
             self.config["paths"].getboolean("path_validation")
@@ -227,7 +227,7 @@ class DataviaConfig:
 
 
 # Global configuration instance without global statement usage
-_CONFIG_STATE = {"config": None}
+_CONFIG_STATE: dict[str, DataviaConfig | None] = {"config": None}
 
 
 def _get_cached_config() -> DataviaConfig | None:
@@ -249,7 +249,7 @@ def get_config() -> DataviaConfig:
     return cached_config
 
 
-def reload_config(config_file: str | None = None):
+def reload_config(config_file: str | None = None) -> "DataviaConfig":
     """Reload configuration from file."""
     reloaded_config = DataviaConfig(config_file)
     reloaded_config.validate_paths()

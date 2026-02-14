@@ -9,6 +9,7 @@ import datetime
 import logging
 import os
 import shutil
+from typing import Any
 
 import rasterio
 from rasterio.warp import transform_bounds
@@ -65,7 +66,7 @@ class TiffSaver(Saver):
             logger.error(f"Failed to save TIFF file {data_path}: {e}")
             return False
 
-    def check_data_exists(self) -> tuple[set, set, set]:
+    def check_data_exists(self) -> tuple[set[Any], set[Any], set[Any]]:
         """
         Check if a TIFF file with the given layer name exists in the data directory.
 
@@ -119,15 +120,15 @@ class TiffSaver(Saver):
             logger.error(
                 f"Failed to find files and database info for source {self.source_name}: {e}"
             )
-            return False, False, False
+            return set(), set(), set()
 
-    def sync_files_and_database(self):
+    def sync_files_and_database(self) -> bool:
         """
         Sync TIFF files in data directory with PostGIS metadata records.
         Enhanced to handle multi-band metadata cleanup and source-specific filtering.
 
         Returns:
-            bool: True if sync operation was successful
+            bool: True if sync operation was successful, False if there is nothing to sync or an error occurred
         """
         found_files, missing_files, new_files = self.check_data_exists()
         for layer_name in missing_files:
@@ -140,11 +141,15 @@ class TiffSaver(Saver):
                 layer_name + ".tif",
             )
             self._import_raster_metadata_with_bands(file_path, layer_name)
-            found_files.add(layer_name)
             logger.info(f"Added metadata for new file: {layer_name}")
-        return found_files
+        logger.info(
+            f"Sync completed. Found: {len(found_files)}, Missing: {len(missing_files)}, New: {len(new_files)}"
+        )
+        return bool(found_files or new_files)
 
-    def _import_raster_metadata(self, filepath: str, layer_name: str, session=None):
+    def _import_raster_metadata(
+        self, filepath: str, layer_name: str, session: Any = None
+    ) -> None:
         """Import raster metadata into PostGIS raster_layers table."""
         should_close_session = session is None
         if session is None:
@@ -240,8 +245,8 @@ class TiffSaver(Saver):
                 session.close()
 
     def _import_raster_metadata_with_bands(
-        self, filepath: str, layer_name: str, session=None
-    ):
+        self, filepath: str, layer_name: str, session: Any = None
+    ) -> None:
         """
         Import raster metadata and handle multi-band TIFF files.
         Determines if file is single-band or multi-band and processes accordingly.
@@ -281,7 +286,9 @@ class TiffSaver(Saver):
             if should_close_session:
                 session.close()
 
-    def _import_multiband_metadata(self, filepath: str, layer_name: str, session):
+    def _import_multiband_metadata(
+        self, filepath: str, layer_name: str, session: Any
+    ) -> None:
         """
         Extract and store band metadata for multi-band TIFF files.
         Stores in raster_band_metadata table if available.
@@ -353,7 +360,7 @@ class TiffSaver(Saver):
             # Log as debug to not affect main raster import if band metadata table doesn't exist
             logger.debug(f"Could not store band metadata (table might be missing): {e}")
 
-    def _delete_layer_metadata(self, layer_name: str, session=None):
+    def _delete_layer_metadata(self, layer_name: str, session: Any = None) -> None:
         """Delete layer metadata from PostGIS."""
         should_close_session = session is None
         if session is None:
@@ -376,7 +383,7 @@ class TiffSaver(Saver):
             if should_close_session:
                 session.close()
 
-    def _delete_band_metadata(self, layer_name: str, session=None):
+    def _delete_band_metadata(self, layer_name: str, session: Any = None) -> None:
         """Delete band metadata from PostGIS."""
         should_close_session = session is None
         if session is None:
