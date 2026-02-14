@@ -55,9 +55,9 @@ def get_raster_metadata(source_name: str) -> list[dict]:
         result = session.execute(
             text(
                 """
-                SELECT layer_name, uri, crs, resolution_x, resolution_y, 
+                SELECT layer_name, uri, crs, resolution_x, resolution_y,
                         ST_AsText(bbox) as bbox_wkt, acquisition_time
-                FROM raster_layers 
+                FROM raster_layers
                 WHERE source_name = :source_name
                 ORDER BY layer_name
             """
@@ -106,7 +106,7 @@ def get_band_metadata(source_name: str) -> dict[str, list[dict]]:
             text(
                 """
                 SELECT layer_name, band_index, description
-                FROM raster_band_metadata 
+                FROM raster_band_metadata
                 WHERE source_name = :source_name
                 ORDER BY layer_name, band_index
             """
@@ -152,9 +152,9 @@ def get_layer_by_name(layer_name: str, source_name: str | None = None) -> dict |
             result = session.execute(
                 text(
                     """
-                    SELECT layer_name, uri, crs, resolution_x, resolution_y, 
+                    SELECT layer_name, uri, crs, resolution_x, resolution_y,
                             ST_AsText(bbox) as bbox_wkt, acquisition_time, source_name
-                    FROM raster_layers 
+                    FROM raster_layers
                     WHERE layer_name = :layer_name AND source_name = :source_name
                 """
                 ),
@@ -164,9 +164,9 @@ def get_layer_by_name(layer_name: str, source_name: str | None = None) -> dict |
             result = session.execute(
                 text(
                     """
-                    SELECT layer_name, uri, crs, resolution_x, resolution_y, 
+                    SELECT layer_name, uri, crs, resolution_x, resolution_y,
                             ST_AsText(bbox) as bbox_wkt, acquisition_time, source_name
-                    FROM raster_layers 
+                    FROM raster_layers
                     WHERE layer_name = :layer_name
                 """
                 ),

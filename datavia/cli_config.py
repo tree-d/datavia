@@ -17,13 +17,13 @@ def _generate_usage_examples(selected_pipelines: list) -> str:
 
     if "elevation" in selected_pipelines:
         examples.append(
-            """    
+            """
     # Example 1: Get elevation data
     try:
         elevations = datavia.elevation.get_data(coords=berlin_coords, crs_coords="EPSG:4326")
         print(f"Berlin elevation: {elevations[0]:.1f}m")
-        
-        elevations = datavia.elevation.get_data(coords=munich_coords, crs_coords="EPSG:4326") 
+
+        elevations = datavia.elevation.get_data(coords=munich_coords, crs_coords="EPSG:4326")
         print(f"Munich elevation: {elevations[0]:.1f}m")
     except Exception as e:
         print(f"Elevation example failed: {e}")
@@ -32,12 +32,12 @@ def _generate_usage_examples(selected_pipelines: list) -> str:
 
     if "soil" in selected_pipelines:
         examples.append(
-            """    
+            """
     # Example 2: Get soil data
     try:
         soil_data = datavia.soil.get_data(coords=berlin_coords, crs_coords="EPSG:4326")
         print(f"Berlin soil properties: {soil_data}")
-        
+
         soil_data = datavia.soil.get_data(coords=munich_coords, crs_coords="EPSG:4326")
         print(f"Munich soil properties: {soil_data}")
     except Exception as e:
@@ -47,7 +47,7 @@ def _generate_usage_examples(selected_pipelines: list) -> str:
 
     if "weather" in selected_pipelines:
         examples.append(
-            """    
+            """
     # Example 3: Get weather data
     try:
         weather_data = datavia.weather.get_data(coords=berlin_coords, crs_coords="EPSG:4326")
@@ -59,7 +59,7 @@ def _generate_usage_examples(selected_pipelines: list) -> str:
 
     if "radiation" in selected_pipelines:
         examples.append(
-            """    
+            """
     # Example 4: Get radiation data
     try:
         radiation_data = datavia.radiation.get_data(coords=berlin_coords, crs_coords="EPSG:4326")
@@ -71,7 +71,7 @@ def _generate_usage_examples(selected_pipelines: list) -> str:
 
     # Add a general example for any pipeline
     examples.append(
-        """    
+        """
     # Example: General approach for any pipeline
     for pipeline in datavia.pipelines:
         try:
@@ -181,16 +181,16 @@ DEFAULT_CRS = "EPSG:25832"
 if __name__ == "__main__":
     # Example usage - copy this to your own Python script
     import numpy as np
-    
+
     print("=== Datavia Usage Example ===")
     print(f"Loaded pipelines: {{[p.name for p in datavia.pipelines]}}")
-    
+
     # Define some coordinates (longitude, latitude)
     berlin_coords = np.array([[13.4050, 52.5200]])  # Berlin
     munich_coords = np.array([[11.5820, 48.1351]])  # Munich
-    
+
     {_generate_usage_examples(selected_pipelines)}
-    
+
     print("\\n=== Example completed successfully! ===")
     print("Copy the example code above to your own script to use Datavia.")
 
@@ -208,18 +208,18 @@ import numpy as np
 
 def main():
     print("=== My Datavia Script ===")
-    
+
     # Define coordinates for analysis
     locations = {{
         "Berlin": [13.4050, 52.5200],
         "Munich": [11.5820, 48.1351],
         "Hamburg": [9.9937, 53.5511]
     }}
-    
+
     for city, coords in locations.items():
         print(f"\\n--- {{city}} ---")
         coord_array = np.array([coords])
-        
+
         # Use each available pipeline
         for pipeline in datavia.pipelines:
             try:
@@ -227,7 +227,7 @@ def main():
                 print(f"{{pipeline.name}}: {{data[0] if len(data) > 0 else 'No data'}}")
             except Exception as e:
                 print(f"{{pipeline.name}}: Error - {{e}}")
-    
+
     print("\\n=== Script completed! ===")
 
 if __name__ == "__main__":

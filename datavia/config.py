@@ -128,7 +128,7 @@ class DataviaConfig:
         # Look for project markers
         project_markers = ["pixi.toml", "pyproject.toml", ".git", "datavia"]
 
-        for parent in [current_path] + list(current_path.parents):
+        for parent in [current_path, *list(current_path.parents)]:
             for marker in project_markers:
                 if (parent / marker).exists():
                     logger.info(f"Auto-detected base directory: {parent}")
@@ -210,12 +210,11 @@ class DataviaConfig:
 
     def validate_paths(self):
         """Validate that required paths exist."""
-        if self.config["paths"].getboolean("path_validation"):
-            # Only validate base directory - others can be created
-            if not self.base_directory.exists():
-                raise ValueError(
-                    f"Base directory does not exist: {self.base_directory}"
-                )
+        if (
+            self.config["paths"].getboolean("path_validation")
+            and not self.base_directory.exists()
+        ):
+            raise ValueError(f"Base directory does not exist: {self.base_directory}")
 
     def get(self, section: str, key: str, fallback: Any = None) -> Any:
         """Get configuration value with fallback."""
@@ -224,7 +223,7 @@ class DataviaConfig:
         except KeyError:
             if fallback is not None:
                 return fallback
-            raise KeyError(f"Configuration key not found: [{section}] {key}")
+            raise KeyError(f"Configuration key not found: [{section}] {key}") from None
 
 
 # Global configuration instance
