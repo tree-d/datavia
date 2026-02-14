@@ -303,14 +303,16 @@ def process_temporal_netcdf(
 
             # Select time range if specified
             if time_range:
-                ds = ds.sel(time=slice(time_range[0], time_range[1]))
+                selected_ds = ds.sel(time=slice(time_range[0], time_range[1]))
+            else:
+                selected_ds = ds
 
             # Extract data at coordinates
             results = {}
             for i, coord in enumerate(coords):
                 try:
                     # Select nearest grid point
-                    point_data = ds.sel(
+                    point_data = selected_ds.sel(
                         longitude=coord[0], latitude=coord[1], method="nearest"
                     )[variable]
 
@@ -318,7 +320,9 @@ def process_temporal_netcdf(
                         "coordinates": coord.tolist(),
                         "values": point_data.values.tolist(),
                         "time": (
-                            ds.time.values.tolist() if "time" in ds.coords else None
+                            selected_ds.time.values.tolist()
+                            if "time" in selected_ds.coords
+                            else None
                         ),
                     }
 
