@@ -16,7 +16,8 @@ def _generate_usage_examples(selected_pipelines: list) -> str:
     examples = []
 
     if "elevation" in selected_pipelines:
-        examples.append("""    
+        examples.append(
+            """    
     # Example 1: Get elevation data
     try:
         elevations = datavia.elevation.get_data(coords=berlin_coords, crs_coords="EPSG:4326")
@@ -26,10 +27,12 @@ def _generate_usage_examples(selected_pipelines: list) -> str:
         print(f"Munich elevation: {elevations[0]:.1f}m")
     except Exception as e:
         print(f"Elevation example failed: {e}")
-        print("Note: Make sure to run 'datavia update elevation' first!")""")
+        print("Note: Make sure to run 'datavia update elevation' first!")"""
+        )
 
     if "soil" in selected_pipelines:
-        examples.append("""    
+        examples.append(
+            """    
     # Example 2: Get soil data
     try:
         soil_data = datavia.soil.get_data(coords=berlin_coords, crs_coords="EPSG:4326")
@@ -39,30 +42,36 @@ def _generate_usage_examples(selected_pipelines: list) -> str:
         print(f"Munich soil properties: {soil_data}")
     except Exception as e:
         print(f"Soil example failed: {e}")
-        print("Note: Make sure to run 'datavia update soil' first!")""")
+        print("Note: Make sure to run 'datavia update soil' first!")"""
+        )
 
     if "weather" in selected_pipelines:
-        examples.append("""    
+        examples.append(
+            """    
     # Example 3: Get weather data
     try:
         weather_data = datavia.weather.get_data(coords=berlin_coords, crs_coords="EPSG:4326")
         print(f"Berlin weather: {weather_data}")
     except Exception as e:
         print(f"Weather example failed: {e}")
-        print("Note: Make sure to run 'datavia update weather' first!")""")
+        print("Note: Make sure to run 'datavia update weather' first!")"""
+        )
 
     if "radiation" in selected_pipelines:
-        examples.append("""    
+        examples.append(
+            """    
     # Example 4: Get radiation data
     try:
         radiation_data = datavia.radiation.get_data(coords=berlin_coords, crs_coords="EPSG:4326")
         print(f"Berlin solar radiation: {radiation_data}")
     except Exception as e:
         print(f"Radiation example failed: {e}")
-        print("Note: Make sure to run 'datavia update radiation' first!")""")
+        print("Note: Make sure to run 'datavia update radiation' first!")"""
+        )
 
     # Add a general example for any pipeline
-    examples.append("""    
+    examples.append(
+        """    
     # Example: General approach for any pipeline
     for pipeline in datavia.pipelines:
         try:
@@ -70,7 +79,8 @@ def _generate_usage_examples(selected_pipelines: list) -> str:
             data = pipeline.get_data(coords=berlin_coords, crs_coords="EPSG:4326")
             print(f"{pipeline.name} data: {data}")
         except Exception as e:
-            print(f"{pipeline.name} failed: {e}")""")
+            print(f"{pipeline.name} failed: {e}")"""
+    )
 
     return "\n".join(examples)
 
@@ -84,32 +94,40 @@ def create_config_file(selected_pipelines: list, config_file: str):
 
     if "elevation" in selected_pipelines:
         imports.append("from datavia.elevation import ElevationPipeline")
-        pipeline_instances.append("""elevation = ElevationPipeline(
+        pipeline_instances.append(
+            """elevation = ElevationPipeline(
     url="https://sgx.geodatenzentrum.de/wcs_dgm200_inspire?VERSION=2.0.1&SERVICE=WCS&REQUEST=GetCoverage&COVERAGEID=dgm200_inspire__EL.GridCoverage&format=image/tiff&crs=EPSG:25832&bbox=280000,5235000,921000,6101000"
-)""")
+)"""
+        )
 
     if "soil" in selected_pipelines:
         imports.append("from datavia.soil import SoilPipeline")
-        pipeline_instances.append("""soil = SoilPipeline(
+        pipeline_instances.append(
+            """soil = SoilPipeline(
     api_url="https://rest.soilgrids.org/soilgrids/v2.0/properties/query",
     properties=["clay", "sand", "silt", "ph", "carbon"],
     depths=["0-5cm", "5-15cm"],
     resolution=250
-)""")
+)"""
+        )
 
     if "weather" in selected_pipelines:
         imports.append("from datavia.weather import WeatherPipeline")
-        pipeline_instances.append("""weather = WeatherPipeline(
+        pipeline_instances.append(
+            """weather = WeatherPipeline(
     data_source="DWD",
     variables=["temperature", "precipitation", "humidity"]
-)""")
+)"""
+        )
 
     if "radiation" in selected_pipelines:
         imports.append("from datavia.radiation import RadiationPipeline")
-        pipeline_instances.append("""radiation = RadiationPipeline(
+        pipeline_instances.append(
+            """radiation = RadiationPipeline(
     data_source="CAMS",
     variables=["global_irradiance", "direct_irradiance", "diffuse_irradiance"]
-)""")
+)"""
+        )
 
     # Generate the configuration file content
     config_content = f'''#!/usr/bin/env python3

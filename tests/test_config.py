@@ -34,7 +34,8 @@ class TestDataviaConfig:
     def test_config_init_with_existing_file(self):
         """Test DataviaConfig initialization with existing config file."""
         # Create a test config file
-        self.config_file.write_text("""
+        self.config_file.write_text(
+            """
 [paths]
 base_directory = /test/base
 data_directory = /test/data
@@ -46,7 +47,8 @@ path_validation = false
 host = testhost
 port = 5433
 name = test_db
-""")
+"""
+        )
 
         config = DataviaConfig(config_file=str(self.config_file))
 
