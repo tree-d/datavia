@@ -10,7 +10,7 @@ authors = [
     {name = "Michael Berg", email = "michael.berg@ufz.de"},
 ]
 readme = "README.md"
-license = {file = "/home/bergmi/tree-D_data-integration/datavia/LICENSE"}
+license = {file = "datavia/LICENSE"}
 requires-python = ">=3.12"
 keywords = ["geospatial", "elevation", "topography", "datavia"]
 classifiers = [
