@@ -5,11 +5,10 @@ Unit tests for datavia.config module.
 Tests configuration management, file creation, validation, and environment handling.
 """
 
-import configparser
 import os
 import tempfile
 from pathlib import Path
-from unittest.mock import mock_open, patch
+from unittest.mock import patch
 
 import pytest
 

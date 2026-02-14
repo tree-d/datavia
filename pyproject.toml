@@ -173,6 +173,8 @@ src_paths = ["datavia", "tests"]
 [tool.ruff]
 line-length = 88
 target-version = "py312"
+
+[tool.ruff.lint]
 select = [
     "E",  # pycodestyle errors
     "W",  # pycodestyle warnings
@@ -194,7 +196,7 @@ ignore = [
     "N999", # invalid module name (for packages)
 ]
 
-[tool.ruff.pep8-naming]
+[tool.ruff.lint.pep8-naming]
 # Enforce naming conventions per coding standards AC1+ and AC2+
 # Allow leading underscores for private/protected (Python convention AC2+)
 ignore-names = ["_*", "__*"]

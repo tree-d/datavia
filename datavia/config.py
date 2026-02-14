@@ -9,7 +9,7 @@ import configparser
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 class DataviaConfig:
     """Centralized configuration manager for Datavia system."""
 
-    def __init__(self, config_file: Optional[str] = None):
+    def __init__(self, config_file: str | None = None):
         """
         Initialize configuration manager.
 
@@ -30,7 +30,7 @@ class DataviaConfig:
         self._config_file = config_file
         self._load_config()
 
-    def _find_config_file(self) -> Optional[str]:
+    def _find_config_file(self) -> str | None:
         """Find configuration file in standard locations."""
         # If a specific config file is provided, try that first
         if self._config_file and os.path.exists(self._config_file):
@@ -146,7 +146,7 @@ class DataviaConfig:
         return f"postgresql://{db['user']}:{db['password']}@{db['host']}:{db['port']}/{db['database']}"
 
     @property
-    def database_config(self) -> Dict[str, Any]:
+    def database_config(self) -> dict[str, Any]:
         """Get database configuration dictionary."""
         return dict(self.config["database"])
 
@@ -241,7 +241,7 @@ def get_config() -> DataviaConfig:
     return _config
 
 
-def reload_config(config_file: Optional[str] = None):
+def reload_config(config_file: str | None = None):
     """Reload configuration from file."""
     global _config
     _config = DataviaConfig(config_file)

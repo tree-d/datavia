@@ -1,5 +1,4 @@
 import logging
-from typing import List
 
 from ..library.database.start import initialize_database
 from .interfaces import Pipeline
@@ -12,7 +11,7 @@ class Datavia:
     for managing data integration pipelines.
     """
 
-    def __init__(self, pipelines: List[Pipeline]):
+    def __init__(self, pipelines: list[Pipeline]):
         self.pipelines = pipelines
 
     def __call__(self):

@@ -6,7 +6,6 @@ used by multiple pipelines for coordinate conversions.
 """
 
 import logging
-from typing import Tuple
 
 import numpy as np
 

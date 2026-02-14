@@ -11,23 +11,16 @@ import os
 import subprocess
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, call, mock_open, patch
+from unittest.mock import mock_open, patch
 
 import pytest
 
 from datavia.cli_config import create_config_file
-from datavia.cli_utils import (
-    get_pipeline_dependencies,
-    start_datavia_environment,
-    stop_datavia_environment,
-    update_pipeline,
-)
 
 
 # Create wrapper functions that match test expectations
 def _create_config_file(config_file):
     """Wrapper for create_config_file with expected signature."""
-    import os
     from pathlib import Path
 
     # Check if file exists (like old implementation)
@@ -116,9 +109,9 @@ def load_config_if_exists(config_file):
     if not os.path.exists(config_file):
         return {}
     try:
-        with open(config_file, "r") as f:
+        with open(config_file) as f:
             return json.load(f)
-    except (json.JSONDecodeError, IOError):
+    except (OSError, json.JSONDecodeError):
         return {}
 
 

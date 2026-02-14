@@ -26,7 +26,7 @@ def initialize_database():
         exists = result.scalar()
         if not exists:
             logger.info("Initializing database schema from init.sql...")
-            with open(init_sql_path, "r") as f:
+            with open(init_sql_path) as f:
                 sql = f.read()
             # Split SQL by semicolon and execute each statement
             # enable autocommit for DDL statements

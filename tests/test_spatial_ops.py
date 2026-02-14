@@ -1,15 +1,11 @@
 """Tests for spatial operations library functions."""
 
-import os
-import tempfile
-from pathlib import Path
-from unittest.mock import MagicMock, mock_open, patch
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
 
 from datavia.library.spatial_ops import (
-    RASTERIO_AVAILABLE,
     extract_values_at_coords,
     get_geotiff_bounds,
     process_multiband_tiff,

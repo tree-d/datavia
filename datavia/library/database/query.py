@@ -4,7 +4,6 @@ Part of the Library component - provides database operations for Core components
 """
 
 import logging
-from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy import text
 
@@ -13,7 +12,7 @@ from .connection import SessionLocal
 logger = logging.getLogger(__name__)
 
 
-def get_raster_paths(source_name: str) -> List[str]:
+def get_raster_paths(source_name: str) -> list[str]:
     """
     Get file paths for raster layers filtered by source_name.
 
@@ -41,7 +40,7 @@ def get_raster_paths(source_name: str) -> List[str]:
         session.close()
 
 
-def get_raster_metadata(source_name: str) -> List[Dict]:
+def get_raster_metadata(source_name: str) -> list[dict]:
     """
     Get complete metadata for raster layers filtered by source_name.
 
@@ -91,7 +90,7 @@ def get_raster_metadata(source_name: str) -> List[Dict]:
         session.close()
 
 
-def get_band_metadata(source_name: str) -> Dict[str, List[Dict]]:
+def get_band_metadata(source_name: str) -> dict[str, list[dict]]:
     """
     Get band metadata for multi-band rasters filtered by source_name.
 
@@ -136,9 +135,7 @@ def get_band_metadata(source_name: str) -> Dict[str, List[Dict]]:
         session.close()
 
 
-def get_layer_by_name(
-    layer_name: str, source_name: Optional[str] = None
-) -> Optional[Dict]:
+def get_layer_by_name(layer_name: str, source_name: str | None = None) -> dict | None:
     """
     Get metadata for a specific layer, optionally filtered by source.
 

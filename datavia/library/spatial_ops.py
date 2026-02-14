@@ -12,7 +12,7 @@ All functions are thread-safe for parallel pipeline use.
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 
@@ -152,8 +152,8 @@ def _bilinear_sample(src, coords: np.ndarray) -> np.ndarray:
 
 
 def process_multiband_tiff(
-    tiff_path: str, band_descriptions: List[str] = None
-) -> Dict[str, Any]:
+    tiff_path: str, band_descriptions: list[str] = None
+) -> dict[str, Any]:
     """Process multi-band TIFF with enhanced metadata extraction.
 
     Migrated from aggregators functionality in fetcher.
@@ -235,7 +235,7 @@ def _enhance_band_description(desc: str) -> str:
         return desc
 
 
-def read_geotiff_metadata(tiff_path: str) -> Dict[str, Any]:
+def read_geotiff_metadata(tiff_path: str) -> dict[str, Any]:
     """Read GeoTIFF metadata without loading data.
 
     This function is used by TiffSaver for metadata extraction.
@@ -270,7 +270,7 @@ def read_geotiff_metadata(tiff_path: str) -> Dict[str, Any]:
         return {}
 
 
-def get_geotiff_bounds(tiff_path: str) -> Optional[Tuple[float, float, float, float]]:
+def get_geotiff_bounds(tiff_path: str) -> tuple[float, float, float, float] | None:
     """Get spatial bounds of GeoTIFF.
 
     Parameters
@@ -295,7 +295,7 @@ def get_geotiff_bounds(tiff_path: str) -> Optional[Tuple[float, float, float, fl
 
 
 def validate_coordinates_in_bounds(
-    coords: np.ndarray, bounds: Tuple[float, float, float, float]
+    coords: np.ndarray, bounds: tuple[float, float, float, float]
 ) -> np.ndarray:
     """Check which coordinates are within given bounds.
 
