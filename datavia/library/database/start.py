@@ -14,7 +14,7 @@ from .connection import engine
 logger = logging.getLogger(__name__)
 
 
-def initialize_database():
+def initialize_database() -> None:
     """Run init.sql to set up schema if needed."""
     init_sql_path = Path(__file__).parent / "init.sql"
     if not init_sql_path.exists():

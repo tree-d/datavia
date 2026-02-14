@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 compose_dir = Path(__file__).parent
 
 
-def start_container():
+def start_container() -> None:
     """Start the datavia container with proper error handling."""
     try:
         subprocess.run(
@@ -20,7 +20,7 @@ def start_container():
         raise
 
 
-def stop_container():
+def stop_container() -> None:
     """Stop the datavia container with proper cleanup."""
     try:
         # Stop containers gracefully with timeout
@@ -49,7 +49,7 @@ def stop_container():
         raise
 
 
-def get_container_status():
+def get_container_status() -> bool:
     """Check if containers are running."""
     try:
         result = subprocess.run(

@@ -10,6 +10,7 @@ import importlib.util
 import logging
 import os
 import time
+from typing import Any
 
 from .runner import get_container_status, start_container, stop_container
 
@@ -19,15 +20,15 @@ logger = logging.getLogger(__name__)
 _INSTANCE_STATE = {"datavia_instance": None}
 
 
-def _get_cached_instance():
+def _get_cached_instance() -> Any | None:
     return _INSTANCE_STATE["datavia_instance"]
 
 
-def _set_cached_instance(instance):
+def _set_cached_instance(instance: Any | None) -> None:
     _INSTANCE_STATE["datavia_instance"] = instance
 
 
-def get_datavia_instance(config_file="datavia_config.py"):
+def get_datavia_instance(config_file: str = "datavia_config.py") -> Any | None:
     """Get the Datavia instance from Python config, ensuring singleton behavior."""
     cached_instance = _get_cached_instance()
     if cached_instance is not None:
@@ -42,6 +43,9 @@ def get_datavia_instance(config_file="datavia_config.py"):
     try:
         # Load Python config dynamically
         spec = importlib.util.spec_from_file_location("datavia_config", config_file)
+        if spec is None or spec.loader is None:
+            logger.error(f"Could not create module spec for {config_file}")
+            return None
         config_module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(config_module)
 
@@ -72,7 +76,7 @@ def get_datavia_instance(config_file="datavia_config.py"):
         return None
 
 
-def reset_datavia_instance():
+def reset_datavia_instance() -> None:
     """Reset the global Datavia instance (useful for testing)."""
     _set_cached_instance(None)
 
@@ -113,7 +117,7 @@ def update_pipeline(pipeline_name: str, config_file: str = "datavia_config.py") 
         return False
 
 
-def get_pipeline_dependencies(pipeline_name: str) -> list:
+def get_pipeline_dependencies(pipeline_name: str) -> list[str]:
     """Get dependencies for a specific pipeline."""
     dependencies_map = {
         "elevation": [
@@ -131,7 +135,7 @@ def get_pipeline_dependencies(pipeline_name: str) -> list:
     return dependencies_map.get(pipeline_name, [])
 
 
-def install_pipeline_dependencies(pipeline_name: str):
+def install_pipeline_dependencies(pipeline_name: str) -> bool:
     """Show installation instructions for pipeline dependencies."""
     dependencies = get_pipeline_dependencies(pipeline_name)
     if dependencies:
@@ -216,7 +220,7 @@ def validate_config_file(config_file: str) -> tuple[bool, str]:
         return False, f"Configuration validation failed: {e}"
 
 
-def get_available_pipelines(config_file: str = "datavia_config.py") -> list:
+def get_available_pipelines(config_file: str = "datavia_config.py") -> list[str]:
     """Get list of available pipeline names from config."""
     datavia_instance = get_datavia_instance(config_file)
     if datavia_instance:
@@ -224,9 +228,9 @@ def get_available_pipelines(config_file: str = "datavia_config.py") -> list:
     return []
 
 
-def get_pipeline_status(config_file: str = "datavia_config.py") -> dict:
+def get_pipeline_status(config_file: str = "datavia_config.py") -> dict[str, Any]:
     """Get detailed status info for pipelines and infrastructure."""
-    status = {
+    status: dict[str, Any] = {
         "config_loaded": False,
         "database_running": False,
         "pipelines": [],

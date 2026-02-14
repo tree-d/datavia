@@ -85,7 +85,7 @@ def _generate_usage_examples(selected_pipelines: list) -> str:
     return "\n".join(examples)
 
 
-def create_config_file(selected_pipelines: list, config_file: str):
+def create_config_file(selected_pipelines: list[str], config_file: str) -> None:
     """Create Python configuration file with selected pipelines."""
 
     # Generate imports based on selected pipelines
@@ -206,7 +206,7 @@ if __name__ == "__main__":
 from datavia_config import datavia
 import numpy as np
 
-def main():
+def main() -> None:
     print("=== My Datavia Script ===")
 
     # Define coordinates for analysis

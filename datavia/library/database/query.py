@@ -4,6 +4,7 @@ Part of the Library component - provides database operations for Core components
 """
 
 import logging
+from typing import Any
 
 from sqlalchemy import text
 
@@ -114,7 +115,7 @@ def get_band_metadata(source_name: str) -> dict[str, list[dict]]:
             {"source_name": source_name},
         ).fetchall()
 
-        band_metadata = {}
+        band_metadata: dict[str, list[dict[str, Any]]] = {}
         for row in result:
             layer_name = row[0]
             band_info = {"band_index": row[1], "description": row[2]}

@@ -230,7 +230,7 @@ jobs:
 
       - name: Test documentation code examples
         run: |
-          pixi run python scripts/test_docs_modern.py --format sphinx --verbose
+          pixi run test-docs-verbose
 
   # Job 5: Security Scan
   security:
