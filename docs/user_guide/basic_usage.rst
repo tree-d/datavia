@@ -196,17 +196,11 @@ For best performance:
 
 .. doctest::
 
-    >>> # Good: Batch processing (conceptual example)
-    >>> # elevations = get_data(many_coords, DataSource.TOPOGRAPHY) # doctest: +SKIP
-    >>> 
-    >>> # Avoid: Individual calls
-    >>> # for coord in many_coords:  # doctest: +SKIP
-    >>> #     elevation = get_data([coord], DataSource.TOPOGRAPHY)  # Inefficient  # doctest: +SKIP
-    >>> 
-    >>> # Demonstrate the concept exists
-    >>> many_coords = [[1, 2], [3, 4]]
+    >>> # Example: Batch processing is more efficient
+    >>> many_coords = [[1, 2], [3, 4], [5, 6]]
     >>> len(many_coords) > 1  # Batch is better than individual
     True
+    >>> # This approach is preferred over individual coordinate calls
 
 Working with Results
 --------------------
