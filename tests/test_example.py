@@ -3,9 +3,11 @@
 Test file to demonstrate namespace package import.
 """
 
+import datavia.elevation
+import datavia.soil
+
 # Test elevation
 print("Testing elevation...")
-import datavia.elevation
 
 try:
     pipeline = datavia.elevation.ElevationPipeline()
@@ -15,7 +17,6 @@ except Exception as e:
 
 # Test soil
 print("\nTesting soil...")
-import datavia.soil
 
 try:
     soil_pipeline = datavia.soil.SoilPipeline()
@@ -26,7 +27,6 @@ except Exception as e:
 # Test direct imports
 print("\nTesting direct imports...")
 try:
-
     print("✅ Success: Both direct imports work")
 except Exception as e:
     print(f"❌ Direct import failed: {e}")

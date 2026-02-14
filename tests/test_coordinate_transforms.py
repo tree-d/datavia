@@ -5,7 +5,6 @@ Unit tests for datavia.library.coordinate_transforms module.
 Tests coordinate transformations between different CRS systems.
 """
 
-
 import numpy as np
 import pytest
 
@@ -36,7 +35,7 @@ class TestCoordinateTransforms:
 
     def test_get_transformer_invalid_crs(self):
         """Test get_transformer with invalid CRS raises error."""
-        with pytest.raises(Exception):  # Could be CRSError or ValueError
+        with pytest.raises(ValueError):  # Could be CRSError or ValueError
             get_transformer("INVALID:CRS", "EPSG:4326")
 
     def test_transform_coordinates_single_point(self):

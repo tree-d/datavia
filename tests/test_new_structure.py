@@ -6,7 +6,7 @@ def test_namespace_packages():
     print("🧪 Testing namespace package architecture...")
 
     try:
-        import datavia
+        import datavia  # noqa: PLC0415
 
         print(
             f"✅ datavia imported from: {datavia.__file__ if hasattr(datavia, '__file__') else 'namespace'}"
@@ -15,14 +15,14 @@ def test_namespace_packages():
 
         # Test core modules
         try:
-            import datavia.core
+            import datavia.core  # noqa: PLC0415
 
             print("✅ datavia.core imported")
         except ImportError as e:
             print(f"❌ datavia.core failed: {e}")
 
         try:
-            import datavia.library
+            import datavia.library  # noqa: PLC0415
 
             print("✅ datavia.library imported")
         except ImportError as e:
@@ -30,14 +30,14 @@ def test_namespace_packages():
 
         # Test pipeline modules (should fail if not installed)
         try:
-            import datavia.soil
+            import datavia.soil  # noqa: PLC0415
 
             print("✅ datavia.soil imported")
         except ImportError as e:
             print(f"❌ datavia.soil not available: {e}")
 
         try:
-            import datavia.elevation
+            import datavia.elevation  # noqa: PLC0415
 
             print("✅ datavia.elevation imported")
         except ImportError as e:

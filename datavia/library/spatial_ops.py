@@ -16,14 +16,13 @@ from typing import Any
 
 import numpy as np
 
+from .coordinate_transforms import transform_coordinates
+
 logger = logging.getLogger(__name__)
 
 # Try to import rasterio - required for TIFF operations
 try:
     import rasterio
-    from rasterio import features, mask
-    from rasterio.transform import from_bounds
-    from rasterio.warp import Resampling, reproject
 
     RASTERIO_AVAILABLE = True
 except ImportError:
@@ -63,8 +62,6 @@ def extract_values_at_coords(
         with rasterio.open(tiff_path) as src:
             # Transform coordinates to TIFF CRS if needed
             if source_crs != src.crs.to_string():
-                from .coordinate_transforms import transform_coordinates
-
                 coords_transformed = transform_coordinates(
                     coords, source_crs, src.crs.to_string()
                 )
@@ -152,7 +149,7 @@ def _bilinear_sample(src, coords: np.ndarray) -> np.ndarray:
 
 
 def process_multiband_tiff(
-    tiff_path: str, band_descriptions: list[str] = None
+    tiff_path: str, band_descriptions: list[str] | None = None
 ) -> dict[str, Any]:
     """Process multi-band TIFF with enhanced metadata extraction.
 
