@@ -180,16 +180,20 @@ class URLDownloader(Downloader):
                                 # Skip already downloaded bytes on resume
                                 if skipped < skip_bytes:
                                     to_skip = min(skip_bytes - skipped, len(chunk))
-                                    chunk = chunk[to_skip:]
+                                    remaining_chunk = chunk[to_skip:]
                                     skipped += to_skip
-                                    if not chunk:
+                                    if not remaining_chunk:
                                         continue
+                                else:
+                                    remaining_chunk = chunk
 
                                 # Write chunk with retries
-                                if not self._write_chunk_with_retries(f, chunk):
+                                if not self._write_chunk_with_retries(
+                                    f, remaining_chunk
+                                ):
                                     raise Exception("Chunk write failed repeatedly.")
 
-                                total_downloaded += len(chunk)
+                                total_downloaded += len(remaining_chunk)
                                 print(
                                     f"\rDownloaded: {total_downloaded / (1024 * 1024):.2f} MB",
                                     end="",

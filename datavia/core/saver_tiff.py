@@ -187,7 +187,12 @@ class TiffSaver(Saver):
                 # Get SRID
                 try:
                     srid = int(self.target_crs.split(":")[1])
-                except:
+                except (IndexError, ValueError, AttributeError) as e:
+                    logger.warning(
+                        "Could not parse SRID from target CRS '%s': %s. Using default 4326.",
+                        self.target_crs,
+                        e,
+                    )
                     srid = 4326
 
             existing = session.execute(

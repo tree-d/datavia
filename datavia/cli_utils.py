@@ -15,17 +15,24 @@ from .runner import get_container_status, start_container, stop_container
 
 logger = logging.getLogger(__name__)
 
-# Global instance tracking
-_datavia_instance = None
+# Module-level instance tracking without global statement usage
+_INSTANCE_STATE = {"datavia_instance": None}
+
+
+def _get_cached_instance():
+    return _INSTANCE_STATE["datavia_instance"]
+
+
+def _set_cached_instance(instance):
+    _INSTANCE_STATE["datavia_instance"] = instance
 
 
 def get_datavia_instance(config_file="datavia_config.py"):
     """Get the Datavia instance from Python config, ensuring singleton behavior."""
-    global _datavia_instance
-
-    if _datavia_instance is not None:
+    cached_instance = _get_cached_instance()
+    if cached_instance is not None:
         logger.info("Using existing Datavia instance")
-        return _datavia_instance
+        return cached_instance
 
     if not os.path.exists(config_file):
         logger.error(f"Configuration file not found: {config_file}")
@@ -40,16 +47,16 @@ def get_datavia_instance(config_file="datavia_config.py"):
 
         # Try to get initialized instance first
         if hasattr(config_module, "datavia"):
-            _datavia_instance = config_module.datavia
+            _set_cached_instance(config_module.datavia)
             logger.info("Loaded initialized Datavia instance from configuration")
-            return _datavia_instance
+            return _get_cached_instance()
 
         # Fallback: try to get raw instance and initialize it
         elif hasattr(config_module, "datavia_raw"):
             logger.info("Found raw Datavia instance, initializing...")
-            _datavia_instance = config_module.datavia_raw()
+            _set_cached_instance(config_module.datavia_raw())
             logger.info("Successfully initialized raw Datavia instance")
-            return _datavia_instance
+            return _get_cached_instance()
 
         else:
             logger.error(
@@ -67,8 +74,7 @@ def get_datavia_instance(config_file="datavia_config.py"):
 
 def reset_datavia_instance():
     """Reset the global Datavia instance (useful for testing)."""
-    global _datavia_instance
-    _datavia_instance = None
+    _set_cached_instance(None)
 
 
 def update_pipeline(pipeline_name: str, config_file: str = "datavia_config.py") -> bool:

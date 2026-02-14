@@ -226,24 +226,33 @@ class DataviaConfig:
             raise KeyError(f"Configuration key not found: [{section}] {key}") from None
 
 
-# Global configuration instance
-_config = None
+# Global configuration instance without global statement usage
+_CONFIG_STATE = {"config": None}
+
+
+def _get_cached_config() -> DataviaConfig | None:
+    return _CONFIG_STATE["config"]
+
+
+def _set_cached_config(config: DataviaConfig | None) -> None:
+    _CONFIG_STATE["config"] = config
 
 
 def get_config() -> DataviaConfig:
     """Get the global configuration instance."""
-    global _config
-    if _config is None:
-        _config = DataviaConfig()
-        _config.validate_paths()
-        _config.ensure_directories()
-    return _config
+    cached_config = _get_cached_config()
+    if cached_config is None:
+        cached_config = DataviaConfig()
+        cached_config.validate_paths()
+        cached_config.ensure_directories()
+        _set_cached_config(cached_config)
+    return cached_config
 
 
 def reload_config(config_file: str | None = None):
     """Reload configuration from file."""
-    global _config
-    _config = DataviaConfig(config_file)
-    _config.validate_paths()
-    _config.ensure_directories()
-    return _config
+    reloaded_config = DataviaConfig(config_file)
+    reloaded_config.validate_paths()
+    reloaded_config.ensure_directories()
+    _set_cached_config(reloaded_config)
+    return reloaded_config
