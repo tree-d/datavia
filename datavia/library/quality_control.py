@@ -9,7 +9,7 @@ Data quality functions for all pipelines:
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 
@@ -18,9 +18,9 @@ logger = logging.getLogger(__name__)
 
 def validate_coordinate_bounds(
     coords: np.ndarray,
-    bounds: Tuple[float, float, float, float],
+    bounds: tuple[float, float, float, float],
     crs: str = "EPSG:4326",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Comprehensive coordinate validation with bounds checking."""
     try:
         left, bottom, right, top = bounds
@@ -76,7 +76,7 @@ def validate_coordinate_bounds(
 
 def detect_outliers(
     data: np.ndarray, method: str = "iqr", threshold: float = 1.5
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Detect outliers in data using various methods."""
     try:
         finite_mask = np.isfinite(data)
@@ -117,7 +117,7 @@ def detect_outliers(
         return {"outlier_indices": [], "outlier_values": [], "error": str(e)}
 
 
-def _detect_outliers_iqr(data: np.ndarray, threshold: float = 1.5) -> Dict[str, Any]:
+def _detect_outliers_iqr(data: np.ndarray, threshold: float = 1.5) -> dict[str, Any]:
     """IQR-based outlier detection."""
     Q1 = np.percentile(data, 25)
     Q3 = np.percentile(data, 75)
@@ -141,7 +141,7 @@ def _detect_outliers_iqr(data: np.ndarray, threshold: float = 1.5) -> Dict[str, 
     }
 
 
-def _detect_outliers_zscore(data: np.ndarray, threshold: float = 3.0) -> Dict[str, Any]:
+def _detect_outliers_zscore(data: np.ndarray, threshold: float = 3.0) -> dict[str, Any]:
     """Z-score based outlier detection."""
     mean_val = np.mean(data)
     std_val = np.std(data)
@@ -165,7 +165,7 @@ def _detect_outliers_zscore(data: np.ndarray, threshold: float = 3.0) -> Dict[st
 
 def _detect_outliers_modified_zscore(
     data: np.ndarray, threshold: float = 3.5
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Modified Z-score using median absolute deviation."""
     median_val = np.median(data)
     mad = np.median(np.abs(data - median_val))
@@ -189,9 +189,9 @@ def _detect_outliers_modified_zscore(
 
 def check_data_quality(
     data: np.ndarray,
-    coords: Optional[np.ndarray] = None,
-    expected_range: Optional[Tuple[float, float]] = None,
-) -> Dict[str, Any]:
+    coords: np.ndarray | None = None,
+    expected_range: tuple[float, float] | None = None,
+) -> dict[str, Any]:
     """Comprehensive data quality assessment."""
     try:
         quality_report = {
@@ -263,11 +263,11 @@ def check_data_quality(
 
 def apply_quality_filters(
     data: np.ndarray,
-    coords: Optional[np.ndarray] = None,
+    coords: np.ndarray | None = None,
     remove_outliers: bool = True,
     outlier_method: str = "iqr",
-    expected_range: Optional[Tuple[float, float]] = None,
-) -> Dict[str, Any]:
+    expected_range: tuple[float, float] | None = None,
+) -> dict[str, Any]:
     """Apply quality filters and return cleaned data."""
     try:
         original_length = len(data)

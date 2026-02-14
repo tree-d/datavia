@@ -9,7 +9,6 @@ import random
 import tempfile
 import time
 from http.client import IncompleteRead
-from typing import Optional
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -94,7 +93,7 @@ class URLDownloader(Downloader):
             logger.error(f"Failed to create temporary file: {e}")
             return "failed"
 
-    def _get_content_info(self) -> tuple[str, Optional[str]]:
+    def _get_content_info(self) -> tuple[str, str | None]:
         """Get content type and length from HEAD request."""
         try:
             head = self.session.head(self.url, timeout=30)
@@ -132,7 +131,7 @@ class URLDownloader(Downloader):
         return any(vtype in content_type.lower() for vtype in valid_types)
 
     def _download_with_retries(
-        self, working_filename: str, content_length: Optional[str]
+        self, working_filename: str, content_length: str | None
     ) -> bool:
         """Download file with robust retry logic."""
         total_downloaded = 0
@@ -234,7 +233,7 @@ class URLDownloader(Downloader):
         return False
 
     def _validate_download(
-        self, total_downloaded: int, content_length: Optional[str]
+        self, total_downloaded: int, content_length: str | None
     ) -> bool:
         """Validate that download completed successfully."""
         logger.info(f"Download size: {round(total_downloaded / (1024 * 1024), 1)} MB")

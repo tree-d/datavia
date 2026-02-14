@@ -8,7 +8,6 @@ import datetime
 import logging
 import os
 import shutil
-from typing import List, Optional, Tuple
 
 import rasterio
 from rasterio.warp import transform_bounds
@@ -65,7 +64,7 @@ class TiffSaver(Saver):
             logger.error(f"Failed to save TIFF file {data_path}: {e}")
             return False
 
-    def check_data_exists(self) -> Tuple[set, set, set]:
+    def check_data_exists(self) -> tuple[set, set, set]:
         """
         Check if a TIFF file with the given layer name exists in the data directory.
 
@@ -219,7 +218,7 @@ class TiffSaver(Saver):
                     "res_y": resolution[1],
                     "crs": src_crs_str,
                     "uri": filepath,
-                    "acq_time": datetime.datetime.now(datetime.timezone.utc),
+                    "acq_time": datetime.datetime.now(datetime.UTC),
                 },
             )
 
@@ -284,7 +283,7 @@ class TiffSaver(Saver):
         try:
             with rasterio.open(filepath) as src:
                 band_count = src.count
-                descriptions: List[Tuple[int, str]] = []
+                descriptions: list[tuple[int, str]] = []
                 descs = getattr(src, "descriptions", None)
 
                 for i in range(1, band_count + 1):

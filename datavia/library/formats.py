@@ -11,7 +11,7 @@ All processor format functionality migrated here.
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 
@@ -45,7 +45,7 @@ except ImportError:
 
 
 # GeoTIFF Operations (migrated from processor)
-def read_tiff_metadata(filepath: str) -> Dict[str, Any]:
+def read_tiff_metadata(filepath: str) -> dict[str, Any]:
     """Complete TIFF metadata reading with all processor functionality."""
     if not RASTERIO_AVAILABLE:
         return {}
@@ -177,7 +177,7 @@ def validate_tiff_file(filepath: str) -> bool:
 
 
 # Shapefile Operations (for BÜK soil classification)
-def read_shapefile_data(filepath: str) -> Dict[str, Any]:
+def read_shapefile_data(filepath: str) -> dict[str, Any]:
     """Read shapefile data for soil classification (BÜK support)."""
     if not VECTOR_AVAILABLE:
         logger.error("fiona/shapely not available - cannot read shapefiles")
@@ -207,7 +207,7 @@ def read_shapefile_data(filepath: str) -> Dict[str, Any]:
         return {}
 
 
-def query_shapefile_by_coords(filepath: str, coords: np.ndarray) -> List[Dict]:
+def query_shapefile_by_coords(filepath: str, coords: np.ndarray) -> list[dict]:
     """Query shapefile features by coordinate points (for BÜK classification)."""
     if not VECTOR_AVAILABLE:
         return []
@@ -237,7 +237,7 @@ def query_shapefile_by_coords(filepath: str, coords: np.ndarray) -> List[Dict]:
 
 
 # NetCDF Operations (for weather/radiation data)
-def read_netcdf_metadata(filepath: str) -> Dict[str, Any]:
+def read_netcdf_metadata(filepath: str) -> dict[str, Any]:
     """Read NetCDF metadata for weather/radiation data."""
     if not NETCDF_AVAILABLE:
         logger.error("xarray/netCDF4 not available - cannot read NetCDF")
@@ -285,8 +285,8 @@ def process_temporal_netcdf(
     filepath: str,
     variable: str,
     coords: np.ndarray,
-    time_range: Optional[Tuple[str, str]] = None,
-) -> Dict[str, Any]:
+    time_range: tuple[str, str] | None = None,
+) -> dict[str, Any]:
     """Process NetCDF file for temporal weather/radiation data extraction."""
     if not NETCDF_AVAILABLE:
         return {}

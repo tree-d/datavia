@@ -8,12 +8,9 @@ All spatial and temporal interpolation methods for pipeline use:
 """
 
 import logging
-from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import rasterio
-from rasterio.warp import transform as rio_transform
 from scipy.ndimage import map_coordinates
 
 from .coordinate_transforms import transform_coordinates

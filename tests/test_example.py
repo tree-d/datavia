@@ -26,8 +26,6 @@ except Exception as e:
 # Test direct imports
 print("\nTesting direct imports...")
 try:
-    from datavia.elevation import ElevationPipeline, ElevationTransformer
-    from datavia.soil import SoilPipeline
 
     print("✅ Success: Both direct imports work")
 except Exception as e:

@@ -9,9 +9,7 @@ Separated from main CLI for better maintainability and reusability.
 import importlib.util
 import logging
 import os
-import sys
 import time
-from typing import Optional
 
 from .runner import get_container_status, start_container, stop_container
 
@@ -135,9 +133,9 @@ def install_pipeline_dependencies(pipeline_name: str):
         for dep in dependencies:
             logger.info(f"  • {dep}")
 
-        logger.info(f"\n💡 To install these dependencies, run:")
+        logger.info("\n💡 To install these dependencies, run:")
         logger.info(f"   pip install {' '.join(dependencies)}")
-        logger.info(f"\n   Or install them individually:")
+        logger.info("\n   Or install them individually:")
         for dep in dependencies:
             logger.info(f"   pip install {dep}")
 

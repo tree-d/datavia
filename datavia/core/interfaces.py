@@ -1,5 +1,4 @@
 from abc import ABC, abstractmethod
-from typing import Tuple
 
 import numpy as np
 
@@ -27,7 +26,7 @@ class Saver(ABC):
         self.source_name = source_name
 
     @abstractmethod
-    def check_data_exists(self) -> Tuple[set, set, set]:
+    def check_data_exists(self) -> tuple[set, set, set]:
         """Check if data exists in storage and database.
         Returns:
             Tuple[set, set, set]: Sets of (existing_files, missing_files, extra_files)

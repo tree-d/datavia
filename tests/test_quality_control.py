@@ -1,7 +1,5 @@
 """Tests for data quality control and validation functions."""
 
-from unittest.mock import MagicMock, patch
-
 import numpy as np
 import pytest
 
