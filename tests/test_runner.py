@@ -5,7 +5,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from datavia.config import get_config
 from datavia.runner import get_container_status, start_container, stop_container
+
+config = get_config()
+dir = config.base_directory
 
 
 class TestContainerManagement:
@@ -23,7 +27,7 @@ class TestContainerManagement:
         assert result is True
         mock_run.assert_called_once_with(
             ["docker", "compose", "ps", "-q"],
-            cwd="/home/bergmi/tree-D_data-integration/datavia/datavia",
+            cwd=f"{dir}/datavia",
             capture_output=True,
             text=True,
             check=True,
@@ -41,7 +45,7 @@ class TestContainerManagement:
         assert result is False
         mock_run.assert_called_once_with(
             ["docker", "compose", "ps", "-q"],
-            cwd="/home/bergmi/tree-D_data-integration/datavia/datavia",
+            cwd=f"{dir}/datavia",
             capture_output=True,
             text=True,
             check=True,
@@ -78,7 +82,7 @@ class TestContainerManagement:
 
         mock_run.assert_called_once_with(
             ["docker", "compose", "up", "-d"],
-            cwd="/home/bergmi/tree-D_data-integration/datavia/datavia",
+            cwd=f"{dir}/datavia",
             check=True,
         )
         mock_sleep.assert_called_once_with(2)
@@ -94,7 +98,7 @@ class TestContainerManagement:
 
         mock_run.assert_called_once_with(
             ["docker", "compose", "up", "-d"],
-            cwd="/home/bergmi/tree-D_data-integration/datavia/datavia",
+            cwd=f"{dir}/datavia",
             check=True,
         )
 
@@ -120,12 +124,12 @@ class TestContainerManagement:
         assert mock_run.call_count == 2
         mock_run.assert_any_call(
             ["docker", "compose", "stop", "-t", "10"],
-            cwd="/home/bergmi/tree-D_data-integration/datavia/datavia",
+            cwd=f"{dir}/datavia",
             check=True,
         )
         mock_run.assert_any_call(
             ["docker", "compose", "down"],
-            cwd="/home/bergmi/tree-D_data-integration/datavia/datavia",
+            cwd=f"{dir}/datavia",
             check=True,
         )
 
@@ -145,7 +149,7 @@ class TestContainerManagement:
         assert mock_run.call_count == 2
         mock_run.assert_any_call(
             ["docker", "compose", "down", "--remove-orphans"],
-            cwd="/home/bergmi/tree-D_data-integration/datavia/datavia",
+            cwd=f"{dir}/datavia",
             check=False,
         )
 
