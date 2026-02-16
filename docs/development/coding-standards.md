@@ -22,8 +22,8 @@ The goal of this standard is to reduce the need for extra documentation. In the 
 
 #### AC3
 
-* [ ] The project contains a file / webpage specifing the internal standards.
-* [ ] The {{% glossary ci-cd CI %}} is set up for {{% glossary formatter formatting %}} and {{% glossary linter linting %}} (incl. for naming conventions where possible).
+* [x] The project contains a file / webpage specifing the internal standards.
+* [x] The {{% glossary ci-cd CI %}} is set up for {{% glossary formatter formatting %}} and {{% glossary linter linting %}} (incl. for naming conventions where possible).
 
 ### Language standards
 * Python: Python Style guide PEP 08
@@ -51,9 +51,9 @@ See AC1+.
 
 #### AC3+
 
-* [ ] The applied formatting conventions are specified somewhere in the project documentation / README.md / wiki.
-* [ ] The {{% glossary ci-cd CI %}} is set up to check the formatting on every push / Merge Request. The CI prevents merges if formatting warnings are encountered.
-* [ ] The CI is set up to run a {{% glossary linter %}} (the language's default linter if applicable). The {{% glossary ci-cd CI %}} prevents merges if formatting warnings are encountered.
+* [x] The applied formatting conventions are specified somewhere in the project documentation / README.md / wiki.
+* [x] The {{% glossary ci-cd CI %}} is set up to check the formatting on every push / Merge Request. The CI prevents merges if formatting warnings are encountered.
+* [x] The CI is set up to run a {{% glossary linter %}} (the language's default linter if applicable). The {{% glossary ci-cd CI %}} prevents merges if formatting warnings are encountered.
 
 ### Language standards
 
@@ -157,10 +157,10 @@ Documentation includes source code documentation itself as well as all additiona
 
 ##### Documentation of documentation (meta-documentation)
 
-* [ ] The project contains a document with naming conventions and style guide. In case style is enforced by the language, the used tools are documented.
+* [x] The project contains a document with naming conventions and style guide. In case style is enforced by the language, the used tools are documented.
 * [ ] The project uses {{% glossary git-tag "Git tags" %}} to indicate versions.
-* [ ] {{% glossary git-tag "Git tags" %}} follow semantic versioning.
-* [ ] The project contains a changelog, tracking significant changes between versions.
+* [ ] The {{% glossary git-tag "Git tags" %}} follow semantic versioning.
+* [x] The project contains a changelog, tracking significant changes between versions.
 
 ### Language standards
 
@@ -185,7 +185,7 @@ Everything written under AC2+ is desirable and strongly recommended for AC1 as w
 
 #### AC2+
 
-* [ ] The project is tracked with Git.
+* [x] The project is tracked with Git.
 * [ ] The project has a remote {{% glossary repository repository %}}, preferably on UFZ GitLab.
 * [ ] Commits are done frequently and typically focus on a single topic each.
 * [ ] Contributors use meaningful commit messages.
@@ -238,9 +238,9 @@ No requirements.
 #### AC3+
 
 * [ ] Model logic is covered by {{% glossary unit-testing "unit tests" %}} (not necessary for analysis / UI).
-* [ ] There is a {{% glossary ci-cd "CI workflow" %}} that runs on each push / Merge Request.
+* [x] There is a {{% glossary ci-cd "CI workflow" %}} that runs on each push / Merge Request.
 * [ ] The {{% glossary ci-cd CI %}} tests that the project compiles (for compiled languages).
-* [ ] The {{% glossary ci-cd CI %}} runs the {{% glossary unit-testing "unit tests" %}}.
+* [x] The {{% glossary ci-cd CI %}} runs the {{% glossary unit-testing "unit tests" %}}.
 
 
 --------------
@@ -275,10 +275,10 @@ There are no special requirements.
 
 #### AC3
 
-* [ ] The software can be compiled to a library / package (not only to an executable).
-* [ ] There is a well-documented {{% glossary api %}} so that the software can be integrated into other software.
+* [x] The software can be compiled to a library / package (not only to an executable).
+* [x] There is a well-documented {{% glossary api %}} so that the software can be integrated into other software.
 * [ ] Providing a well-documented interface to Python or R has been seriously considered.
 * [ ] Wrapping the software into a Python component for [FINAM](https://finam.pages.ufz.de/) has been seriously considered.
 * [ ] The software is available publicly, if applicable in a way that package / dependency managers can handle it. If possible, the language's standard package index is used (e.g., PyPI, CRAN, crates.io).
-* [ ] The software uses [semantic versioning](https://semver.org/); the installed version is easily accessible by end users.
+* [x] The software uses [semantic versioning](https://semver.org/); the installed version is easily accessible by end users.
 * [ ] The documentation is publicly available via a website.

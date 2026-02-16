@@ -13,6 +13,14 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Module-level configuration state
+# Rationale: Provides application-wide configuration singleton to avoid
+# repeatedly parsing config files. This is a standard pattern for
+# configuration management in Python applications (similar to Django settings).
+# Config is loaded once at startup and reused throughout the application.
+# Modifications are intentionally allowed to support runtime reconfiguration.
+_CONFIG_STATE: dict[str, Any] = {}
+
 
 class DataviaConfig:
     """Centralized configuration manager for Datavia system."""
@@ -70,9 +78,33 @@ class DataviaConfig:
         if config_file:
             try:
                 self.config.read(config_file)
+                self._expand_environment_variables()
                 logger.info(f"Loaded configuration from {config_file}")
             except Exception as e:
                 logger.error(f"Failed to load config file {config_file}: {e}")
+
+    def _expand_environment_variables(self) -> None:
+        """Expand environment variables in config values.
+
+        Supports ${VAR} and ${VAR:-default} syntax.
+        Example: ${POSTGRES_PASSWORD:-datavia_dev}
+        """
+        import re
+
+        for section in self.config.sections():
+            for key in self.config[section]:
+                value = self.config[section][key]
+
+                # Match ${VAR} or ${VAR:-default}
+                pattern = r"\$\{([^}:]+)(?::-([^}]*))?\}"
+
+                def replace_env(match):
+                    var_name = match.group(1)
+                    default_value = match.group(2) if match.group(2) is not None else ""
+                    return os.getenv(var_name, default_value)
+
+                expanded_value = re.sub(pattern, replace_env, value)
+                self.config[section][key] = expanded_value
 
     def _set_defaults(self) -> None:
         """Set default configuration values."""
@@ -82,7 +114,7 @@ class DataviaConfig:
             "port": "5432",
             "database": "gis",
             "user": "gis",
-            "password": "wieso",
+            "password": os.getenv("POSTGRES_PASSWORD", "datavia_dev"),
             "connection_pooling": "true",
             "ssl_mode": "prefer",
         }

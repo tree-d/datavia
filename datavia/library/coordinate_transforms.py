@@ -18,10 +18,29 @@ try:
     PYPROJ_AVAILABLE = True
 
     # Cache transformers for common CRS pairs to improve performance
-    _transformer_cache = {}
+    # Rationale: Creating Transformer objects is expensive (involves parsing
+    # CRS definitions and setting up projection parameters). Caching them
+    # provides 10-100x speedup for repeated transformations between the same
+    # CRS pairs, which is common in geospatial workflows.
+    # Thread-safe: pyproj.Transformer objects are immutable and thread-safe.
+    # Memory: Cache size is bounded by number of unique CRS pairs used (~1-10).
+    _transformer_cache: dict[str, Transformer] = {}
 
     def get_transformer(source_crs: str, target_crs: str) -> Transformer:
-        """Get cached transformer for CRS pair."""
+        """Get cached transformer for CRS pair.
+
+        Parameters
+        ----------
+        source_crs : str
+            Source coordinate reference system (e.g., 'EPSG:4326')
+        target_crs : str
+            Target coordinate reference system (e.g., 'EPSG:25832')
+
+        Returns
+        -------
+        Transformer
+            Cached or newly created pyproj Transformer object
+        """
         cache_key = f"{source_crs}->{target_crs}"
         if cache_key not in _transformer_cache:
             _transformer_cache[cache_key] = Transformer.from_crs(

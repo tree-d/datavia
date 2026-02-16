@@ -17,14 +17,33 @@ from .runner import get_container_status, start_container, stop_container
 logger = logging.getLogger(__name__)
 
 # Module-level instance tracking without global statement usage
+# Rationale: Implements singleton pattern for CLI commands to avoid
+# repeatedly loading/initializing the Datavia instance between commands.
+# This is standard practice for CLI tools where the same instance should
+# be reused across multiple command invocations in a session.
+# Thread-safety not required as CLI commands run sequentially.
 _INSTANCE_STATE = {"datavia_instance": None}
 
 
 def _get_cached_instance() -> Any | None:
+    """Get the cached Datavia instance if available.
+
+    Returns
+    -------
+    Any | None
+        The cached Datavia instance or None if not yet initialized.
+    """
     return _INSTANCE_STATE["datavia_instance"]
 
 
 def _set_cached_instance(instance: Any | None) -> None:
+    """Cache the Datavia instance for reuse across CLI commands.
+
+    Parameters
+    ----------
+    instance : Any | None
+        The Datavia instance to cache, or None to clear the cache.
+    """
     _INSTANCE_STATE["datavia_instance"] = instance
 
 

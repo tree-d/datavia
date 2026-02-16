@@ -28,13 +28,15 @@ But be aware that you do not push these changes!
 ```
 datavia/
 ├── README.md                  # Main project README
-├── pyproject.toml.template    # Template for main package
+├── pyproject.toml             # Core package configuration
 ├── scripts/
 │   └── version.sh             # Version management
 ├── datavia/                   # Core package source
 ├── packages/                  # Extension packages
 │   ├── elevation/
+│   │   └── pyproject.toml
 │   └── soil/
+│       └── pyproject.toml
 └── tests/                     # Test suite
 ```
 

@@ -1,9 +1,26 @@
+"""Docker container management for Datavia.
+
+Provides utilities for starting, stopping, and checking the status of
+the PostGIS database container used by Datavia for metadata storage.
+
+The container is managed via docker-compose.yml located in the same
+directory as this module.
+
+Functions
+---------
+start_container : Start the PostGIS database container
+stop_container : Stop and clean up the database container
+get_container_status : Check if container is running
+"""
+
 import logging
 import subprocess
 import time
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+# Compose directory is determined relative to this module's location
+# This ensures docker-compose.yml is found regardless of where the script runs from
 compose_dir = Path(__file__).parent
 
 

@@ -7,7 +7,7 @@ version = "1.0.0"
 
 [tasks]
 docs = {cmd = "pixi run sphinx-build -E -b html docs docs/_build/html"}
-test = {cmd = "PYTHONPATH=. pixi run python examples/basic_workflow.py"}
+test = {cmd = "pixi run python -m pytest tests/ -v"}
 test-docs = {cmd = "python scripts/test_docs_modern.py --format sphinx"}
 test-docs-verbose = {cmd = "python scripts/test_docs_modern.py --format sphinx --verbose"}
 

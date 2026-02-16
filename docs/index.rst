@@ -124,9 +124,9 @@ System Management
 .. code-block:: bash
 
     # Database operations
-    datavia db start         # Start PostGIS container
-    datavia db stop          # Stop container  
-    datavia db status        # Check status
+    datavia start            # Start PostGIS container
+    datavia stop             # Stop container
+    datavia config           # View configuration
     
     # Data updates (planned)
     datavia update elevation

@@ -7,7 +7,7 @@ This document describes the comprehensive CI/CD pipeline setup for the Datavia p
 We have three separate workflows to handle different stages of the development lifecycle:
 
 ### 1. 🔍 CI Pipeline (`ci-pull-request.yml`)
-**Triggered on**: Pull Requests to `main`
+**Triggered on**: Pull Requests to `dev`
 
 **Purpose**: Ensure code quality and functionality before merging
 
@@ -47,9 +47,9 @@ We have three separate workflows to handle different stages of the development l
 
 ### For Developers (Pull Requests)
 
-1. **Create feature branch** from `main`
+1. **Create feature branch** from `dev`
 2. **Make changes** and push to your branch
-3. **Create Pull Request** targeting `main`
+3. **Create Pull Request** targeting `dev`
 4. **CI Pipeline runs automatically**:
    - Formats your code automatically (no manual fixing needed!)
    - Runs all tests and quality checks

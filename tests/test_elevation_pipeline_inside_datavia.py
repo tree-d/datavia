@@ -17,25 +17,25 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-ElevationPipeline = ElevationPipeline(
-    url="https://sgx.geodatenzentrum.de/wcs_dgm200_inspire?VERSION=2.0.1&SERVICE=WCS&REQUEST=GetCoverage&COVERAGEID=dgm200_inspire__EL.GridCoverage&format=image/tiff&crs=EPSG:25832&bbox=280000,5235000,921000,6101000"
-)
+def test_elevation_pipeline_inside_datavia():
+    """Test the elevation pipeline with Datavia controller."""
+    elevation_pipeline = ElevationPipeline(
+        url="https://sgx.geodatenzentrum.de/wcs_dgm200_inspire?VERSION=2.0.1&SERVICE=WCS&REQUEST=GetCoverage&COVERAGEID=dgm200_inspire__EL.GridCoverage&format=image/tiff&crs=EPSG:25832&bbox=280000,5235000,921000,6101000"
+    )
 
-MyDatavia = Datavia(pipelines=(ElevationPipeline,))
+    datavia_controller = Datavia(pipelines=(elevation_pipeline,))
 
-
-def test_elevation_pipeline():
     if not get_container_status():
         start_container()
         logger.info("Initialized container.")
     initialize_database()
 
-    MyDatavia()
-    MyDatavia.elevation.sync_files_and_database()
-    MyDatavia.elevation.update_data()
+    datavia_controller()
+    datavia_controller.elevation.sync_files_and_database()
+    datavia_controller.elevation.update_data()
     print("\nFetching elevation data at specified coordinates...")
     print(
-        MyDatavia.elevation.get_data(
+        datavia_controller.elevation.get_data(
             coords=np.array([[10.0, 50.0], [11.0, 51.0]]), crs_coords="EPSG:4326"
         )
     )
@@ -45,4 +45,4 @@ def test_elevation_pipeline():
 
 
 if __name__ == "__main__":
-    test_elevation_pipeline()
+    test_elevation_pipeline_inside_datavia()

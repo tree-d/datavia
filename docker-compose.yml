@@ -1,5 +1,7 @@
-#version: '3.8'
-# This is a Docker Compose file for setting up a PostGIS database with initial data loading.
+version: '3.8'
+# Docker Compose file for setting up a PostGIS database
+# For production: Set POSTGRES_PASSWORD environment variable or create .env file
+# See .env.example for template
 
 services:
   db:
@@ -8,7 +10,9 @@ services:
     environment:
       POSTGRES_DB: gis
       POSTGRES_USER: gis
-      POSTGRES_PASSWORD: wieso
+      # Development default (INSECURE): datavia_dev
+      # Production: Set via environment variable or .env file
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-datavia_dev}
     ports:
       - "5432:5432"
     volumes:
