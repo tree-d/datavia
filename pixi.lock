@@ -1261,7 +1261,7 @@ packages:
 - pypi: ./
   name: datavia
   version: 1.0.0.dev0
-  sha256: 6052cc17cf3721834851663de29d83b4ca0df0ff301baddaf3bc7e4ded21c815
+  sha256: e554e2b4ae80ea23e607376eeb4e96dcbbc5e251b031f9ed27cd5d022aff4f24
   requires_dist:
   - numpy>=2.2.0,<3.0
   - rasterio>=1.4.3,<2.0
@@ -1283,9 +1283,9 @@ packages:
   - scipy>=1.16.0,<2.0
   - rioxarray>=0.19.0,<0.20
   - tifffile>=2025.3.30
-  - datavia-elevation @ file:///$PROJECT_ROOT/packages/elevation ; extra == 'elevation'
-  - datavia-soil @ file:///$PROJECT_ROOT/packages/soil ; extra == 'soil'
-  - datavia-weather @ file:///$PROJECT_ROOT/packages/weather ; extra == 'weather'
+  - datavia-elevation>=1.0.0.dev0,<2.0 ; extra == 'elevation'
+  - datavia-soil>=1.0.0.dev0,<2.0 ; extra == 'soil'
+  - datavia-weather>=1.0.0.dev0,<2.0 ; extra == 'weather'
   - fiona>=1.10.1,<2 ; extra == 'vector'
   - shapely>=2.0.4,<3.0 ; extra == 'vector'
   - datavia[elevation] ; extra == 'pipelines'
@@ -1328,9 +1328,9 @@ packages:
 - pypi: ./packages/elevation
   name: datavia-elevation
   version: 1.0.0.dev0
-  sha256: 14d292f404fc5c992a61638d7f6c3d96c053cca6d7810a5ef9090a064ed1a8f8
+  sha256: 775ee7ece98e901e33b1c1a3b549af6ba16f527e60a3870ac7b75e826613e761
   requires_dist:
-  - datavia
+  - datavia>=1.0.0.dev0,<2.0
   - rasterio>=1.4.3,<2
   - numpy>=2.0.0,<3
   requires_python: '>=3.12'
@@ -1338,9 +1338,9 @@ packages:
 - pypi: ./packages/soil
   name: datavia-soil
   version: 1.0.0.dev0
-  sha256: a3a027263a77fcd4b167080659807556135e66861f89ceeced48cbbd56ca82e9
+  sha256: d4e7bee176e2b33c3d8a9ca9704fb225e9fdc22ebbf66cb8650e0cb6e54fecda
   requires_dist:
-  - datavia
+  - datavia>=1.0.0.dev0,<2.0
   - soilgrids>=0.1.0,<1.0
   - requests>=2.32.3,<3.0
   - numpy>=2.0.0,<3

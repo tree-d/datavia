@@ -22,7 +22,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: GIS",
 ]
 dependencies = [
-    "datavia",        # Local core datavia package
+    "datavia>=1.0.0.dev0,<2.0",
     "soilgrids>=0.1.0,<1.0",     # Soil-specific dependency
     "requests>=2.32.3,<3.0",
     "numpy>=2.0.0,<3",

@@ -237,9 +237,11 @@ jobs:
   # Job 5: Publish to TestPyPI (for testing)
   publish-test:
     name: Publish to TestPyPI
-    needs: [version, build]
+    needs: [test, quality-gate, version, build]
     runs-on: ubuntu-latest
     if: >
+      needs.test.result == 'success' &&
+      needs.quality-gate.result == 'success' &&
       github.event.inputs.test_pypi_only == 'true' ||
       github.ref == 'refs/heads/release'
     environment:
@@ -263,9 +265,11 @@ jobs:
   # Job 6: Publish to PyPI (production)
   publish-pypi:
     name: Publish to PyPI
-    needs: [version, build, publish-test]
+    needs: [test, quality-gate, version, build, publish-test]
     runs-on: ubuntu-latest
     if: >
+      needs.test.result == 'success' &&
+      needs.quality-gate.result == 'success' &&
       github.event.inputs.test_pypi_only != 'true' &&
       (startsWith(github.ref, 'refs/tags/v') ||
       github.ref == 'refs/heads/release')

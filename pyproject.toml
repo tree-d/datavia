@@ -53,13 +53,13 @@ datavia = "datavia.cli:main"
 [project.optional-dependencies]
 # Pipeline-specific dependencies (separate local packages)
 elevation = [
-    "datavia-elevation @ file:///$PROJECT_ROOT/packages/elevation",  # Local elevation package
+    "datavia-elevation>=1.0.0.dev0,<2.0",
 ]
 soil = [
-    "datavia-soil @ file:///$PROJECT_ROOT/packages/soil",       # Local soil package 
+    "datavia-soil>=1.0.0.dev0,<2.0",
 ]
 weather = [
-    "datavia-weather @ file:///$PROJECT_ROOT/packages/weather",    # Local weather package
+    "datavia-weather>=1.0.0.dev0,<2.0",
 ]
 vector = [
     "fiona>=1.10.1,<2",

@@ -28,16 +28,3 @@ python -m build
 cd ../..
 
 echo "✅ All packages built successfully!"
-echo ""
-echo "📋 To install locally with pixi:"
-echo "  # Install core only:"
-echo "  pixi add --pypi \"datavia@file:///home/bergmi/tree-D_data-integration/datavia\" --editable"
-echo ""  
-echo "  # Install with elevation:"
-echo "  pixi add --pypi \"datavia[elevation]@file:///home/bergmi/tree-D_data-integration/datavia\" --editable"
-echo ""
-echo "  # Install with soil:"
-echo "  pixi add --pypi \"datavia[soil]@file:///home/bergmi/tree-D_data-integration/datavia\" --editable"
-echo ""
-echo "  # Install with all pipelines:"
-echo "  pixi add --pypi \"datavia[pipelines]@file:///home/bergmi/tree-D_data-integration/datavia\" --editable"
