@@ -79,9 +79,12 @@ class DataviaConfig:
             try:
                 self.config.read(config_file)
                 self._expand_environment_variables()
+                self._apply_environment_overrides()
                 logger.info(f"Loaded configuration from {config_file}")
             except Exception as e:
                 logger.error(f"Failed to load config file {config_file}: {e}")
+        else:
+            self._apply_environment_overrides()
 
     def _expand_environment_variables(self) -> None:
         """Expand environment variables in config values.
@@ -105,6 +108,18 @@ class DataviaConfig:
 
                 expanded_value = re.sub(pattern, replace_env, value)
                 self.config[section][key] = expanded_value
+
+    def _apply_environment_overrides(self) -> None:
+        """Apply DATAVIA_* environment variable overrides to config.
+
+        Uses the pattern DATAVIA_<SECTION>_<KEY>, e.g. DATAVIA_DATABASE_HOST.
+        """
+        for section in self.config.sections():
+            for key in self.config[section]:
+                env_key = f"DATAVIA_{section}_{key}".upper()
+                env_value = os.getenv(env_key)
+                if env_value is not None:
+                    self.config[section][key] = env_value
 
     def _set_defaults(self) -> None:
         """Set default configuration values."""

@@ -331,24 +331,29 @@ class TestContainerCommands:
 class TestPipelineUpdate:
     """Test pipeline update functionality."""
 
-    def test_update_pipeline_installs_dependencies(self):
+    @patch("test_cli._install_pipeline_dependencies")
+    def test_update_pipeline_installs_dependencies(self, mock_install):
         """Test _update_pipeline installs pipeline dependencies."""
-        # Simple test since our wrapper implementation is simplified
+        mock_install.return_value = True
         result = _update_pipeline("elevation")
         assert result is True
+        mock_install.assert_called_once()
 
-    def test_update_pipeline_handles_install_failure(self):
+    @patch("test_cli._install_pipeline_dependencies")
+    def test_update_pipeline_handles_install_failure(self, mock_install):
         """Test _update_pipeline handles dependency installation failure."""
-        # Test using actual function without mocks
+        mock_install.return_value = False
         result = _update_pipeline("elevation")
-        # Our simplified implementation always returns True for success
-        assert result is True
+        assert result is False
 
-    def test_update_pipeline_no_dependencies(self):
+    @patch("test_cli._install_pipeline_dependencies")
+    def test_update_pipeline_no_dependencies(self, mock_install):
         """Test _update_pipeline with pipeline that has no dependencies."""
+        mock_install.return_value = True
         result = _update_pipeline("unknown_pipeline")
         # Should still succeed if no dependencies
         assert result is True
+        mock_install.assert_called_once()
 
 
 if __name__ == "__main__":

@@ -19,8 +19,10 @@ type-check = {cmd = "mypy datavia/ --ignore-missing-imports"}
 security-scan = {cmd = "bandit -r datavia/ -f json -o bandit-report.json"}
 test-unit = {cmd = "python -m pytest tests/test_config.py tests/test_coordinate_transforms.py tests/test_runner.py tests/test_spatial_ops.py -v"}
 test-integration = {cmd = "python -m pytest tests/test_e2e_workflows.py::TestContainerIntegration tests/test_e2e_workflows.py::TestDataQualityWorkflows::test_coordinate_validation_workflow tests/test_e2e_workflows.py::TestDataQualityWorkflows::test_spatial_bounds_validation_workflow tests/test_e2e_workflows.py::TestSpatialOperationsWorkflow tests/test_e2e_workflows.py::TestConfigurationWorkflows::test_global_config_workflow tests/test_e2e_workflows.py::TestErrorHandlingWorkflows -v"}
-test-all = {cmd = "python -m pytest tests/ -v --cov=datavia --cov-report=xml --cov-report=html"}
-ci-check = {cmd = "pixi run format-check && pixi run lint && pixi run type-check && pixi run test-all"}
+test-light = {cmd = "python -m pytest tests/ -v -k 'not test_elevation_pipeline and not test_elevation_pipeline_inside_datavia'"}
+# Heavy integration tests (with running backend containers and network access)
+test-e2e = {cmd = "datavia start && DATAVIA_E2E=1 python -m pytest tests/ -v --cov=datavia --cov-report=xml --cov-report=html && datavia stop"}
+ci-check = {cmd = "pixi run format-check && pixi run lint && pixi run type-check && pixi run test-light"}
 
 # Development feature for CI/CD tools
 [feature.dev.dependencies]

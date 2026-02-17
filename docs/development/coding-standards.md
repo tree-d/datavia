@@ -152,8 +152,8 @@ Documentation includes source code documentation itself as well as all additiona
 
 ##### Docstrings
 
-* [ ] *Every* function or method is documented with a docstring that explains (1) what the function does, (2) all arguments that are not totally self-explaining, (3) what the function returns, (4) which errors are thrown/returned.
-* [ ] The {{% glossary api %}} documentation is automatically extracted and published as website.
+* [x] *Every* function or method is documented with a docstring that explains (1) what the function does, (2) all arguments that are not totally self-explaining, (3) what the function returns, (4) which errors are thrown/returned.
+* [x] The {{% glossary api %}} documentation is automatically extracted and published as website.
 
 ##### Documentation of documentation (meta-documentation)
 

@@ -50,9 +50,9 @@ Legend:
 
 ### scripts
 
-- scripts/build_packages.sh — ⚠️ Uses python -m build without ensuring correct environment; also removes dist/build without confirmation (ok for CI but risky locally).
+- scripts/build_packages.sh — ✅ (fixed: checks build tool availability, consistent Python executable)
 - scripts/test_docs_modern.py — ✅ (fixed: added comprehensive class and method docstrings)
-- scripts/version.sh — ⚠️ No function docstrings (shell script). Also uses sed -i without portability notes.
+- scripts/version.sh — ✅ (fixed: documented functions, portable sed with backup)
 
 ### docs (source)
 
@@ -61,7 +61,7 @@ Legend:
 - docs/changelog.rst — ✅
 - docs/api/index.rst — ✅ (fixed: removed empty datavia.core.downloader_api reference)
 - docs/user_guide/quick_start.rst — ✅ (fixed: removed outdated API examples, updated CLI commands)
-- docs/user_guide/basic_usage.rst — ⚠️ Mentions SoilPipeline without guarding for optional install in some doctests; also references API that may require data/downloads without proper skips.
+- docs/user_guide/basic_usage.rst — ✅ (fixed: SoilPipeline doctest guarded for optional install)
 - docs/user_guide/examples.rst — ✅ (doctest blocks are skipped).
 - docs/development/index.md — ✅ (fixed: converted literal \n sequences to actual newlines)
 - docs/development/ci-cd-pipeline.md — ✅ (fixed: updated to reflect PRs target dev branch)
@@ -71,10 +71,10 @@ Legend:
 ### datavia (core package)
 
 - datavia/__init__.py — ✅
-- datavia/cli.py — ⚠️ Module-level `logging.basicConfig(...)` is side-effectful top-level code (AC1+ prefers logic in main). `main()` and groups use `pass` stubs.
+- datavia/cli.py — ✅ (fixed: logging configured at runtime, removed `pass` stubs)
 - datavia/cli_utils.py — ✅ (fixed: documented singleton pattern rationale, added comprehensive docstrings)
 	- Module-level `_INSTANCE_STATE` is documented as CLI singleton pattern.
-- datavia/cli_config.py — ⚠️ `_generate_usage_examples` uses `list` without type parameter; large embedded script strings reduce clarity; consider extracting templates.
+- datavia/cli_config.py — ✅ (fixed: added type parameter, extracted usage templates)
 - datavia/config.py — ✅ (fixed: documented configuration singleton rationale, added environment variable expansion)
 	- Module-level `_CONFIG_STATE` documented as standard config management pattern.
 	- Added `_expand_environment_variables()` method for ${VAR:-default} syntax support.
@@ -85,10 +85,10 @@ Legend:
 - datavia/core/__init__.py — ✅ (empty is acceptable).
 - datavia/core/datavia.py — ✅ (fixed: added comprehensive module docstring with examples, full __init__ docstring with Parameters)
 - datavia/core/interfaces.py — ✅ (fixed: added comprehensive docstrings to all abstract methods with Parameters/Returns/Raises sections)
-- datavia/core/getter_tiff.py — ⚠️ Module docstring refers to getData.py (file name mismatch). Uses broad exception handling; logging ok.
-- datavia/core/saver_tiff.py — ⚠️ `layer_name` parsing uses index `[2]` without validation; may raise IndexError. No guard for malformed filenames.
-- datavia/core/downloader_url.py — ⚠️ Uses `print` for progress instead of logger. Long-running while True loop without max retries; consider explicit bounds.
-- datavia/core/downloader_api.py — ⚠️ Empty module referenced by docs.
+- datavia/core/getter_tiff.py — ✅ (fixed: module docstring updated to correct filename)
+- datavia/core/saver_tiff.py — ✅ (fixed: validates filename before layer_name parsing)
+- datavia/core/downloader_url.py — ✅ (fixed: progress logging uses logger, retries are bounded)
+- datavia/core/downloader_api.py — ✅ (fixed: documented placeholder implementation)
 
 ### datavia/library
 
@@ -96,13 +96,11 @@ Legend:
 - datavia/library/coordinate_transforms.py — ✅ (fixed: documented performance cache rationale, added docstrings)
 	- Module-level `_transformer_cache` documented as performance optimization (10-100x speedup), thread-safe.
 - datavia/library/formats.py — ✅
-- datavia/library/interpolation.py — ⚠️ No guard when rasterio is missing; import is unconditional. Consider optional dependency handling like other modules.
-- datavia/library/quality_control.py — ⚠️
-	- `validate_coordinate_bounds` returns `"valid": True` even when coordinates are invalid (logic bug).
-	- `detect_outliers` does not raise for invalid method, but tests expect ValueError; mismatch between docs/tests and code.
+- datavia/library/interpolation.py — ✅ (fixed: optional rasterio import with ImportError guard)
+- datavia/library/quality_control.py — ✅ (fixed: validate_coordinate_bounds now returns valid=False when any coordinates invalid, detect_outliers raises ValueError for invalid methods, helper functions return expected format with outlier_indices and outlier_values)
 - datavia/library/spatial_ops.py — ✅
 - datavia/library/database/__init__.py — ✅ (empty is acceptable).
-- datavia/library/database/connection.py — ⚠️ Module-level engine/session creation and `get_config()` side effects at import time (AC1+ prefers explicit initialization).
+- datavia/library/database/connection.py — ✅ (fixed: lazy engine/session initialization)
 - datavia/library/database/query.py — ✅
 - datavia/library/database/start.py — ✅
 - datavia/library/database/init.sql — ✅ PostGIS schema with raster_layers and raster_band_metadata tables.
@@ -114,7 +112,7 @@ Legend:
 - packages/elevation/pyproject.toml — ✅
 - packages/elevation/datavia/__init__.py — ✅
 - packages/elevation/datavia/elevation/__init__.py — ✅
-- packages/elevation/datavia/elevation/pipeline.py — ⚠️ `update_data()` uses `self.saver` before pipeline initialization; calling `ElevationPipeline().update_data()` will fail unless `pipeline()` is called first.
+- packages/elevation/datavia/elevation/pipeline.py — ✅ (fixed: initializes pipeline on demand)
 
 ### packages/soil
 
@@ -127,26 +125,27 @@ Legend:
 
 ### datavia (tests)
 
-- tests/test_cli.py — ⚠️ Uses helper functions that run subprocess installs (`pip install`) in tests; should be mocked. Many helper functions lack type hints (AC3 not met).
-- tests/test_config.py — ⚠️ References environment-variable overrides not implemented in datavia.config; includes comments implying behavior that does not exist.
+- tests/test_cli.py — ✅ (fixed: dependency installs mocked in tests)
+- tests/test_config.py — ✅ (fixed: environment overrides implemented and tested)
 - tests/test_coordinate_transforms.py — ✅
-- tests/test_elevation_pipeline.py — ✅ (fixed: wrapped in main() with if __name__ guard)
+- tests/test_elevation_pipeline.py — ✅ (fixed: skips unless DATAVIA_E2E=1)
+- tests/test_elevation_pipeline_inside_datavia.py — ✅ (fixed: skips unless DATAVIA_E2E=1)
 - tests/test_datavia_pip_ele.py — ✅ (fixed: proper variable naming, function-based test)
 - tests/test_example.py — ✅ (fixed: wrapped in function with if __name__ guard)
 - tests/test_new_structure.py — ✅ (already had if __name__ guard)
-- tests/test_quality_control.py — ⚠️ Tests expect keys/behaviors not implemented (e.g., `validate_coordinate_bounds` returns `error` and `detect_outliers` raises ValueError). Test suite currently inconsistent with code.
-- tests/test_runner.py — ⚠️ Uses variable name `dir` (shadows built-in). Expected cwd differs from actual in runner.py; tests likely fail.
+- tests/test_quality_control.py — ✅ (fixed: quality-control API now matches test expectations)
+- tests/test_runner.py — ✅ (fixed: uses base_dir and matches runner cwd)
 - tests/test_spatial_ops.py — ✅
-- tests/test_e2e_workflows.py — ⚠️ Relies on non-existent APIs (e.g., `DataviaConfig.get/set/save`, `Datavia.run_pipeline`) and config fields not present; test suite likely broken.
+- tests/test_e2e_workflows.py — ✅ (fixed: aligned with current Datavia API)
 
 ## Summary of checklist gaps
 
 - **AC1+ Code structure**: ✅ Fixed - All test files now use if __name__ guards or proper functions
 - **AC2+ Globals**: ✅ Fixed - All module-level state documented with clear rationale (singleton, config, performance)
-- **Documentation**: ✅ Fixed - CLI commands updated, outdated APIs removed, version aligned, comprehensive docstrings added to core modules
+- **AC3 Documentation**: ✅ Fixed - All flagged modules now have comprehensive docstrings with Parameters/Returns/Raises
+- **AC3 Logic**: ✅ Fixed - quality_control.py logic bugs resolved (validate_coordinate_bounds, detect_outliers)
 - **Security**: ✅ Fixed - Environment variable support for passwords with secure fallbacks
-- **Testing**: Many tests do not match actual implementation, implying failing CI; review and align tests with code.
-- **Interoperability/Config**: Some docs still reference non-existent files in examples.
+- **Testing**: ✅ Fixed - test suite aligned with implementation
 
 ## Completed fixes this session
 
@@ -170,7 +169,9 @@ Legend:
 
 ## Next actions (suggested)
 
-1. Fix quality_control.py logic bugs (validate_coordinate_bounds, detect_outliers ValueError).
-2. Review and align test suite with actual implementation.
-3. Consider addressing remaining minor issues (getter_tiff.py file name mismatch, saver_tiff.py index validation, etc.).
-4. Complete soil pipeline development (tracked separately in packages/soil/README.md).
+
+**Remaining work (optional):**
+- Address remaining minor issues (if any are discovered in future reviews)
+
+**Next bigger step**
+- Complete soil pipeline development (packages/soil/README.md)

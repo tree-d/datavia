@@ -45,9 +45,13 @@ class TiffSaver(Saver):
         try:
             # Extract layer name from filename
             filename = os.path.basename(data_path)
-            layer_name = (
-                self.source_name + "_" + os.path.splitext(filename)[0].split("_")[2]
-            )
+            name_parts = os.path.splitext(filename)[0].split("_")
+            if len(name_parts) < 3:
+                raise ValueError(
+                    "Expected filename with at least 3 underscore-separated parts. "
+                    f"Got '{filename}'."
+                )
+            layer_name = f"{self.source_name}_{name_parts[2]}"
 
             # Destination path in data directory
             dest_path = os.path.join(self.data_dir, layer_name + ".tif")

@@ -37,10 +37,14 @@ Available Pipelines
 
 .. doctest::
 
-    >>> from datavia.soil import SoilPipeline # doctest: +SKIP
+    >>> try:
+    ...     from datavia.soil import SoilPipeline
+    ... except ImportError:
+    ...     SoilPipeline = None
     >>> 
     >>> # Soil properties from SoilGrids API
-    >>> soil_pipeline = SoilPipeline() # doctest: +SKIP
+    >>> if SoilPipeline is not None:  # doctest: +SKIP
+    ...     soil_pipeline = SoilPipeline()  # doctest: +SKIP
 
 Coordinate Systems
 ------------------

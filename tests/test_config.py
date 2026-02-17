@@ -238,13 +238,8 @@ class TestConfigModule:
             },
         ):
             config = DataviaConfig()
-
-            # Note: This test assumes the config class supports env var overrides
-            # If not implemented yet, this documents the expected behavior
-            if hasattr(config, "config"):
-                # Check if environment variables are respected
-                # This might need adjustment based on actual implementation
-                pass
+            assert config.config["database"]["host"] == "env_host"
+            assert config.config["database"]["port"] == "9999"
 
 
 if __name__ == "__main__":

@@ -16,12 +16,13 @@ get_container_status : Check if container is running
 import logging
 import subprocess
 import time
-from pathlib import Path
+
+from .config import get_config
 
 logger = logging.getLogger(__name__)
-# Compose directory is determined relative to this module's location
-# This ensures docker-compose.yml is found regardless of where the script runs from
-compose_dir = Path(__file__).parent
+# Compose directory is determined from configuration base directory
+# This ensures docker-compose.yml is resolved from the project root
+compose_dir = get_config().base_directory
 
 
 def start_container() -> None:

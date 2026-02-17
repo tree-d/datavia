@@ -7,6 +7,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import logging
 
 import numpy as np
+import pytest
 from datavia.elevation import ElevationPipeline
 
 from datavia.core.datavia import Datavia
@@ -19,6 +20,8 @@ logger = logging.getLogger(__name__)
 
 def test_elevation_pipeline_inside_datavia():
     """Test the elevation pipeline with Datavia controller."""
+    if os.getenv("DATAVIA_E2E") != "1":
+        pytest.skip("DATAVIA_E2E not set; skipping integration test")
     elevation_pipeline = ElevationPipeline(
         url="https://sgx.geodatenzentrum.de/wcs_dgm200_inspire?VERSION=2.0.1&SERVICE=WCS&REQUEST=GetCoverage&COVERAGEID=dgm200_inspire__EL.GridCoverage&format=image/tiff&crs=EPSG:25832&bbox=280000,5235000,921000,6101000"
     )
