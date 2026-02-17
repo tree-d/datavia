@@ -16,7 +16,7 @@ from rasterio.warp import transform_bounds
 from sqlalchemy import text
 
 from ..config import get_config
-from ..library.database.connection import SessionLocal
+from ..library.database.connection import session_local
 from .interfaces import Saver
 
 logger = logging.getLogger(__name__)
@@ -87,7 +87,7 @@ class TiffSaver(Saver):
                 if f.lower().endswith(".tif") and f.startswith(self.source_name + "_")
             }
 
-            session = SessionLocal()
+            session = session_local()
 
             logger.info(
                 f"Checking data existence for source {self.source_name} in {self.data_dir}"
@@ -157,7 +157,7 @@ class TiffSaver(Saver):
         """Import raster metadata into PostGIS raster_layers table."""
         should_close_session = session is None
         if session is None:
-            session = SessionLocal()
+            session = session_local()
 
         try:
             with rasterio.open(filepath) as src:
@@ -257,7 +257,7 @@ class TiffSaver(Saver):
         """
         should_close_session = session is None
         if session is None:
-            session = SessionLocal()
+            session = session_local()
 
         try:
             # Check band count
@@ -368,7 +368,7 @@ class TiffSaver(Saver):
         """Delete layer metadata from PostGIS."""
         should_close_session = session is None
         if session is None:
-            session = SessionLocal()
+            session = session_local()
 
         try:
             session.execute(
@@ -391,7 +391,7 @@ class TiffSaver(Saver):
         """Delete band metadata from PostGIS."""
         should_close_session = session is None
         if session is None:
-            session = SessionLocal()
+            session = session_local()
 
         try:
             session.execute(

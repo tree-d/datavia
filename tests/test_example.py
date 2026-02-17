@@ -13,7 +13,7 @@ def test_namespace_imports():
     print("Testing elevation...")
 
     try:
-        pipeline = datavia.elevation.ElevationPipeline()
+        datavia.elevation.ElevationPipeline()
         print("✅ Success: ElevationPipeline created from datavia.elevation")
     except Exception as e:
         print(f"❌ Error: {e}")
@@ -22,7 +22,7 @@ def test_namespace_imports():
     print("\nTesting soil...")
 
     try:
-        soil_pipeline = datavia.soil.SoilPipeline()
+        datavia.soil.SoilPipeline()
         print("✅ Success: SoilPipeline created from datavia.soil")
     except Exception as e:
         print(f"❌ Error: {e}")

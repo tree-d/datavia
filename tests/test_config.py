@@ -192,7 +192,7 @@ class TestConfigModule:
         self.test_dir = Path(tempfile.mkdtemp())
         self.config_file = self.test_dir / "test_datavia.conf"
         # Clear global config between tests
-        datavia.config._CONFIG_STATE["config"] = None
+        reload_config()
 
     def teardown_method(self):
         """Clean up after tests."""
@@ -200,7 +200,7 @@ class TestConfigModule:
         if self.test_dir.exists():
             shutil.rmtree(self.test_dir)
         # Clear global config after tests
-        datavia.config._CONFIG_STATE["config"] = None
+        reload_config()
 
     @patch("datavia.config.DataviaConfig")
     def test_get_config_returns_singleton(self, mock_config_class):

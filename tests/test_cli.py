@@ -311,7 +311,7 @@ class TestContainerCommands:
     @patch("datavia.cli_utils.get_container_status")
     def test_stop_when_container_running(self, mock_status, mock_stop):
         """Test _stop function when container is running."""
-        # Test simply returns True - no mock assertions needed for wrapper
+        mock_status.return_value = "running"
         result = _stop()
         assert result is True
 
@@ -319,12 +319,9 @@ class TestContainerCommands:
     @patch("datavia.cli_utils.get_container_status")
     def test_stop_when_container_stopped(self, mock_status, mock_stop):
         """Test _stop function when container is already stopped."""
-        mock_status.return_value = False
-
+        mock_status.return_value = "stopped"
         result = _stop()
-
         assert result is True
-        # Should not try to stop if already stopped
         mock_stop.assert_not_called()
 
 

@@ -384,9 +384,9 @@ def apply_quality_filters(
             return {
                 "filtered_data": np.array([]),
                 "coordinates": coords if coords is not None else None,
-                "filtered_coords": np.array([]).reshape(0, 2)
-                if coords is not None
-                else None,
+                "filtered_coords": (
+                    np.array([]).reshape(0, 2) if coords is not None else None
+                ),
                 "valid_mask": np.array([], dtype=bool),
                 "valid_indices": [],
                 "removed_count": 0,

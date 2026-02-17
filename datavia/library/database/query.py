@@ -8,7 +8,7 @@ from typing import Any
 
 from sqlalchemy import text
 
-from .connection import SessionLocal
+from .connection import session_local
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ def get_raster_paths(source_name: str) -> list[str]:
     Returns:
         List[str]: List of file paths (URIs) for the source
     """
-    session = SessionLocal()
+    session = session_local()
     try:
         result = session.execute(
             text("SELECT uri FROM raster_layers WHERE source_name = :source_name"),
@@ -51,7 +51,7 @@ def get_raster_metadata(source_name: str) -> list[dict]:
     Returns:
         List[Dict]: List of metadata dictionaries with layer information
     """
-    session = SessionLocal()
+    session = session_local()
     try:
         result = session.execute(
             text(
@@ -101,7 +101,7 @@ def get_band_metadata(source_name: str) -> dict[str, list[dict]]:
     Returns:
         Dict[str, List[Dict]]: Dictionary mapping layer_name to list of band metadata
     """
-    session = SessionLocal()
+    session = session_local()
     try:
         result = session.execute(
             text(
@@ -147,7 +147,7 @@ def get_layer_by_name(layer_name: str, source_name: str | None = None) -> dict |
     Returns:
         Optional[Dict]: Layer metadata dictionary or None if not found
     """
-    session = SessionLocal()
+    session = session_local()
     try:
         if source_name:
             result = session.execute(
@@ -208,7 +208,7 @@ def check_source_exists(source_name: str) -> bool:
     Returns:
         bool: True if source has raster layers, False otherwise
     """
-    session = SessionLocal()
+    session = session_local()
     try:
         result = session.execute(
             text("SELECT COUNT(*) FROM raster_layers WHERE source_name = :source_name"),

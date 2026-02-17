@@ -99,7 +99,7 @@ pixi add --pypi datavia[vector]
    # Access data
    import numpy as np
    coords = np.array([[10.0, 50.0]])
-   elevation_data = dv.pipelines[0].get_data(coords, crs_coords="EPSG:4326")
+   elevation_data = dv.elevation.get_data(coords, crs_coords="EPSG:4326")
    ```
 
 3. **Shut down database**

@@ -8,6 +8,7 @@ API settings, and other system parameters using config file approach.
 import configparser
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -92,7 +93,6 @@ class DataviaConfig:
         Supports ${VAR} and ${VAR:-default} syntax.
         Example: ${POSTGRES_PASSWORD:-datavia_dev}
         """
-        import re
 
         for section in self.config.sections():
             for key in self.config[section]:
