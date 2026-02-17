@@ -35,11 +35,11 @@ Installation
 Setup Database
 --------------
 
-Start the PostGIS database:
+Start/Stop the PostGIS database:
 
 .. code-block:: bash
 
-    datavia start
+    datavia start/stop
 
 Basic Usage
 -----------

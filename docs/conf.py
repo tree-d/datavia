@@ -6,12 +6,6 @@
 import os
 import sys
 
-# Add the project root to Python path for autodoc
-sys.path.insert(0, os.path.abspath(".."))  # Project root
-sys.path.insert(0, os.path.abspath("../datavia"))  # Core package
-sys.path.insert(0, os.path.abspath("../packages/elevation"))  # Elevation package
-sys.path.insert(0, os.path.abspath("../packages/soil"))  # Soil package
-
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
@@ -55,12 +49,6 @@ import os
 import sys
 import numpy as np
 from pathlib import Path
-
-# Add project paths for testing
-sys.path.insert(0, os.path.abspath('..'))
-sys.path.insert(0, os.path.abspath('../datavia'))
-sys.path.insert(0, os.path.abspath('../packages/elevation'))
-sys.path.insert(0, os.path.abspath('../packages/soil'))
 
 # Set up test environment
 os.environ['DATAVIA_TEST_MODE'] = '1'

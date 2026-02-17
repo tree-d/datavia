@@ -196,17 +196,16 @@ class TestConfigModule:
 
     def teardown_method(self):
         """Clean up after tests."""
-
         if self.test_dir.exists():
             shutil.rmtree(self.test_dir)
-        # Clear global config after tests
-        reload_config()
+        # Reset the singleton by creating a new manager
+        datavia.config._config_manager = datavia.config._ConfigManager()
 
     @patch("datavia.config.DataviaConfig")
     def test_get_config_returns_singleton(self, mock_config_class):
         """Test get_config returns the same instance on multiple calls."""
-        # Clear any existing cached config
-        datavia.config._CONFIG_STATE["config"] = None
+        # Ensure we have a clean slate
+        datavia.config._config_manager = datavia.config._ConfigManager()
 
         config1 = get_config()
         config2 = get_config()
@@ -217,15 +216,19 @@ class TestConfigModule:
     @patch("datavia.config.DataviaConfig")
     def test_reload_config_creates_new_instance(self, mock_config_class):
         """Test reload_config forces creation of new config instance."""
-        # Clear any existing cached config
-        datavia.config._CONFIG_STATE["config"] = None
+        # Ensure we have a clean slate
+        datavia.config._config_manager = datavia.config._ConfigManager()
 
-        get_config()
-        reload_config()
-        get_config()
+        get_config()  # First call
+        reload_config()  # Reload
+        get_config()  # Should not create a new one
+        reload_config()  # Second reload
 
-        # Should be called twice - once for initial, once for reload
-        assert mock_config_class.call_count == 2
+        # DataviaConfig should be instantiated three times:
+        # 1. The initial get_config()
+        # 2. The first reload_config()
+        # 3. The second reload_config()
+        assert mock_config_class.call_count == 3
 
     def test_config_with_environment_variables(self):
         """Test configuration with environment variable overrides."""

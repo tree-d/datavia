@@ -1,10 +1,6 @@
+import logging
 import os
 import sys
-
-# Add the parent directory (datavia-pipelines) to Python path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-import logging
 
 import numpy as np
 import pytest
@@ -18,33 +14,43 @@ from datavia.runner import get_container_status, start_container, stop_container
 logging.basicConfig(level=logging.INFO)
 
 
-def test_elevation_pipeline():
-    """Run elevation pipeline test."""
-    if os.getenv("DATAVIA_E2E") != "1":
-        pytest.skip("DATAVIA_E2E not set; skipping integration test")
-    meinehoehe = ElevationPipeline(
-        url="https://sgx.geodatenzentrum.de/wcs_dgm200_inspire?VERSION=2.0.1&SERVICE=WCS&REQUEST=GetCoverage&COVERAGEID=dgm200_inspire__EL.GridCoverage&format=image/tiff&crs=EPSG:25832&bbox=280000,5235000,921000,6101000"
-    )
-    meinehoehe()
+@pytest.mark.skipif(
+    os.getenv("DATAVIA_E2E") != "1",
+    reason="DATAVIA_E2E not set; skipping integration test",
+)
+def test_elevation_pipeline_e2e():
+    """Run elevation pipeline end-to-end test."""
+    # Setup: Ensure container is running and database is initialized
     if not get_container_status():
         start_container()
     initialize_database()
-    meinehoehe.sync_files_and_database()
 
-    if meinehoehe.find_files():
-        print("Elevation data files already exist.")
-    else:
-        print("No elevation data files found. Downloading...")
+    try:
+        meinehoehe = ElevationPipeline(
+            url="https://sgx.geodatenzentrum.de/wcs_dgm200_inspire?VERSION=2.0.1&SERVICE=WCS&REQUEST=GetCoverage&COVERAGEID=dgm200_inspire__EL.GridCoverage&format=image/tiff&crs=EPSG:25832&bbox=280000,5235000,921000,6101000"
+        )
+
+        # Initial sync and update
+        meinehoehe()  # Initialize pipeline
+        meinehoehe.sync_files_and_database()
         meinehoehe.update_data()
 
-    print("Fetching elevation data at specified coordinates...")
-    print(
-        meinehoehe.get_data(
-            coords=np.array([[10.0, 50.0], [11.0, 51.0]]), crs_coords="EPSG:4326"
+        # Verify files were created
+        found_files, _, _ = meinehoehe.saver.check_data_exists()
+        assert found_files, "No elevation data files were found after update."
+
+        # Test data retrieval
+        coords = np.array([[10.0, 50.0], [11.0, 51.0]])
+        elevation_data = meinehoehe.get_data(coords=coords, crs_coords="EPSG:4326")
+
+        assert elevation_data is not None, "get_data should return data, not None."
+        assert len(elevation_data) == len(coords), (
+            "Should receive one elevation value per coordinate."
         )
-    )
-    stop_container()
+        assert np.all(elevation_data > 0), (
+            "Elevation values should be positive for the given coordinates."
+        )
 
-
-if __name__ == "__main__":
-    test_elevation_pipeline()
+    finally:
+        # Teardown: Stop the container after the test
+        stop_container()
