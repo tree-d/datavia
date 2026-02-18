@@ -16,11 +16,11 @@ But be aware that you do not push these changes!
 
    ```bash
    # Install core only
-   pixi add --pypi "datavia@file://$(pwd)" --editable
+   pixi add --pypi "datavia@file:///path/to/your/datavia" --editable
    
    # Or install with specific pipelines
-   pixi add --pypi "datavia[elevation]@file://$(pwd)" --editable
-   pixi add --pypi "datavia[soil]@file://$(pwd)" --editable
+   pixi add --pypi "datavia-elevation@file:///path/to/your/datavia/packages/elevation/pyproject.toml" --editable
+   pixi add --pypi "datavia-soil@file:///path/to/your/datavia/packages/soil/pyproject.toml" --editable
    ```
 
 ## Project Structure
@@ -47,17 +47,19 @@ datavia/
 
 ```bash
 # Code quality tasks (use dev environment)
-pixi run -e dev format          # Auto-format code
-pixi run -e dev format-check    # Check formatting without changes
-pixi run -e dev lint            # Run ruff linting
-pixi run -e dev type-check      # Run mypy type checking
-pixi run -e dev security-scan   # Run bandit security scan
+# Please have a look at pixi.toml for more useful tasks
+pixi run format          # Auto-format code
+pixi run format-check    # Check formatting without changes
+pixi run lint            # Run ruff linting
+pixi run type-check      # Run mypy type checking
+pixi run security-scan   # Run bandit security scan
 
 # Testing tasks
-pixi run -e dev test-unit       # Run unit tests
-pixi run -e dev test-integration # Run integration tests  
-pixi run -e dev test-all        # Run all tests with coverage
+pixi run test-unit       # Run unit tests
+pixi run test-integration # Run integration tests  
+pixi run test-all        # Run all tests with coverage
 
 # Complete CI check
-pixi run -e dev ci-check        # Run all checks like CI pipeline
+pixi run ci-check        # Run all checks like CI pipeline
+pixi run ci-pr-check
 ```
