@@ -70,6 +70,6 @@ def get_sessionmaker() -> sessionmaker:
     return _db_manager.get_sessionmaker()
 
 
-def session_local():
+def session_local() -> Any:
     """Return a new SQLAlchemy session from the lazy sessionmaker."""
     return get_sessionmaker()()

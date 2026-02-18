@@ -56,7 +56,7 @@ GENERAL_EXAMPLE = """
     # Example: General approach for any pipeline
     for pipeline in datavia.pipelines:
         try:
-            print(f"\nTesting {pipeline.name} pipeline...")
+            print(f"Testing {pipeline.name} pipeline...")
             data = pipeline.get_data(coords=berlin_coords, crs_coords="EPSG:4326")
             print(f"{pipeline.name} data: {data}")
         except Exception as e:

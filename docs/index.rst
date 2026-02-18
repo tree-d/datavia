@@ -52,20 +52,14 @@ Basic usage with elevation data:
     >>> from datavia.core.datavia import Datavia
     >>> from datavia.elevation import ElevationPipeline
     >>> import numpy as np
-    >>> 
-    >>> # Initialize pipeline and system
     >>> elevation_pipeline = ElevationPipeline()
     >>> dv = Datavia(pipelines=[elevation_pipeline])
-    >>> 
-    >>> # Initialize system (downloads data if needed)
-    >>> dv() # doctest: +SKIP
-    >>> 
-    >>> # Get elevation data for coordinates (longitude, latitude)
     >>> coords = np.array([[13.4050, 52.5200]])  # Berlin
-    >>> elevations = dv.elevation.get_data(coords=coords, crs_coords="EPSG:4326") # doctest: +SKIP
-    >>> 
+    >>> _ = dv() # doctest: +SKIP
+    >>> _ = dv.elevation.update_data() # doctest: +SKIP
+    >>> elevations = dv.pipelines[0].get_data(coords=coords, crs_coords="EPSG:4326") # doctest: +SKIP
     >>> print(f"Berlin elevation: {elevations[0]:.1f}m") # doctest: +SKIP
-    Berlin elevation: 35.5m
+    Berlin elevation: 35.7m
 
 Database management:
 
@@ -85,7 +79,7 @@ Core Interfaces
 
 .. doctest::
 
-    >>> from datavia.core.interfaces import Downloader, Saver, Getter, Pipeline # doctest: +SKIP
+    >>> from datavia.core.interfaces import Downloader, Saver, Getter, Pipeline
     >>> 
     >>> # Each pipeline implements these three components:
     >>> class MyPipeline: # Simplified example

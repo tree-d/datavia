@@ -10,7 +10,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import dotenv
 
@@ -177,10 +177,10 @@ class DataviaConfig:
                 # Match ${VAR} or ${VAR:-default}
                 pattern = r"\$\{([^}:]+)(?::-([^}]*))?\}"
 
-                def replace_env(match):
+                def replace_env(match: re.Match[str]) -> str:
                     var_name = match.group(1)
                     default_value = match.group(2) if match.group(2) is not None else ""
-                    return os.getenv(var_name, default_value)
+                    return cast(str, os.getenv(var_name, default_value))
 
                 expanded_value = re.sub(pattern, replace_env, value)
                 self.config[section][key] = expanded_value

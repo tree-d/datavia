@@ -3,8 +3,6 @@
 # For the full list of built-in configuration values, see the documentation:
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
 
-import os
-import sys
 
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
@@ -52,8 +50,10 @@ from pathlib import Path
 
 # Set up test environment
 os.environ['DATAVIA_TEST_MODE'] = '1'
-test_data_dir = Path('../tests/data')
-test_data_dir.mkdir(exist_ok=True)
+# Create test data directory - use relative path from docs
+# This works both for direct runs and when docs are copied to temp location
+test_data_dir = Path('tests/data')
+test_data_dir.mkdir(parents=True, exist_ok=True)
 """
 
 doctest_test_doctest_blocks = "default"

@@ -18,7 +18,7 @@ Datavia uses namespace packages for modular installation:
     >>> dv = Datavia(pipelines=[elevation_pipeline])
     >>> 
     >>> # Initialize system (downloads data if needed)
-    >>> dv() # doctest: +SKIP
+    >>> _ = dv() # doctest: +SKIP
 
 
 Available Pipelines
@@ -91,7 +91,7 @@ The elevation pipeline provides German elevation data at 200m resolution:
     coords = np.array([[13.4050, 52.5200]])  # Berlin
 
     # Get elevation data
-    elevations = pipeline.get_data(coords=coords, crs_coords="EPSG:4326")
+    elevations = pipeline.get_data(coords=coords, crs_coords="EPSG:4326") # doctest: +SKIP
     
     # Results are in meters above sea level
     print(f"Elevation: {elevations[0]:.1f}m")
@@ -119,6 +119,8 @@ Efficiently process multiple coordinates at once:
     ... ])
     >>> 
     >>> # Single API call for all points
+    >>> _ = pipeline() # Initialize pipeline # doctest: +SKIP
+    >>> _ = pipeline.update_data() # Ensure data is available, if necessary download it # doctest: +SKIP
     >>> elevations = pipeline.get_data(coords=coords, crs_coords="EPSG:4326") # doctest: +SKIP
     >>> 
     >>> # Process results - check we have 5 coordinates
@@ -126,8 +128,13 @@ Efficiently process multiple coordinates at once:
     5
     >>> 
     >>> # Example of processing results
-    >>> for i in range(len(coords)): # doctest: +SKIP
-    ...     print(f"Point {i+1}: elevation data") # doctest: +SKIP
+    >>> for i in range(len(coords)): # doctest: +SKIP +ELLIPSIS
+    ...     print(f"Point {i+1}: {elevations[i]:.1f}m") # doctest: +SKIP +ELLIPSIS
+    Point 1: 35.7m
+    Point 2: 513.1m
+    Point 3: 47.4m
+    Point 4: 7.8m
+    Point 5: 95.6m
 
 Error Handling
 --------------
@@ -139,10 +146,12 @@ Handle potential errors gracefully:
     >>> import numpy as np
     >>> from datavia.elevation import ElevationPipeline
     >>> 
-    >>> def safe_get_elevation(coords):
+    >>> def safe_get_elevation(coords):  # doctest: +SKIP
     ...     """Safely get elevation data with error handling."""
     ...     try:
     ...         pipeline = ElevationPipeline()
+    ...         _ = pipeline()  # Initialize
+    ...         _ = pipeline.update_data()  # Ensure data is available
     ...         elevations = pipeline.get_data(coords=coords, crs_coords="EPSG:4326")
     ...         return elevations
     ...     except Exception as e:
@@ -154,7 +163,7 @@ Handle potential errors gracefully:
     >>> elevations = safe_get_elevation(coords) # doctest: +SKIP
     >>> 
     >>> # Test the function exists
-    >>> callable(safe_get_elevation)
+    >>> callable(safe_get_elevation) # doctest: +SKIP
     True
 
 Data Validation
@@ -248,12 +257,12 @@ Datavia works well with other geospatial libraries:
     ... })
     >>> 
     >>> # Simple elevation plot
-    >>> plt.scatter(df['lon'], df['lat'], c=df['elevation'], cmap='terrain') # doctest: +SKIP
-    >>> plt.colorbar(label='Elevation (m)') # doctest: +SKIP
-    >>> plt.xlabel('Longitude') # doctest: +SKIP
-    >>> plt.ylabel('Latitude') # doctest: +SKIP
-    >>> plt.title('Elevation Map') # doctest: +SKIP
-    >>> plt.show() # doctest: +SKIP
+    >>> _ = plt.scatter(df['lon'], df['lat'], c=df['elevation'], cmap='terrain') # doctest: +SKIP
+    >>> _ = plt.colorbar(label='Elevation (m)') # doctest: +SKIP
+    >>> _ = plt.xlabel('Longitude') # doctest: +SKIP
+    >>> _ = plt.ylabel('Latitude') # doctest: +SKIP
+    >>> _ = plt.title('Elevation Map') # doctest: +SKIP
+    >>> _ = plt.show() # doctest: +SKIP
     >>> 
     >>> # Test pandas is importable
     >>> import pandas

@@ -11,10 +11,12 @@ Example
 >>>
 >>> # Create controller with pipelines
 >>> dv = Datavia(pipelines=[ElevationPipeline()])
->>> dv()  # Initialize
+>>> _ = dv()  # Initialize # doctest: +SKIP
+>>> _ = dv.elevation.update_data()  # Update elevation data # doctest: +SKIP
 >>>
 >>> # Access pipeline
->>> data = dv.elevation.get_data(coords, crs_coords="EPSG:4326")
+>>> coords = np.array([[13.4050, 52.5200]])  # Berlin
+>>> data = dv.elevation.get_data(coords, crs_coords="EPSG:4326") # doctest: +SKIP
 """
 
 import logging

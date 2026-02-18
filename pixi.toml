@@ -9,7 +9,8 @@ version = "1.0.0"
 docs = {cmd = "pixi run sphinx-build -E -b html docs docs/_build/html"}
 test = {cmd = "pixi run python -m pytest tests/ -v"}
 test-docs = {cmd = "python scripts/test_docs_modern.py --format sphinx"}
-test-docs-verbose = {cmd = "python scripts/test_docs_modern.py --format sphinx --verbose"}
+test-docs-verbose = {cmd = "DATAVIA_DOCTEST_IO=0 python scripts/test_docs_modern.py --format sphinx --verbose"}
+test-docs-with-io = {cmd = "python scripts/test_docs_with_io.py --verbose"}
 
 # Development workflow tasks (require dev feature to be active)
 format = {cmd = "black datavia/ tests/ && isort datavia/ tests/"}
@@ -22,7 +23,9 @@ test-integration = {cmd = "python -m pytest tests/test_e2e_workflows.py::TestCon
 test-light = {cmd = "python -m pytest tests/ -v -k 'not test_elevation_pipeline and not test_elevation_pipeline_inside_datavia'"}
 # Heavy integration tests (with running backend containers and network access)
 test-e2e = {cmd = "DATAVIA_E2E=1 python -m pytest tests/ -v --cov=datavia --cov-report=xml --cov-report=html"}
-ci-check = {cmd = "pixi run format-check && pixi run lint && pixi run type-check && pixi run test-light"}
+ci-check = [{ task = "format-check" }, { task = "lint" }, { task = "type-check" }, { task = "test-light" }]
+ci-pr-check = [{ task ="ci-check"}, { task ="docs"},{ task ="test-docs-verbose"}, {task= "security-scan"} ]
+
 
 # Development feature for CI/CD tools
 [feature.dev.dependencies]

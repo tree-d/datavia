@@ -61,20 +61,17 @@ Basic Usage
 .. doctest::
 
     >>> # This downloads data if needed (first run)
-    >>> dv() # doctest: +SKIP
-    >>> dv.elevation.update_data() # doctest: +SKIP
+    >>> _ = dv() # doctest: +SKIP
+    >>> _ = dv.elevation.update_data() # doctest: +SKIP
 
 **Step 3: Get data**
 
 .. doctest::
 
-    >>> # Define coordinates (longitude, latitude)
     >>> coords = np.array([[13.4050, 52.5200]])  # Berlin
-    >>> 
-    >>> # Get elevation data (this requires data, so we skip for testing)
     >>> elevations = dv.elevation.get_data(coords=coords, crs_coords="EPSG:4326") # doctest: +SKIP
-    >>> print(f"Berlin elevation: {elevations[0]:.1f}m")  # ~35.5m  # doctest: +SKIP
-    Berlin elevation: 35.5m
+    >>> print(f"Berlin elevation: {elevations[0]:.1f}m") # doctest: +SKIP
+    Berlin elevation: 35.7m
 
 Complete Example
 ----------------

@@ -9,13 +9,12 @@ Example 1: City Elevation Analysis
 Get elevation data for major German cities using the elevation pipeline:
 
 .. doctest::
-    :options: +SKIP
 
     #!/usr/bin/env python3
     """
     Analyze elevation data for major German cities.
     """
-    >>> import numpy as np
+    >>> import numpy as np  # doctest: +SKIP
     >>> import matplotlib.pyplot as plt
     >>> from datavia.elevation import ElevationPipeline
 
@@ -73,13 +72,12 @@ Example 2: Multi-Pipeline Environmental Data
 Combine elevation and soil data for environmental analysis:
 
 .. doctest::
-    :options: +SKIP
 
     #!/usr/bin/env python3
     """
     Environmental analysis using multiple pipelines.
     """
-    >>> import numpy as np
+    >>> import numpy as np  # doctest: +SKIP
     >>> import pandas as pd
     >>> from datavia.core.datavia import Datavia
     >>> from datavia.elevation import ElevationPipeline
@@ -141,13 +139,12 @@ Example 3: Spatial Grid Analysis
 Analyze elevation patterns across a spatial grid:
 
 .. doctest::
-    :options: +SKIP
 
     #!/usr/bin/env python3
     """
     Spatial grid analysis using elevation data.
     """
-    >>> import numpy as np
+    >>> import numpy as np  # doctest: +SKIP
     >>> import matplotlib.pyplot as plt
     >>> from datavia.elevation import ElevationPipeline
 
