@@ -29,6 +29,8 @@ Each pipeline is a separate, optional package that extends the core system with 
 
 ### Installation
 
+- **Note: this is not fully developed yet. Developers should have a look at [Local Development Setup](docs/development/local-setup.md)**
+
 #### Option 1: pip (Recommended for most users)
 
 ```bash
