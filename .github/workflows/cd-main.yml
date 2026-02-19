@@ -127,6 +127,7 @@ jobs:
         run: |
           pixi install
           pixi add twine
+          pixi add --pypi build
 
       # Generate development version number
       - name: Generate development version
