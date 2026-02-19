@@ -3,14 +3,6 @@
 # For the full list of built-in configuration values, see the documentation:
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
 
-import os
-import sys
-
-# Add the project root to Python path for autodoc
-sys.path.insert(0, os.path.abspath(".."))  # Project root
-sys.path.insert(0, os.path.abspath("../datavia"))  # Core package
-sys.path.insert(0, os.path.abspath("../packages/elevation"))  # Elevation package
-sys.path.insert(0, os.path.abspath("../packages/soil"))  # Soil package
 
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
@@ -18,8 +10,8 @@ sys.path.insert(0, os.path.abspath("../packages/soil"))  # Soil package
 project = "Datavia"
 copyright = "2025, Tree-D Research Group"
 author = "Michael Berg"
-release = "1.0.0"
-version = "1.0.0"
+release = "1.0.0-dev"
+version = "1.0.0-dev"
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
@@ -56,16 +48,12 @@ import sys
 import numpy as np
 from pathlib import Path
 
-# Add project paths for testing
-sys.path.insert(0, os.path.abspath('..'))
-sys.path.insert(0, os.path.abspath('../datavia'))
-sys.path.insert(0, os.path.abspath('../packages/elevation'))
-sys.path.insert(0, os.path.abspath('../packages/soil'))
-
 # Set up test environment
 os.environ['DATAVIA_TEST_MODE'] = '1'
-test_data_dir = Path('../tests/data')
-test_data_dir.mkdir(exist_ok=True)
+# Create test data directory - use relative path from docs
+# This works both for direct runs and when docs are copied to temp location
+test_data_dir = Path('tests/data')
+test_data_dir.mkdir(parents=True, exist_ok=True)
 """
 
 doctest_test_doctest_blocks = "default"

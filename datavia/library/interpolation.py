@@ -11,7 +11,11 @@ import logging
 from typing import Literal
 
 import numpy as np
-import rasterio
+
+try:
+    import rasterio
+except ImportError:  # pragma: no cover - optional dependency
+    rasterio = None
 from scipy.ndimage import map_coordinates
 
 from .coordinate_transforms import transform_coordinates
@@ -51,6 +55,12 @@ def spatial_interpolate(
     ImportError
         If required geospatial libraries are not available
     """
+    if rasterio is None:
+        raise ImportError(
+            "rasterio is required for spatial interpolation. "
+            "Install with `pip install rasterio`."
+        )
+
     with rasterio.open(tiff_path) as src:
         # Transform coordinates to raster CRS if needed
         if coords_crs != str(src.crs):

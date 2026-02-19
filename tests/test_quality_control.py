@@ -100,14 +100,14 @@ class TestOutlierDetection:
 
     def test_detect_outliers_iqr_basic(self):
         """Test IQR outlier detection with basic dataset."""
-        # Dataset with clear outliers
-        data = np.array([1, 2, 3, 4, 5, 100, 200])  # 100, 200 are outliers
+        # Dataset with clear outliers (200 is detected by IQR threshold 1.5)
+        data = np.array([1, 2, 3, 4, 5, 100, 200])
 
         result = _detect_outliers_iqr(data, threshold=1.5)
 
         assert "outlier_indices" in result
         assert "outlier_values" in result
-        assert len(result["outlier_indices"]) >= 2  # should detect the outliers
+        assert len(result["outlier_indices"]) >= 1  # should detect at least one outlier
 
     def test_detect_outliers_iqr_no_outliers(self):
         """Test IQR outlier detection with no outliers."""

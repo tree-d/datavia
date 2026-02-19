@@ -1,1 +1,22 @@
-# Development Documentation Index\n\nThis section contains documentation for developers and contributors to the Datavia project.\n\n## Setup & Environment\n\n- [Local Development Setup](local-setup.md) - How to set up your development environment\n- [CI/CD Pipeline](ci-cd-pipeline.md) - Understanding our automated workflows\n\n## Standards & Guidelines\n\n- [Coding Standards](coding-standards.md) - Code quality and style guidelines\n\n## Architecture\n\n- Project structure and design decisions\n- Multi-package namespace architecture\n- Extension development guidelines\n\n---\n\n*For user documentation, see the main [documentation index](../index.rst)*
+# Development Documentation Index
+
+This section contains documentation for developers and contributors to the Datavia project.
+
+## Setup & Environment
+
+- [Local Development Setup](local-setup.md) - How to set up your development environment
+- [CI/CD Pipeline](ci-cd-pipeline.md) - Understanding our automated workflows
+
+## Standards & Guidelines
+
+- [Coding Standards](coding-standards.md) - Code quality and style guidelines
+
+## Architecture
+
+- Project structure and design decisions
+- Multi-package namespace architecture
+- Extension development guidelines
+
+---
+
+*For user documentation, see the main [documentation index](../index.rst)*

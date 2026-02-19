@@ -27,13 +27,46 @@ from pathlib import Path
 
 
 class ModernDocTester:
+    """Modern documentation testing using Sphinx doctest and xdoctest.
+
+    This class provides methods to test documentation across multiple
+    formats (RST, Python docstrings) using industry-standard tools.
+
+    Parameters
+    ----------
+    verbose : bool, default=False
+        Enable verbose output during testing
+
+    Attributes
+    ----------
+    project_root : Path
+        Root directory of the project
+    docs_dir : Path
+        Documentation directory path
+    """
+
     def __init__(self, verbose: bool = False):
+        """Initialize the documentation tester.
+
+        Parameters
+        ----------
+        verbose : bool, default=False
+            If True, print detailed output during testing
+        """
         self.verbose = verbose
         self.project_root = Path(__file__).parent.parent
         self.docs_dir = self.project_root / "docs"
 
     def log(self, message: str, level: str = "INFO"):
-        """Log messages with level"""
+        """Log messages with severity level.
+
+        Parameters
+        ----------
+        message : str
+            Message to log
+        level : str, default="INFO"
+            Log level: INFO, ERROR, FAIL, SUCCESS
+        """
         if self.verbose or level in ["ERROR", "FAIL"]:
             print(f"[{level}] {message}")
 

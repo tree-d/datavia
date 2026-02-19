@@ -17,17 +17,33 @@ try:
 
     PYPROJ_AVAILABLE = True
 
-    # Cache transformers for common CRS pairs to improve performance
-    _transformer_cache = {}
+    # Rationale: Creating Transformer objects is expensive. Caching them
+    # provides a significant speedup for repeated transformations.
+    class _TransformerManager:
+        """Singleton-like manager for pyproj Transformer instances."""
+
+        def __init__(self) -> None:
+            self._transformer_cache: dict[str, Transformer] = {}
+
+        def get_transformer(self, source_crs: str, target_crs: str) -> Transformer:
+            """Get a cached or new Transformer for a given CRS pair."""
+            cache_key = f"{source_crs}->{target_crs}"
+            if cache_key not in self._transformer_cache:
+                self._transformer_cache[cache_key] = Transformer.from_crs(
+                    source_crs, target_crs, always_xy=True
+                )
+            return self._transformer_cache[cache_key]
+
+    _transformer_manager = _TransformerManager()
 
     def get_transformer(source_crs: str, target_crs: str) -> Transformer:
-        """Get cached transformer for CRS pair."""
-        cache_key = f"{source_crs}->{target_crs}"
-        if cache_key not in _transformer_cache:
-            _transformer_cache[cache_key] = Transformer.from_crs(
-                source_crs, target_crs, always_xy=True
-            )
-        return _transformer_cache[cache_key]
+        """
+        Get a cached transformer for a given CRS pair.
+
+        This function provides a thread-safe, singleton-like access to
+        pyproj Transformer objects, avoiding the cost of repeated creation.
+        """
+        return _transformer_manager.get_transformer(source_crs, target_crs)
 
 except ImportError:
     logger.warning(

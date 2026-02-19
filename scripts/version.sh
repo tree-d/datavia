@@ -16,7 +16,8 @@ get_current_version() {
 # Function to update version in pyproject.toml
 update_version() {
     local new_version="$1"
-    sed -i "s/version = \".*\"/version = \"$new_version\"/g" "$PYPROJECT_FILE"
+    sed -i.bak "s/version = \".*\"/version = \"$new_version\"/g" "$PYPROJECT_FILE"
+    rm -f "${PYPROJECT_FILE}.bak"
     echo "Updated version to: $new_version"
 }
 

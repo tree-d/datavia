@@ -30,6 +30,8 @@ class ElevationPipeline(Pipeline):
 
     def update_data(self):
         """Update elevation data by downloading and saving new TIFF data."""
+        if self.saver is None:
+            self()
         logger.info("Checking elevation data...")
         files = self.saver.sync_files_and_database()
         if not files:

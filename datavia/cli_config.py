@@ -10,14 +10,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-
-def _generate_usage_examples(selected_pipelines: list) -> str:
-    """Generate usage examples based on selected pipelines."""
-    examples = []
-
-    if "elevation" in selected_pipelines:
-        examples.append(
-            """
+ELEVATION_EXAMPLE = """
     # Example 1: Get elevation data
     try:
         elevations = datavia.elevation.get_data(coords=berlin_coords, crs_coords="EPSG:4326")
@@ -28,11 +21,8 @@ def _generate_usage_examples(selected_pipelines: list) -> str:
     except Exception as e:
         print(f"Elevation example failed: {e}")
         print("Note: Make sure to run 'datavia update elevation' first!")"""
-        )
 
-    if "soil" in selected_pipelines:
-        examples.append(
-            """
+SOIL_EXAMPLE = """
     # Example 2: Get soil data
     try:
         soil_data = datavia.soil.get_data(coords=berlin_coords, crs_coords="EPSG:4326")
@@ -43,11 +33,8 @@ def _generate_usage_examples(selected_pipelines: list) -> str:
     except Exception as e:
         print(f"Soil example failed: {e}")
         print("Note: Make sure to run 'datavia update soil' first!")"""
-        )
 
-    if "weather" in selected_pipelines:
-        examples.append(
-            """
+WEATHER_EXAMPLE = """
     # Example 3: Get weather data
     try:
         weather_data = datavia.weather.get_data(coords=berlin_coords, crs_coords="EPSG:4326")
@@ -55,11 +42,8 @@ def _generate_usage_examples(selected_pipelines: list) -> str:
     except Exception as e:
         print(f"Weather example failed: {e}")
         print("Note: Make sure to run 'datavia update weather' first!")"""
-        )
 
-    if "radiation" in selected_pipelines:
-        examples.append(
-            """
+RADIATION_EXAMPLE = """
     # Example 4: Get radiation data
     try:
         radiation_data = datavia.radiation.get_data(coords=berlin_coords, crs_coords="EPSG:4326")
@@ -67,20 +51,36 @@ def _generate_usage_examples(selected_pipelines: list) -> str:
     except Exception as e:
         print(f"Radiation example failed: {e}")
         print("Note: Make sure to run 'datavia update radiation' first!")"""
-        )
 
-    # Add a general example for any pipeline
-    examples.append(
-        """
+GENERAL_EXAMPLE = """
     # Example: General approach for any pipeline
     for pipeline in datavia.pipelines:
         try:
-            print(f"\\nTesting {pipeline.name} pipeline...")
+            print(f"Testing {pipeline.name} pipeline...")
             data = pipeline.get_data(coords=berlin_coords, crs_coords="EPSG:4326")
             print(f"{pipeline.name} data: {data}")
         except Exception as e:
             print(f"{pipeline.name} failed: {e}")"""
-    )
+
+
+def _generate_usage_examples(selected_pipelines: list[str]) -> str:
+    """Generate usage examples based on selected pipelines."""
+    examples = []
+
+    if "elevation" in selected_pipelines:
+        examples.append(ELEVATION_EXAMPLE)
+
+    if "soil" in selected_pipelines:
+        examples.append(SOIL_EXAMPLE)
+
+    if "weather" in selected_pipelines:
+        examples.append(WEATHER_EXAMPLE)
+
+    if "radiation" in selected_pipelines:
+        examples.append(RADIATION_EXAMPLE)
+
+    # Add a general example for any pipeline
+    examples.append(GENERAL_EXAMPLE)
 
     return "\n".join(examples)
 
