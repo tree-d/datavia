@@ -47,7 +47,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pixi install --features dev
+          pixi install -e dev
 
       - name: Quick lint check
         run: |
@@ -118,7 +118,7 @@ jobs:
           pixi-version: ${{ env.PIXI_VERSION }}
 
       - name: Install dependencies
-        run: pixi install --features dev
+        run: pixi install -e dev
 
       # Generate development version number
       - name: Generate development version
