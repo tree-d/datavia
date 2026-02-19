@@ -47,8 +47,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pixi install
-          pixi add black isort ruff
+          pixi install --features dev
 
       - name: Quick lint check
         run: |
@@ -118,11 +117,8 @@ jobs:
         with:
           pixi-version: ${{ env.PIXI_VERSION }}
 
-      - name: Install build dependencies
-        run: |
-          pixi add twine
-          pixi add --pypi build
-          pixi install
+      - name: Install dependencies
+        run: pixi install --features dev
 
       # Generate development version number
       - name: Generate development version
