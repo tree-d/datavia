@@ -29,6 +29,8 @@ Each pipeline is a separate, optional package that extends the core system with 
 
 ### Installation
 
+- **Note: this is not fully developed yet. Developers should have a look at [Local Development Setup](docs/development/local-setup.md)**
+
 #### Option 1: pip (Recommended for most users)
 
 ```bash
@@ -99,7 +101,7 @@ pixi add --pypi datavia[vector]
    # Access data
    import numpy as np
    coords = np.array([[10.0, 50.0]])
-   elevation_data = dv.pipelines[0].get_data(coords, crs_coords="EPSG:4326")
+   elevation_data = dv.elevation.get_data(coords, crs_coords="EPSG:4326")
    ```
 
 3. **Shut down database**
@@ -124,29 +126,27 @@ Pipeline = Downloader + Saver + Getter
 
 ```
 datavia/                          # Repository root
-├── pyproject.toml               # Main package configuration
-├── pyproject_elevation.toml     # Elevation pipeline package config
-├── pyproject_soil.toml          # Soil pipeline package config
+├── pyproject.toml               # Main core package configuration
 ├── docker-compose.yml           # Database container setup
 ├── datavia.conf                 # Runtime configuration
-├── build_all.sh                 # Multi-package build script
-├── README_elevation.md          # Elevation pipeline documentation
-├── README_soil.md              # Soil pipeline documentation
-├── datavia/                     # Python package
+├── .env.example                 # Environment variables template
+├── datavia/                     # Core Python package
 │   ├── __init__.py              # Main namespace package
 │   ├── core/                    # Pipeline interfaces & implementations
 │   ├── library/                 # Shared utilities & database operations
 │   │   └── database/            # PostGIS integration
-│   ├── elevation/               # Elevation pipeline namespace
-│   │   ├── __init__.py          
-│   │   └── pipeline.py          # German elevation data (BKG DGM200)
-│   ├── soil/                    # Soil pipeline namespace
-│   │   ├── __init__.py
-│   │   └── pipeline.py          # Soil data (SoilGrids API)
-│   ├── weather/                 # Weather pipeline namespace (future)
 │   ├── cli.py                   # Command-line interface
 │   ├── config.py                # Configuration management
 │   └── runner.py                # Container management
+├── packages/                    # Separate pipeline packages
+│   ├── elevation/               # datavia-elevation package
+│   │   ├── pyproject.toml
+│   │   └── datavia/elevation/   # Elevation pipeline code
+│   └── soil/                    # datavia-soil package
+│       ├── pyproject.toml
+│       └── datavia/soil/        # Soil pipeline code (WIP)
+├── tests/                       # Test suite
+├── scripts/                     # Build and utility scripts
 └── docs/                        # Documentation
 ```
 
@@ -208,9 +208,6 @@ datavia config status                    # Show installation status
 
 # Development/Testing
 python -m datavia.cli start            # Alternative CLI access
-
-# Build packages (development)
-./build_all.sh                         # Build all packages (core + pipelines)
 ```
 
 ### Configuration
@@ -266,18 +263,17 @@ black datavia/
 
 - [API Reference](docs/api/)
 - [User Guide](docs/user_guide/)
-- [Elevation Pipeline](README_elevation.md)
-- [Soil Pipeline](README_soil.md)
-- [Build System](build_all.sh) - Multi-package build process
+- [Development Guide](docs/development/)
+- [Coding Standards](docs/development/coding-standards.md)
 
 ## Contributing
 
-We welcome contributions! Please see our [Coding Standards](codingStandards.md) for guidelines.
+We welcome contributions! Please see our [Coding Standards](docs/development/coding-standards.md) for guidelines.
 
 ### Development Workflow
 
 1. Fork the repository
-2. Read through Markdowns in docs/development/
+2. Read through documentation in docs/development/
 3. Create a feature branch
 4. Make your changes following our coding standards
 5. Add tests for new functionality
@@ -287,13 +283,13 @@ We welcome contributions! Please see our [Coding Standards](codingStandards.md) 
 
 The system uses namespace packages for easy extension:
 
-1. **Create namespace package**: Add `datavia/your_pipeline/` directory
-2. **Implement pipeline class**: Follow `datavia/elevation/pipeline.py` as template
-3. **Create package config**: Add `pyproject_your_pipeline.toml`
-4. **Update build script**: Add to `build_all.sh`
-5. **Add documentation**: Create `README_your_pipeline.md`
+1. **Create new package**: Add directory under `packages/your_pipeline/`
+2. **Add pyproject.toml**: Configure package metadata and dependencies
+3. **Implement pipeline class**: Follow `packages/elevation/datavia/elevation/pipeline.py` as template
+4. **Add documentation**: Create README.md in package directory
+5. **Add tests**: Create test files in `tests/`
 
-See existing pipelines ([elevation](datavia/elevation/), [soil](datavia/soil/)) as examples.
+See existing pipelines ([elevation](packages/elevation/), [soil](packages/soil/)) as examples.
 
 ## License
 

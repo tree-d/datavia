@@ -1,3 +1,12 @@
+#!/usr/bin/env python
+"""
+MAIN CLI MODULE
+
+This module defines the main command-line interface for Datavia using Click.
+It includes commands for managing the Datavia environment, configuration, and pipeline updates.
+The CLI is designed to be user-friendly and provides clear feedback on operations.
+"""
+
 import logging
 import sys
 
@@ -16,14 +25,19 @@ from .cli_utils import (
     validate_config_file,
 )
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def _configure_logging() -> None:
+    """Configure logging for CLI execution."""
+    logging.basicConfig(level=logging.INFO)
 
 
 @click.group()
 def main() -> None:
     """Datavia - Modular pipeline architecture for geospatial data integration."""
-    pass
+    _configure_logging()
+    return None
 
 
 # Infrastructure commands (unchanged)
@@ -51,7 +65,7 @@ def stop() -> None:
 @main.group()
 def config() -> None:
     """Manage Datavia configuration and selective installation."""
-    pass
+    return None
 
 
 @config.command()
@@ -137,7 +151,7 @@ def status(config_file: str) -> None:
 @main.group()
 def update() -> None:
     """Update data for installed pipelines."""
-    pass
+    return None
 
 
 @update.command()

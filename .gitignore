@@ -49,3 +49,6 @@ docs/_build/
 
 # datavia config file
 datavia_config.py
+
+#env files
+.env

@@ -9,7 +9,7 @@ from pathlib import Path
 
 from sqlalchemy import text
 
-from .connection import engine
+from .connection import get_engine
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ def initialize_database() -> None:
         logger.error("init.sql not found in database directory.")
         return
 
-    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+    with get_engine().connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
         result = conn.execute(text("SELECT to_regclass('public.raster_layers');"))
         exists = result.scalar()
         if not exists:

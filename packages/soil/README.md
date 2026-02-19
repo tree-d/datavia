@@ -2,6 +2,20 @@
 
 Soil data pipeline for the Datavia geospatial data integration system.
 
+## ⚠️ Development Status Warning
+
+**This package is currently under active development and has known structural issues:**
+
+- **Interface Incompatibility**: `SoilPipeline.__call__` passes `url=None`, but the core `Pipeline.__call__` requires a valid URL parameter. Calling `SoilPipeline()` followed by `pipeline()` will raise a `ValueError`.
+
+- **Downloader Configuration Mismatch**: `SoilGridsDownloader` expects a dictionary config, but the Pipeline base class passes a string URL. The constructor signatures are incompatible.
+
+- **Missing Methods**: Uses `self.saver.get_my_raster_layers`, `self.saver.save_tiff_metadata`, and `super().get_data_info()` which are not defined in the core base classes.
+
+- **Import Path Issues**: Imports `from ..config import get_config` but config is in the core datavia package. Should be `from datavia.config import get_config`.
+
+**Recommendation**: This package is not production-ready. Use with caution and expect API changes. Consider using the elevation pipeline for stable functionality until soil pipeline development is complete.
+
 ## Installation
 
 ```bash

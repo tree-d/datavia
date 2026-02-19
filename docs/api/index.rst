@@ -25,10 +25,6 @@ Core Components
 Downloaders
 ~~~~~~~~~~~
 
-.. automodule:: datavia.core.downloader_api
-   :members:
-   :undoc-members:
-
 .. automodule:: datavia.core.downloader_url
    :members:
    :undoc-members:

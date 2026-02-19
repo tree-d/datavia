@@ -1,8 +1,8 @@
 """
-getData.py
+getter_tiff.py
 
-This is the main entry point for data retrieval - Enhanced for Phase 1.2.
-Now uses shared processor library for coordinate transformations and spatial queries.
+Main entry point for TIFF data retrieval.
+Uses shared library code for coordinate transformations and spatial queries.
 """
 
 import logging

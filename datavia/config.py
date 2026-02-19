@@ -8,10 +8,88 @@ API settings, and other system parameters using config file approach.
 import configparser
 import logging
 import os
+import re
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
+
+import dotenv
 
 logger = logging.getLogger(__name__)
+
+
+class _ConfigManager:
+    """Singleton-like manager for Datavia configuration."""
+
+    def __init__(self) -> None:
+        self._config_instance: DataviaConfig | None = None
+        self._initialized = False
+
+    def get_config(self, config_file: str | None = None) -> "DataviaConfig":
+        """
+        Get or create the DataviaConfig instance lazily.
+
+        If a config_file is provided, it will force a reload of the configuration.
+        """
+        if self._config_instance is None or config_file:
+            self._config_instance = DataviaConfig(config_file)
+            self._initialized = False  # Mark as not initialized if reloaded
+        return self._config_instance
+
+    def reload(self, config_file: str | None = None) -> "DataviaConfig":
+        """Force a reload of the configuration."""
+        self._config_instance = DataviaConfig(config_file)
+        self._initialized = False
+        return self._config_instance
+
+    def is_initialized(self) -> bool:
+        """Check if the config has been validated and directories created."""
+        return self._initialized
+
+    def set_initialized(self) -> None:
+        """Mark the config as initialized."""
+        self._initialized = True
+
+
+_config_manager = _ConfigManager()
+
+
+def get_config(config_file: str | None = None) -> "DataviaConfig":
+    """
+    Get the application-wide configuration object.
+
+    This function provides a singleton instance of the DataviaConfig,
+    ensuring that configuration is loaded only once. It will also validate
+    paths and ensure directories exist on first creation.
+
+    Args:
+        config_file: Optional path to a specific config file to load.
+                     If provided, it may force a reload of the configuration.
+
+    Returns:
+        The singleton DataviaConfig instance.
+    """
+    # Get the config instance. If it's the first time, it will be created.
+    config_instance = _config_manager.get_config(config_file)
+
+    # Ensure validation and directory creation only happens once on creation
+    if not _config_manager.is_initialized():
+        config_instance.validate_paths()
+        config_instance.ensure_directories()
+        _config_manager.set_initialized()
+
+    return config_instance
+
+
+def reload_config(config_file: str | None = None) -> "DataviaConfig":
+    """
+    Force a reload of the configuration from a file and replace the
+    global instance.
+    """
+    reloaded_config = _config_manager.reload(config_file=config_file)
+    reloaded_config.validate_paths()
+    reloaded_config.ensure_directories()
+    _config_manager.set_initialized()
+    return reloaded_config
 
 
 class DataviaConfig:
@@ -39,6 +117,13 @@ class DataviaConfig:
 
         # Auto-detect project root and look for datavia.conf there
         project_root = self._auto_detect_base_directory()
+
+        # Load .env file from project root if it exists
+        dotenv_path = Path(project_root) / ".env"
+        if dotenv_path.exists():
+            dotenv.load_dotenv(dotenv_path=dotenv_path)
+            logger.info(f"Loaded environment variables from {dotenv_path}")
+
         project_config = os.path.join(project_root, "datavia.conf")
         if os.path.exists(project_config):
             logger.info(f"Found config file at project root: {project_config}")
@@ -70,9 +155,47 @@ class DataviaConfig:
         if config_file:
             try:
                 self.config.read(config_file)
+                self._expand_environment_variables()
+                self._apply_environment_overrides()
                 logger.info(f"Loaded configuration from {config_file}")
             except Exception as e:
                 logger.error(f"Failed to load config file {config_file}: {e}")
+        else:
+            self._apply_environment_overrides()
+
+    def _expand_environment_variables(self) -> None:
+        """Expand environment variables in config values.
+
+        Supports ${VAR} and ${VAR:-default} syntax.
+        Example: ${POSTGRES_PASSWORD:-datavia_dev}
+        """
+
+        for section in self.config.sections():
+            for key in self.config[section]:
+                value = self.config[section][key]
+
+                # Match ${VAR} or ${VAR:-default}
+                pattern = r"\$\{([^}:]+)(?::-([^}]*))?\}"
+
+                def replace_env(match: re.Match[str]) -> str:
+                    var_name = match.group(1)
+                    default_value = match.group(2) if match.group(2) is not None else ""
+                    return cast(str, os.getenv(var_name, default_value))
+
+                expanded_value = re.sub(pattern, replace_env, value)
+                self.config[section][key] = expanded_value
+
+    def _apply_environment_overrides(self) -> None:
+        """Apply DATAVIA_* environment variable overrides to config.
+
+        Uses the pattern DATAVIA_<SECTION>_<KEY>, e.g. DATAVIA_DATABASE_HOST.
+        """
+        for section in self.config.sections():
+            for key in self.config[section]:
+                env_key = f"DATAVIA_{section}_{key}".upper()
+                env_value = os.getenv(env_key)
+                if env_value is not None:
+                    self.config[section][key] = env_value
 
     def _set_defaults(self) -> None:
         """Set default configuration values."""
@@ -82,7 +205,7 @@ class DataviaConfig:
             "port": "5432",
             "database": "gis",
             "user": "gis",
-            "password": "wieso",
+            "password": os.getenv("POSTGRES_PASSWORD", "datavia_dev"),
             "connection_pooling": "true",
             "ssl_mode": "prefer",
         }
@@ -224,35 +347,3 @@ class DataviaConfig:
             if fallback is not None:
                 return fallback
             raise KeyError(f"Configuration key not found: [{section}] {key}") from None
-
-
-# Global configuration instance without global statement usage
-_CONFIG_STATE: dict[str, DataviaConfig | None] = {"config": None}
-
-
-def _get_cached_config() -> DataviaConfig | None:
-    return _CONFIG_STATE["config"]
-
-
-def _set_cached_config(config: DataviaConfig | None) -> None:
-    _CONFIG_STATE["config"] = config
-
-
-def get_config() -> DataviaConfig:
-    """Get the global configuration instance."""
-    cached_config = _get_cached_config()
-    if cached_config is None:
-        cached_config = DataviaConfig()
-        cached_config.validate_paths()
-        cached_config.ensure_directories()
-        _set_cached_config(cached_config)
-    return cached_config
-
-
-def reload_config(config_file: str | None = None) -> "DataviaConfig":
-    """Reload configuration from file."""
-    reloaded_config = DataviaConfig(config_file)
-    reloaded_config.validate_paths()
-    reloaded_config.ensure_directories()
-    _set_cached_config(reloaded_config)
-    return reloaded_config

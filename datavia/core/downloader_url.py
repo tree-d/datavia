@@ -139,7 +139,7 @@ class URLDownloader(Downloader):
         retry_count = 0
         headers = {}
 
-        while True:
+        while retry_count < self.max_retries:
             try:
                 # Resume download if partially completed
                 if total_downloaded > 0:
@@ -166,6 +166,10 @@ class URLDownloader(Downloader):
                         logger.warning(
                             f"Server asked to wait (status {r.status_code}). Waiting {wait_time} seconds..."
                         )
+                        retry_count += 1
+                        if retry_count >= self.max_retries:
+                            logger.error("Max retries reached due to rate limiting.")
+                            return False
                         time.sleep(wait_time)
                         continue
 
@@ -195,10 +199,9 @@ class URLDownloader(Downloader):
                                     raise Exception("Chunk write failed repeatedly.")
 
                                 total_downloaded += len(remaining_chunk)
-                                print(
-                                    f"\rDownloaded: {total_downloaded / (1024 * 1024):.2f} MB",
-                                    end="",
-                                    flush=True,
+                                logger.debug(
+                                    "Downloaded: %.2f MB",
+                                    total_downloaded / (1024 * 1024),
                                 )
 
                 # Validate download completion
@@ -217,13 +220,17 @@ class URLDownloader(Downloader):
                 logger.warning(
                     f"Connection issue: {e} \nRetrying in {wait_time:.1f} seconds..."
                 )
-                if retry_count >= 3:
-                    retry_count = 0
+                if retry_count >= self.max_retries:
+                    logger.error("Max retries reached after connection errors.")
+                    return False
                 time.sleep(wait_time)
 
             except Exception as e:
                 logger.error(f"Download failed: {e}")
                 return False
+
+        logger.error("Max retries reached without successful download.")
+        return False
 
     def _write_chunk_with_retries(self, file_handle: Any, chunk: bytes) -> bool:
         """Write chunk to file with retry logic."""

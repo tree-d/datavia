@@ -192,21 +192,20 @@ class TestConfigModule:
         self.test_dir = Path(tempfile.mkdtemp())
         self.config_file = self.test_dir / "test_datavia.conf"
         # Clear global config between tests
-        datavia.config._CONFIG_STATE["config"] = None
+        reload_config()
 
     def teardown_method(self):
         """Clean up after tests."""
-
         if self.test_dir.exists():
             shutil.rmtree(self.test_dir)
-        # Clear global config after tests
-        datavia.config._CONFIG_STATE["config"] = None
+        # Reset the singleton by creating a new manager
+        datavia.config._config_manager = datavia.config._ConfigManager()
 
     @patch("datavia.config.DataviaConfig")
     def test_get_config_returns_singleton(self, mock_config_class):
         """Test get_config returns the same instance on multiple calls."""
-        # Clear any existing cached config
-        datavia.config._CONFIG_STATE["config"] = None
+        # Ensure we have a clean slate
+        datavia.config._config_manager = datavia.config._ConfigManager()
 
         config1 = get_config()
         config2 = get_config()
@@ -217,15 +216,19 @@ class TestConfigModule:
     @patch("datavia.config.DataviaConfig")
     def test_reload_config_creates_new_instance(self, mock_config_class):
         """Test reload_config forces creation of new config instance."""
-        # Clear any existing cached config
-        datavia.config._CONFIG_STATE["config"] = None
+        # Ensure we have a clean slate
+        datavia.config._config_manager = datavia.config._ConfigManager()
 
-        get_config()
-        reload_config()
-        get_config()
+        get_config()  # First call
+        reload_config()  # Reload
+        get_config()  # Should not create a new one
+        reload_config()  # Second reload
 
-        # Should be called twice - once for initial, once for reload
-        assert mock_config_class.call_count == 2
+        # DataviaConfig should be instantiated three times:
+        # 1. The initial get_config()
+        # 2. The first reload_config()
+        # 3. The second reload_config()
+        assert mock_config_class.call_count == 3
 
     def test_config_with_environment_variables(self):
         """Test configuration with environment variable overrides."""
@@ -238,13 +241,8 @@ class TestConfigModule:
             },
         ):
             config = DataviaConfig()
-
-            # Note: This test assumes the config class supports env var overrides
-            # If not implemented yet, this documents the expected behavior
-            if hasattr(config, "config"):
-                # Check if environment variables are respected
-                # This might need adjustment based on actual implementation
-                pass
+            assert config.config["database"]["host"] == "env_host"
+            assert config.config["database"]["port"] == "9999"
 
 
 if __name__ == "__main__":
