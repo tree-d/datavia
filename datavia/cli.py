@@ -1,3 +1,12 @@
+#!/usr/bin/env python
+"""
+MAIN CLI MODULE
+
+This module defines the main command-line interface for Datavia using Click.
+It includes commands for managing the Datavia environment, configuration, and pipeline updates.
+The CLI is designed to be user-friendly and provides clear feedback on operations.
+"""
+
 import logging
 import sys
 
