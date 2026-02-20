@@ -124,10 +124,9 @@ jobs:
       - name: Generate development version
         id: version
         run: |
-          # Create version like 1.0.0-dev.20240203.abcdef0
-          COMMIT_SHORT=$(git rev-parse --short HEAD)
+          # Create version like 1.0.0-dev.20240203
           DATE=$(date +%Y%m%d)
-          VERSION="1.0.0-dev.$DATE.$COMMIT_SHORT"
+          VERSION="1.0.0-dev.$DATE"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Development version: $VERSION"
 
