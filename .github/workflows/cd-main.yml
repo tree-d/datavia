@@ -15,7 +15,7 @@ name: CD - Main Branch
 # Trigger on pushes to main branch
 "on":
   push:
-    branches: [dev] # for testing, change to main for production
+    branches: [dev]  # for testing, change to main for production
   workflow_dispatch:
     inputs:
       force_deploy:
@@ -105,6 +105,7 @@ jobs:
     name: Build Development Release
     needs: validate
     runs-on: ubuntu-latest
+    permissions: write-all
 
     steps:
       - name: Checkout repository
@@ -133,8 +134,9 @@ jobs:
       # Update version in pyproject.toml
       - name: Update version
         run: |
-          sed -i 's/version = ".*"/version = "${{ steps.version.outputs.version }}"/g' pyproject.toml
-          
+          VERSION=${{ steps.version.outputs.version }}
+          sed -i "s/version = \".*\"/version = \"$VERSION\"/g" pyproject.toml
+
       - name: Build packages
         run: |
           chmod +x scripts/build_packages.sh
@@ -152,13 +154,13 @@ jobs:
           name: Development Release ${{ steps.version.outputs.version }}
           body: |
             🚀 **Development Release**
-            
+
             This is an automated development release from the main branch.
-            
+
             **Changes**: Commit ${{ github.sha }}
             **Built**: ${{ github.run_id }}
-            
-            ⚠️ **This is a development release - use with caution in production!**
+
+            ⚠️ **This is a development release - use with caution!**
           prerelease: true
           files: |
             dist/*.whl
@@ -176,38 +178,38 @@ jobs:
     needs: [validate, build]
     runs-on: ubuntu-latest
     if: github.event.inputs.force_deploy == 'true' || success()
-    
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
 
-    # Add your staging deployment steps here
-    # This could be deploying to a test server, updating Docker images, etc.
-    - name: Deploy to staging environment
-      run: |
-        echo "🚀 Deploying to staging environment..."
-        echo "This step would deploy your application to staging"
-        echo "Examples: update Docker images, deploy to test servers, etc."
-        
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Add your staging deployment steps here
+      # This could be deploying to a test server, updating Docker images, etc.
+      - name: Deploy to staging environment
+        run: |
+          echo "🚀 Deploying to staging environment..."
+          echo "This step would deploy your application to staging"
+          echo "Examples: update Docker images, deploy to test servers, etc."
+
   # Job 5: Notification
   notify:
     name: Notify Team
     needs: [docs, build, deploy-staging]
     runs-on: ubuntu-latest
     if: always()
-    
+
     steps:
-    - name: Notify success
-      if: needs.docs.result == 'success' && needs.build.result == 'success'
-      run: |
-        echo "✅ Deployment successful!"
-        echo "📚 Documentation updated"
-        echo "📦 Development release created"
-        # Add webhook/Slack notification here if needed
-        
-    - name: Notify failure
-      if: failure()
-      run: |
-        echo "❌ Deployment failed!"
-        echo "Check the logs for details"
-        # Add error notification here
+      - name: Notify success
+        if: needs.docs.result == 'success' && needs.build.result == 'success'
+        run: |
+          echo "✅ Deployment successful!"
+          echo "📚 Documentation updated"
+          echo "📦 Development release created"
+          # Add webhook/Slack notification here if needed
+
+      - name: Notify failure
+        if: failure()
+        run: |
+          echo "❌ Deployment failed!"
+          echo "Check the logs for details"
+          # Add error notification here

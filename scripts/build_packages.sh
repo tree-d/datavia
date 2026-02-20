@@ -6,11 +6,6 @@
 
 set -euo pipefail  # Exit on any error and fail on unset variables
 
-echo "DEBUG: PATH=$PATH"
-echo "DEBUG: which pixi=$(which pixi || echo 'NOT FOUND')"
-
-pixi run --environment dev python --version
-pixi run --environment dev python -m build --version
 check_build_tool() {
 	if ! command -v pixi >/dev/null 2>&1; then
 		echo "❌ pixi not found. Install from https://pixi.sh"
