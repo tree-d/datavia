@@ -14,8 +14,8 @@ name: CD - Main Branch
 
 # Trigger on pushes to main branch
 "on":
-  push:
-    branches: [main]  # for testing, change to main for production
+  pull_request:
+    branches: [main]
   workflow_dispatch:
     inputs:
       force_deploy:
