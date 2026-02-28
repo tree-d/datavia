@@ -111,28 +111,20 @@ jobs:
           pixi-version: ${{ env.PIXI_VERSION }}
 
       - name: Install dependencies
-        run: |
-          pixi install
-          pixi add black isort ruff mypy bandit safety
+        run: pixi install
 
       # All quality checks must pass for release
-      - name: Check code formatting (black)
-        run: pixi run black --check datavia/ tests/
+      - name: Check formatting and import sorting
+        run: pixi run format-check
 
-      - name: Check import sorting (isort)
-        run: pixi run isort --check-only datavia/ tests/
+      - name: Lint
+        run: pixi run lint
 
-      - name: Lint code (ruff)
-        run: pixi run ruff check datavia/ tests/
+      - name: Type checking
+        run: pixi run type-check
 
-      - name: Type checking (mypy)
-        run: pixi run mypy datavia/ --ignore-missing-imports
-
-      - name: Security scan (bandit)
-        run: pixi run bandit -r datavia/ -ll
-
-      - name: Dependency vulnerability check (safety)
-        run: pixi run safety check
+      - name: Security scan
+        run: pixi run security-scan
   # Job 3: Version Management
   version:
     name: Manage Version

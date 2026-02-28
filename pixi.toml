@@ -13,18 +13,23 @@ test-docs-verbose = {cmd = "DATAVIA_DOCTEST_IO=0 python scripts/test_docs_modern
 test-docs-with-io = {cmd = "python scripts/test_docs_with_io.py --verbose"}
 
 # Development workflow tasks (require dev feature to be active)
-format = {cmd = "black datavia/ tests/ && isort datavia/ tests/"}
-format-check = {cmd = "black --check datavia/ tests/ && isort --check-only datavia/ tests/"}
-lint = {cmd = "ruff check datavia/ tests/"}
+# No suffix = core + all packages (used in CI and by default locally)
+format = {cmd = "black datavia/ tests/ packages/ && isort datavia/ tests/ packages/"}
+format-check = {cmd = "black --check datavia/ tests/ packages/ && isort --check-only datavia/ tests/ packages/"}
+lint = {cmd = "ruff check datavia/ tests/ packages/"}
 type-check = {cmd = "mypy datavia/ --ignore-missing-imports"}
-security-scan = {cmd = "bandit -r datavia/ -f json -o bandit-report.json"}
+security-scan = {cmd = "bandit -r datavia/ packages/ -f json -o bandit-report.json"}
+# -core suffix = core and tests only, for faster local feedback when not touching packages
+format-core = {cmd = "black datavia/ tests/ && isort datavia/ tests/"}
+format-check-core = {cmd = "black --check datavia/ tests/ && isort --check-only datavia/ tests/"}
+lint-core = {cmd = "ruff check datavia/ tests/"}
 test-unit = {cmd = "python -m pytest tests/test_config.py tests/test_coordinate_transforms.py tests/test_runner.py tests/test_spatial_ops.py -v"}
 test-integration = {cmd = "python -m pytest tests/test_e2e_workflows.py::TestContainerIntegration tests/test_e2e_workflows.py::TestDataQualityWorkflows::test_coordinate_validation_workflow tests/test_e2e_workflows.py::TestDataQualityWorkflows::test_spatial_bounds_validation_workflow tests/test_e2e_workflows.py::TestSpatialOperationsWorkflow tests/test_e2e_workflows.py::TestConfigurationWorkflows::test_global_config_workflow tests/test_e2e_workflows.py::TestErrorHandlingWorkflows -v"}
 test-light = {cmd = "python -m pytest tests/ -v -k 'not test_elevation_pipeline and not test_elevation_pipeline_inside_datavia'"}
 # Heavy integration tests (with running backend containers and network access)
 test-e2e = {cmd = "DATAVIA_E2E=1 python -m pytest tests/ -v --cov=datavia --cov-report=xml --cov-report=html"}
-ci-check = [{ task = "format-check" }, { task = "lint" }, { task = "type-check" }, { task = "test-light" }]
-ci-pr-check = [{ task ="ci-check"}, { task ="docs"},{ task ="test-docs-verbose"}, {task= "security-scan"} ]
+ci-check = [{task = "format-check"}, {task = "lint"}, {task = "type-check"}, {task = "test-light"}]
+ci-pr-check = [{task = "ci-check"}, {task = "docs"}, {task = "test-docs-verbose"}, {task = "security-scan"}]
 
 
 # Development feature for CI/CD tools
