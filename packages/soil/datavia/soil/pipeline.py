@@ -1,15 +1,13 @@
 """
 Soil Pipeline - Complete soil data integration.
 
-Self-contained pipeline incorporating all soil development from the fetcher architecture:
-- SoilGrids API integration (from SoilGridsAPIDownloader)
-- Multi-band TIFF processing (from TiffSaver enhancements)
-- Selective approach (280 MB vs 5.5 GB from masterplan)
-- Database isolation and metadata storage
+Provides end-to-end access to SoilGrids soil property data for Germany:
+- Downloads selected soil properties via the SoilGrids WCS API.
+- Stores results as a multi-band GeoTIFF and registers metadata in PostGIS.
+- Exposes coordinate-based value retrieval via a GetterTiff-backed interface.
 
-Follows masterplan Phase 1.3 objectives:
-- Week 1-2: SoilGrids API integration (TIFF-based soil properties)
-- Future: BÜK shapefile integration (vector-based soil classification)
+Planned extensions:
+- BÜK shapefile integration (vector-based soil classification).
 """
 
 import datetime
@@ -31,14 +29,26 @@ logger = logging.getLogger(__name__)
 
 
 class SoilGridsDownloader(Downloader):
-    """Specialized downloader for SoilGrids API integration.
+    """Downloader for soil property data from the SoilGrids WCS API.
 
-    Incorporates all development from SoilGridsAPIDownloader in fetcher architecture.
-    Implements masterplan's selective strategy (280 MB vs 5.5 GB).
+    Downloads a configurable selection of soil properties and depth layers
+    for Germany, combining them into a single multi-band GeoTIFF to keep
+    storage requirements manageable.
     """
 
     def __init__(self, config: dict[str, Any]):
-        """Initialize SoilGrids downloader with configuration."""
+        """Initialize the SoilGrids downloader.
+
+        Parameters
+        ----------
+        config : dict[str, Any]
+            Configuration dictionary with optional keys:
+
+            - ``properties`` (list[str]): Soil properties to download.
+              Defaults to ``["clay", "sand", "silt", "ph", "carbon"]``.
+            - ``depths`` (list[str]): Depth layers to download.
+              Defaults to ``["0-5cm", "5-15cm"]``.
+        """
         self.config = config
 
         self.sg = SoilGrids()
@@ -49,7 +59,9 @@ class SoilGridsDownloader(Downloader):
             "properties", ["clay", "sand", "silt", "ph", "carbon"]
         )
         self.priority_depths = config.get("depths", ["0-5cm", "5-15cm"])
-        self.priority_statistic = "mean"
+        self.priority_statistic = config.get(
+            "statistic", "mean"
+        )  # Default to 'mean' if not specified
         self.resolution = 250  # meters
 
         # Germany bounding box (EPSG:4326 for SoilGrids API)
@@ -61,11 +73,18 @@ class SoilGridsDownloader(Downloader):
         }
 
         logger.info(
-            f"SoilGrids downloader configured: {len(self.priority_properties)} properties x {len(self.priority_depths)} depths"
+            f"SoilGrids downloader configured: {len(self.priority_properties)} properties x {len(self.priority_depths)} depths x 1 statistic ({self.priority_statistic})"
         )
 
     def get_coverage_ids(self) -> list[str]:
-        """Generate selective coverage IDs for priority soil properties."""
+        """Generate WCS coverage IDs for all configured property/depth combinations.
+
+        Returns
+        -------
+        list[str]
+            Coverage identifiers in the format ``{property}_{depth}_{statistic}``,
+            e.g. ``"clay_0-5cm_mean"``.
+        """
         coverage_ids = []
         for prop in self.priority_properties:
             for depth in self.priority_depths:
@@ -76,9 +95,22 @@ class SoilGridsDownloader(Downloader):
         return coverage_ids
 
     def download(self, output_path: str) -> str:
-        """Download SoilGrids data using selective approach.
+        """Download all configured soil coverages and combine them into one multi-band GeoTIFF.
 
-        Incorporates all logic from fetcher/downloaders.py SoilGridsAPIDownloader.
+        Each configured property/depth combination is downloaded individually and
+        then merged into a single output file where each band corresponds to one
+        coverage. Individual downloads are performed in a temporary directory.
+
+        Parameters
+        ----------
+        output_path : str
+            Absolute path for the resulting multi-band GeoTIFF file.
+
+        Returns
+        -------
+        str
+            Path to the written multi-band GeoTIFF, or ``"failed"`` if the
+            download could not be completed.
         """
         try:
             coverage_ids = self.get_coverage_ids()
@@ -120,7 +152,26 @@ class SoilGridsDownloader(Downloader):
             return "failed"
 
     def _download_single_coverage(self, coverage_id: str, temp_dir: str) -> str:
-        """Download a single soil property coverage using soilgrids package."""
+        """Download a single WCS coverage and write it to a temporary GeoTIFF.
+
+        Translates user-facing property names to SoilGrids API service IDs
+        (e.g. ``"carbon"`` → ``"soc"``, ``"ph"`` → ``"phh2o"``), then requests
+        the coverage via the SoilGrids WCS service. Uses the Germany bounding
+        box and the resolution configured on this instance.
+
+        Parameters
+        ----------
+        coverage_id : str
+            Coverage identifier in the format ``{property}_{depth}_{statistic}``.
+        temp_dir : str
+            Directory where the single-coverage GeoTIFF will be written.
+
+        Returns
+        -------
+        str
+            Absolute path to the downloaded GeoTIFF, or ``"failed"`` if the
+            download or file validation did not succeed.
+        """
         try:
             # Parse coverage_id to get service_id (property)
             service_id = coverage_id.split("_")[
@@ -171,7 +222,26 @@ class SoilGridsDownloader(Downloader):
             return "failed"
 
     def _combine_coverages(self, temp_files: list[tuple], output_path: str) -> str:
-        """Combine individual TIFF files into multi-band TIFF."""
+        """Merge individual single-band GeoTIFFs into one multi-band GeoTIFF.
+
+        Uses the first file as the spatial profile template. Each input file
+        contributes one band to the output. The original CRS from the
+        downloaded data is preserved. Band descriptions are set via
+        :meth:`_enhance_band_description`.
+
+        Parameters
+        ----------
+        temp_files : list[tuple[str, str]]
+            List of ``(filepath, coverage_id)`` pairs to merge.
+        output_path : str
+            Absolute path for the resulting multi-band GeoTIFF.
+
+        Returns
+        -------
+        str
+            Path to the written multi-band GeoTIFF, or ``"failed"`` if merging
+            failed or no valid input files were found.
+        """
         try:
             # Read all input files
             src_files = []
@@ -228,9 +298,23 @@ class SoilGridsDownloader(Downloader):
             return "failed"
 
     def _enhance_band_description(self, coverage_id: str) -> str:
-        """Enhance coverage ID to readable description.
+        """Convert a raw coverage ID into a human-readable band description.
 
-        From fetcher/aggregators.py _enhance_band_description()
+        Maps known property identifiers to descriptive labels including the
+        physical unit, depth layer, and statistical summary, e.g.
+        ``"clay_0-5cm_mean"`` → ``"Clay content (%) at 0-5cm depth (mean value)"``.
+        Returns the original coverage ID unchanged if parsing fails.
+
+        Parameters
+        ----------
+        coverage_id : str
+            Coverage identifier in the format ``{property}_{depth}_{statistic}``.
+
+        Returns
+        -------
+        str
+            Human-readable description, or the original ``coverage_id`` if the
+            format is unrecognised or an error occurs during parsing.
         """
         try:
             if "_" not in coverage_id:
@@ -275,9 +359,40 @@ class SoilGridsDownloader(Downloader):
         height=None,
         **kwargs,
     ):
-        """Fetch coverage data from SoilGrids WCS service.
+        """Request a single coverage from the SoilGrids WCS service and write it to disk.
 
-        Adapted from fetcher/downloaders.py SoilGridsAPIDownloader.get_coverage_data()
+        Validates the CRS against the coverage's supported CRS list and derives
+        the correct resolution parameters from it. For EPSG:4326 the pixel
+        dimensions must be supplied via ``width``/``height``; for projected
+        CRSs a fixed 250 m resolution is used instead.
+
+        Parameters
+        ----------
+        service_id : str
+            SoilGrids service identifier, e.g. ``"clay"`` or ``"soc"``.
+        coverage_id : str
+            Full coverage identifier, e.g. ``"clay_0-5cm_mean"``.
+        crs : str
+            CRS in URN notation, e.g. ``"urn:ogc:def:crs:EPSG::4326"``.
+        west, south, east, north : float
+            Bounding box in the coordinate system defined by ``crs``.
+        output : str
+            Absolute path for the output GeoTIFF file (must end with ``.tif``).
+        width : int, optional
+            Pixel width of the requested coverage (required for EPSG:4326).
+        height : int, optional
+            Pixel height of the requested coverage (required for EPSG:4326).
+        **kwargs
+            Additional keyword arguments are accepted but ignored.
+
+        Raises
+        ------
+        ValueError
+            If ``crs`` is not supported by the coverage, the bounding box is
+            invalid, ``width``/``height`` are missing for EPSG:4326, or the
+            output path does not end with ``.tif``.
+        Exception
+            If the WCS server returns an error response.
         """
         try:
             wcs, coverage_list = self.sg._get_service_and_coverage_list(service_id)
@@ -333,18 +448,46 @@ class SoilGridsDownloader(Downloader):
 
 
 class SoilPipeline(Pipeline):
-    """Complete soil data pipeline."""
+    """End-to-end pipeline for SoilGrids soil property data.
+
+    Orchestrates downloading, storing, and querying multi-band GeoTIFF files
+    containing soil properties for Germany. Uses :class:`SoilGridsDownloader`
+    for data acquisition, :class:`~datavia.core.saver_tiff.TiffSaver` for
+    storing data and registering metadata in PostGIS, and
+    :class:`~datavia.core.getter_tiff.GetterTiff` for coordinate-based value
+    retrieval.
+    """
 
     def __init__(
         self,
         name: str = "soil",
         properties: list[str] | None = None,
         depths: list[str] | None = None,
+        value: str = "mean",
     ):
-        """Initialize soil pipeline.
-        Properties and depths can be customized,
-        but default to the most commonly used ones
-        based on masterplan and SoilGrids API capabilities.
+        """Initialize the soil pipeline with a configurable set of properties and depth layers.
+
+        Parameters
+        ----------
+        name : str, optional
+            Identifier used for database isolation and file naming.
+            Defaults to ``"soil"``.
+        properties : list[str], optional
+            Soil properties to download and expose. Supported values are a
+            subset of the SoilGrids API properties:
+            ``"bdod"``, ``"cec"``, ``"cfvo"``, ``"clay"``, ``"nitrogen"``,
+            ``"ocd"``, ``"ocs"``, ``"phh2o"``, ``"sand"``, ``"silt"``,
+            ``"soc"``, ``"wv0010"``, ``"wv0033"``, ``"wv1500"``.
+            Pipeline-friendly aliases ``"ph"`` and ``"carbon"`` are also accepted.
+            Defaults to ``["clay", "sand", "silt", "ph", "carbon"]``.
+        depths : list[str], optional
+            Depth layers to include. Available options:
+            ``"0-5cm"``, ``"0-30cm"``, ``"5-15cm"``, ``"15-30cm"``,
+            ``"30-60cm"``, ``"60-100cm"``, ``"100-200cm"``.
+            Defaults to ``["0-5cm", "5-15cm"]``.
+        value : str, optional
+            Statistical summary to retrieve for each property/depth combination.
+            Supported values are "Q0.05", "Q0.5", "Q0.95", "mean", "uncertainty".
         """
         if properties is None:
             properties = ["clay", "sand", "silt", "ph", "carbon"]
@@ -363,25 +506,73 @@ class SoilPipeline(Pipeline):
             self.properties = properties
         else:
             self.properties = ["clay", "sand", "silt", "ph", "carbon"]
+
+        self.statistic = value
         logger.info(
             f"SoilPipeline initialized with properties: {self.properties} and depths: {self.depths}"
         )
 
     def __call__(self, *args, **kwds):
+        """Run the pipeline to download and store soil data.
+
+        Assembles the downloader configuration from the properties and depth
+        layers set on this instance and delegates execution to the parent
+        :class:`~datavia.core.interfaces.Pipeline`.
+
+        Parameters
+        ----------
+        *args
+            Positional arguments forwarded to the parent pipeline.
+        **kwds
+            Keyword arguments forwarded to the parent pipeline.
+
+        Returns
+        -------
+        Any
+            Return value of the parent pipeline call.
+        """
         config = {
             "properties": self.properties,
             "depths": self.depths,
+            "statistic": self.statistic,
         }
         return super().__call__(config, *args, **kwds)
 
     def get_data(
         self, coords: np.ndarray, properties: list[str] | None = None, **kwargs
     ) -> dict[str, np.ndarray]:
-        """Get soil property values at coordinates.
+        """Return soil property values at the given coordinates.
 
-        Delegates to the getter which handles TIFF access and band selection.
-        Uses band metadata stored by TiffSaver to map property names to band
-        indices without opening the TIFF file directly.
+        Retrieves the band-to-description mapping from the database via
+        :meth:`~datavia.core.getter_tiff.GetterTiff.get_band_mapping`, resolves
+        each requested property to its corresponding band index, and delegates
+        raster value extraction to
+        :meth:`~datavia.core.getter_tiff.GetterTiff.get_data`. Properties that
+        are not available in the stored data are returned as arrays of ``NaN``.
+
+        Parameters
+        ----------
+        coords : np.ndarray
+            Array of coordinates with shape ``(n_points, 2)``.
+            Expected order is ``(longitude, latitude)`` for EPSG:4326.
+        properties : list[str], optional
+            Subset of soil properties to retrieve. Defaults to all properties
+            configured on this instance (``self.properties``).
+        **kwargs
+            Additional keyword arguments forwarded to
+            :meth:`~datavia.core.getter_tiff.GetterTiff.get_data`.
+
+        Returns
+        -------
+        dict[str, np.ndarray]
+            Mapping from property name to a 1-D array of extracted values,
+            one value per coordinate. Unavailable properties map to arrays
+            filled with ``NaN``.
+
+        Raises
+        ------
+        RuntimeError
+            If the pipeline has not been initialised (getter is ``None``).
         """
         try:
             if not self.getter:
@@ -482,7 +673,18 @@ class SoilPipeline(Pipeline):
             return None
 
     def update_data(self) -> bool:
-        """Update soil data from SoilGrids API."""
+        """Download the latest soil data from SoilGrids and register it in the database.
+
+        Generates a dated output path, runs the downloader to produce a
+        multi-band GeoTIFF, and passes the result to the saver which writes
+        file metadata to PostGIS.
+
+        Returns
+        -------
+        bool
+            ``True`` if both the download and the metadata save succeeded,
+            ``False`` otherwise.
+        """
         try:
             # Generate output path using pipeline name.
             # Filename follows the TiffSaver convention: {anything}_{anything}_{tag}.tif
@@ -524,19 +726,76 @@ class SoilPipeline(Pipeline):
             return False
 
     def get_available_properties(self) -> list[str]:
-        """Get list of available soil properties."""
+        """Return soil properties that are actually present in the database.
+
+        Queries the band metadata stored by
+        :class:`~datavia.core.saver_tiff.TiffSaver` via
+        :meth:`~datavia.core.getter_tiff.GetterTiff.get_band_mapping` and
+        translates the human-readable band descriptions back to canonical
+        property names using :meth:`_parse_property_from_description`.
+
+        Falls back to the configured ``self.properties`` list when the getter
+        is not yet initialised or no band metadata exists in the database
+        (e.g. before the first :meth:`update_data` call).
+
+        Returns
+        -------
+        list[str]
+            Property names found in the database, e.g.
+            ``["clay", "sand", "silt", "ph", "carbon"]``, or the configured
+            list if the database has no data yet.
+        """
+        if self.getter:
+            raw_band_mapping = self.getter.get_band_mapping()
+            if raw_band_mapping:
+                available: list[str] = []
+                for description in raw_band_mapping:
+                    prop = self._parse_property_from_description(description)
+                    if prop and prop not in available:
+                        available.append(prop)
+                if available:
+                    return available
+
+        logger.debug(
+            "No band metadata found in database — returning configured properties."
+        )
         return self.properties.copy()
 
-    def get_data_info(self) -> dict[str, Any]:
-        """Get detailed information about soil pipeline data."""
-        base_info = super().get_data_info()
-        base_info.update(
-            {
-                "available_properties": self.get_available_properties(),
-                "data_source_api": "SoilGrids REST API",
-                "coverage": "Germany",
-                "resolution": "250m",
-                "format": "Multi-band GeoTIFF",
-            }
-        )
-        return base_info
+    def get_remote_available_properties(self) -> list[str]:
+        """Return soil properties confirmed as available on the SoilGrids API.
+
+        Queries the SoilGrids WCS service for each configured property to
+        verify it is actually offered upstream. Translates user-facing alias
+        names (``"ph"``, ``"carbon"``) to their API service IDs before
+        querying, and maps results back to canonical pipeline names. Useful
+        for validating ``properties`` before starting a download or for
+        discovering the full set of properties the service offers.
+
+        Returns
+        -------
+        list[str]
+            Canonical property names confirmed as available on SoilGrids, e.g.
+            ``["clay", "sand", "silt", "ph", "carbon"]``. Returns an empty
+            list if the API cannot be reached.
+        """
+        # Same alias table as SoilGridsDownloader._download_single_coverage
+        _pipeline_to_api = {"carbon": "soc", "ph": "phh2o"}
+        _api_to_pipeline = {v: k for k, v in _pipeline_to_api.items()}
+
+        available_remote: list[str] = []
+        for prop in self.downloader.priority_properties:
+            api_service_id = _pipeline_to_api.get(prop, prop)
+            try:
+                self.downloader.sg._get_service_and_coverage_list(api_service_id)
+                # No exception means the service exists upstream
+                canonical = _api_to_pipeline.get(api_service_id, api_service_id)
+                if canonical not in available_remote:
+                    available_remote.append(canonical)
+            except Exception as exc:
+                logger.debug(
+                    "Property '%s' (API: '%s') not available on SoilGrids: %s",
+                    prop,
+                    api_service_id,
+                    exc,
+                )
+        return available_remote
