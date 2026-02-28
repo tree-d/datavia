@@ -46,16 +46,10 @@ jobs:
           pixi-version: ${{ env.PIXI_VERSION }}
 
       - name: Install formatting tools
-        run: |
-          pixi install
-          pixi add black isort
+        run: pixi install
 
-      # Fail-fast formatting checks
-      - name: Check code formatting (black)
-        run: pixi run black --check datavia/ tests/
-
-      - name: Check import sorting (isort)
-        run: pixi run isort --check-only datavia/ tests/
+      - name: Check formatting and import sorting
+        run: pixi run format-check
 
   # Job 2: Code Quality Analysis
   quality:
@@ -80,17 +74,13 @@ jobs:
           pixi-version: ${{ env.PIXI_VERSION }}
 
       - name: Install dependencies
-        run: |
-          pixi install
-          pixi add ruff mypy
+        run: pixi install
 
-      - name: Lint with ruff
-        run: |
-          pixi run ruff check datavia/ tests/ --output-format=github
+      - name: Lint
+        run: pixi run lint
 
-      - name: Type checking with mypy
-        run: |
-          pixi run mypy datavia/ --ignore-missing-imports
+      - name: Type checking
+        run: pixi run type-check
 
   # Job 3: Testing Matrix
   test:
@@ -252,14 +242,11 @@ jobs:
         with:
           pixi-version: ${{ env.PIXI_VERSION }}
 
-      - name: Install security tools
-        run: |
-          pixi install
-          pixi add bandit
+      - name: Install dependencies
+        run: pixi install
 
-      - name: Security scan with bandit
-        run: |
-          pixi run bandit -r datavia/ -f json -o bandit-report.json || true
+      - name: Security scan
+        run: pixi run security-scan || true
 
       - name: Upload security report
         uses: actions/upload-artifact@v4

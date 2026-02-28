@@ -50,8 +50,7 @@ jobs:
           pixi install -e dev
 
       - name: Quick lint check
-        run: |
-          pixi run ruff check datavia/ tests/
+        run: pixi run lint
 
       - name: Run core tests
         run: |
