@@ -87,10 +87,12 @@ def spatial_interpolate(
         if nodata is not None:
             nodata_mask = band_data == nodata
             if nodata_mask.any() and not nodata_mask.all():
-                # For each nodata pixel, find the nearest valid pixel index
+                # For each nodata pixel, find the nearest valid pixel index.
+                # Cast to ndarray explicitly so mypy can verify downstream indexing.
                 _, nearest_idx = distance_transform_edt(
                     nodata_mask, return_indices=True
                 )
+                nearest_idx = np.asarray(nearest_idx)
                 filled = band_data.copy()
                 filled[nodata_mask] = band_data[
                     nearest_idx[0][nodata_mask], nearest_idx[1][nodata_mask]
