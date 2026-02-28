@@ -99,11 +99,16 @@ You can request a subset of properties with the ``properties`` keyword:
     >>> soil_data = pipeline.get_data(coords=coords, crs_coords="EPSG:4326")  # doctest: +SKIP
     >>>
     >>> # Access individual properties (SoilGrids raw units: clay g/kg, pH×10)
-    >>> print(f"Clay:  {soil_data['clay'][0] / 10:.1f} %")   # doctest: +SKIP
-    >>> print(f"Sand:  {soil_data['sand'][0] / 10:.1f} %")   # doctest: +SKIP
-    >>> print(f"Silt:  {soil_data['silt'][0] / 10:.1f} %")   # doctest: +SKIP
-    >>> print(f"pH:    {soil_data['ph'][0] / 10:.2f}")        # doctest: +SKIP
-    >>> print(f"SOC:   {soil_data['carbon'][0]:.1f} ‰")       # doctest: +SKIP
+    >>> _ = print(f"Clay:  {soil_data['clay'][0] / 10:.1f} %")   # doctest: +SKIP
+    Clay:  29.4 %
+    >>> _ = print(f"Sand:  {soil_data['sand'][0] / 10:.1f} %")   # doctest: +SKIP
+    Sand:  56.3 %
+    >>> _ = print(f"Silt:  {soil_data['silt'][0] / 10:.1f} %")   # doctest: +SKIP
+    Silt:  14.4 %
+    >>> _ = print(f"pH:    {soil_data['ph'][0] / 10:.2f}")        # doctest: +SKIP
+    pH:    5.35
+    >>> _ = print(f"SOC:   {soil_data['carbon'][0]:.1f} ‰")       # doctest: +SKIP
+    SOC:   781.6 ‰
     >>>
     >>> # Or request only specific properties
     >>> soil_ph = pipeline.get_data(  # doctest: +SKIP
@@ -111,7 +116,8 @@ You can request a subset of properties with the ``properties`` keyword:
     ...     properties=["ph"],
     ...     crs_coords="EPSG:4326",
     ... )
-    >>> print(f"pH only: {soil_ph['ph'][0] / 10:.2f}")  # doctest: +SKIP
+    >>> _ = print(f"pH only: {soil_ph['ph'][0] / 10:.2f}")  # doctest: +SKIP
+    pH only: 5.35
     >>>
     >>> # Verify the return type without a live pipeline
     >>> isinstance({"clay": np.array([294.0])}, dict)
