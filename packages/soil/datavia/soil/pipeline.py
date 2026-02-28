@@ -12,16 +12,20 @@ Follows masterplan Phase 1.3 objectives:
 - Future: BÜK shapefile integration (vector-based soil classification)
 """
 
-import numpy as np
-from typing import Dict, Any, List, Optional
+import datetime
 import logging
 import os
 import tempfile
+from typing import Any
 
-from datavia.core.interfaces import Pipeline, Downloader, Saver, Getter
+import numpy as np
+import rasterio
+from soilgrids import SoilGrids
+
+from datavia.config import get_config
 from datavia.core.getter_tiff import GetterTiff
+from datavia.core.interfaces import Downloader, Pipeline
 from datavia.core.saver_tiff import TiffSaver
-from datavia.library.spatial_ops import extract_values_at_coords
 
 logger = logging.getLogger(__name__)
 
@@ -33,19 +37,12 @@ class SoilGridsDownloader(Downloader):
     Implements masterplan's selective strategy (280 MB vs 5.5 GB).
     """
 
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: dict[str, Any]):
         """Initialize SoilGrids downloader with configuration."""
         self.config = config
 
-        # Import soilgrids package (available in pixi environment)
-        try:
-            from soilgrids import SoilGrids
-
-            self.sg = SoilGrids()
-            logger.info("SoilGrids package initialized successfully")
-        except ImportError as e:
-            logger.error(f"Failed to import soilgrids package: {e}")
-            raise
+        self.sg = SoilGrids()
+        logger.info("SoilGrids package initialized successfully")
 
         # Selective approach configuration from masterplan
         self.priority_properties = config.get(
@@ -64,10 +61,10 @@ class SoilGridsDownloader(Downloader):
         }
 
         logger.info(
-            f"SoilGrids downloader configured: {len(self.priority_properties)} properties × {len(self.priority_depths)} depths"
+            f"SoilGrids downloader configured: {len(self.priority_properties)} properties x {len(self.priority_depths)} depths"
         )
 
-    def get_coverage_ids(self) -> List[str]:
+    def get_coverage_ids(self) -> list[str]:
         """Generate selective coverage IDs for priority soil properties."""
         coverage_ids = []
         for prop in self.priority_properties:
@@ -78,7 +75,7 @@ class SoilGridsDownloader(Downloader):
         logger.info(f"Generated {len(coverage_ids)} selective coverage IDs")
         return coverage_ids
 
-    def download_soil_data(self, output_path: str) -> str:
+    def download(self, output_path: str) -> str:
         """Download SoilGrids data using selective approach.
 
         Incorporates all logic from fetcher/downloaders.py SoilGridsAPIDownloader.
@@ -119,7 +116,7 @@ class SoilGridsDownloader(Downloader):
                 return combined_file
 
         except Exception as e:
-            logger.error(f"SoilGrids download failed: {str(e)}")
+            logger.error(f"SoilGrids download failed: {e}")
             return "failed"
 
     def _download_single_coverage(self, coverage_id: str, temp_dir: str) -> str:
@@ -131,10 +128,17 @@ class SoilGridsDownloader(Downloader):
             ]  # e.g., 'clay' from 'clay_0-5cm_mean'
             temp_filepath = os.path.join(temp_dir, f"{coverage_id}.tif")
 
-            # Handle special cases
-            if service_id == "carbon":
-                service_id = "soc"  # soil organic carbon uses 'soc' in SoilGrids
-                coverage_id_api = coverage_id.replace("carbon", "soc")
+            # Map user-friendly property names to SoilGrids API service IDs
+            _service_id_aliases: dict[str, str] = {
+                "carbon": "soc",  # soil organic carbon
+                "ph": "phh2o",  # pH in H2O
+            }
+            if service_id in _service_id_aliases:
+                api_service_id = _service_id_aliases[service_id]
+                coverage_id_api = coverage_id.replace(
+                    service_id + "_", api_service_id + "_", 1
+                )
+                service_id = api_service_id
             else:
                 coverage_id_api = coverage_id
 
@@ -163,14 +167,12 @@ class SoilGridsDownloader(Downloader):
                 return "failed"
 
         except Exception as e:
-            logger.error(f"Failed to download coverage {coverage_id}: {str(e)}")
+            logger.error(f"Failed to download coverage {coverage_id}: {e}")
             return "failed"
 
-    def _combine_coverages(self, temp_files: List[tuple], output_path: str) -> str:
+    def _combine_coverages(self, temp_files: list[tuple], output_path: str) -> str:
         """Combine individual TIFF files into multi-band TIFF."""
         try:
-            import rasterio
-
             # Read all input files
             src_files = []
             coverage_ids = []
@@ -181,21 +183,23 @@ class SoilGridsDownloader(Downloader):
                     coverage_ids.append(coverage_id)
                     logger.debug(f"Opened coverage file: {coverage_id}")
                 except Exception as e:
-                    logger.warning(f"Failed to open {temp_file}: {str(e)}")
+                    logger.warning(f"Failed to open {temp_file}: {e}")
 
             if not src_files:
                 logger.error("No valid TIFF files to combine")
                 return "failed"
 
-            # Create multi-band output using first file as template
+            # Create multi-band output using first file as template.
+            # Keep the original CRS from the downloaded data (EPSG:4326) so that
+            # coordinate lookups in GetterTiff work correctly. Reprojection to
+            # EPSG:25832 can be added later as a dedicated transform step.
             profile = src_files[0].profile.copy()
             profile.update(count=len(src_files))  # Multi-band
 
-            # Transform to standard CRS (EPSG:25832 from masterplan)
-            profile.update(crs="EPSG:25832")
-
             with rasterio.open(output_path, "w", **profile) as dst:
-                for i, (src, coverage_id) in enumerate(zip(src_files, coverage_ids), 1):
+                for i, (src, coverage_id) in enumerate(
+                    zip(src_files, coverage_ids, strict=False), 1
+                ):
                     try:
                         data = src.read(1)  # Read single band
                         dst.write(data, i)  # Write to band i
@@ -205,9 +209,7 @@ class SoilGridsDownloader(Downloader):
                         dst.set_band_description(i, enhanced_desc)
                         logger.debug(f"Added band {i}: {enhanced_desc}")
                     except Exception as e:
-                        logger.warning(
-                            f"Failed to process band {coverage_id}: {str(e)}"
-                        )
+                        logger.warning(f"Failed to process band {coverage_id}: {e}")
 
             # Close source files
             for src in src_files:
@@ -222,7 +224,7 @@ class SoilGridsDownloader(Downloader):
             logger.error("rasterio not available - cannot combine coverages")
             return "failed"
         except Exception as e:
-            logger.error(f"Failed to combine coverages: {str(e)}")
+            logger.error(f"Failed to combine coverages: {e}")
             return "failed"
 
     def _enhance_band_description(self, coverage_id: str) -> str:
@@ -333,8 +335,19 @@ class SoilGridsDownloader(Downloader):
 class SoilPipeline(Pipeline):
     """Complete soil data pipeline."""
 
-    def __init__(self, name: str = "soil"):
-        """Initialize soil pipeline."""
+    def __init__(
+        self,
+        name: str = "soil",
+        properties: list[str] | None = None,
+        depths: list[str] | None = None,
+    ):
+        """Initialize soil pipeline.
+        Properties and depths can be customized,
+        but default to the most commonly used ones
+        based on masterplan and SoilGrids API capabilities.
+        """
+        if properties is None:
+            properties = ["clay", "sand", "silt", "ph", "carbon"]
         super().__init__(
             name,
             downloader=SoilGridsDownloader,
@@ -342,48 +355,71 @@ class SoilPipeline(Pipeline):
             getter=GetterTiff,
             url=None,
         )
-
-        # Default soil properties
-        self.properties = ["clay", "sand", "silt", "ph", "carbon"]
         self.data_source = "SoilGrids"
+        if depths is None:
+            depths = ["0-5cm", "5-15cm"]
+        self.depths = depths
+        if properties:
+            self.properties = properties
+        else:
+            self.properties = ["clay", "sand", "silt", "ph", "carbon"]
+        logger.info(
+            f"SoilPipeline initialized with properties: {self.properties} and depths: {self.depths}"
+        )
 
     def __call__(self, *args, **kwds):
-        return super().__call__(*args, **kwds)
+        config = {
+            "properties": self.properties,
+            "depths": self.depths,
+        }
+        return super().__call__(config, *args, **kwds)
 
     def get_data(
-        self, coords: np.ndarray, properties: Optional[List[str]] = None, **kwargs
-    ) -> Dict[str, np.ndarray]:
-        """Get soil property values at coordinates."""
-        try:
-            # Get latest soil TIFF file using pipeline name
-            my_layers = self.saver.get_my_raster_layers(self.name)
+        self, coords: np.ndarray, properties: list[str] | None = None, **kwargs
+    ) -> dict[str, np.ndarray]:
+        """Get soil property values at coordinates.
 
-            if not my_layers:
-                logger.warning("No soil data available. Run update first.")
+        Delegates to the getter which handles TIFF access and band selection.
+        Uses band metadata stored by TiffSaver to map property names to band
+        indices without opening the TIFF file directly.
+        """
+        try:
+            if not self.getter:
+                raise RuntimeError("Pipeline not initialized. Call the pipeline first.")
+
+            # Retrieve description→band_index mapping from the getter (DB-backed)
+            raw_band_mapping = self.getter.get_band_mapping()
+
+            if not raw_band_mapping:
+                logger.warning(
+                    "No band metadata available for source '%s'. "
+                    "Run update_data() first.",
+                    self.name,
+                )
                 return {
                     prop: np.full(len(coords), np.nan)
                     for prop in (properties or self.properties)
                 }
 
-            # Get most recent layer
-            latest_layer = max(my_layers, key=lambda x: x.get("acquisition_time", ""))
-            tiff_path = latest_layer["uri"]
+            # Translate description keys → property names
+            prop_to_band: dict[str, int] = {}
+            for description, band_idx in raw_band_mapping.items():
+                prop_name = self._parse_property_from_description(description)
+                if prop_name and prop_name not in prop_to_band:
+                    prop_to_band[prop_name] = band_idx
 
-            # Get band metadata to map properties to bands
-            band_mapping = self._get_band_mapping(tiff_path)
-
-            # Extract values for requested properties
             requested_props = properties or self.properties
-            results = {}
+            results: dict[str, np.ndarray] = {}
 
             for prop in requested_props:
-                if prop in band_mapping:
-                    band_num = band_mapping[prop]
-                    values = self._extract_band_values(tiff_path, coords, band_num)
+                if prop in prop_to_band:
+                    band_num = prop_to_band[prop]
+                    # Delegate value extraction to the getter
+                    values = self.getter.get_data(coords, band=band_num, **kwargs)
                     results[prop] = values
                     logger.debug(f"Extracted {prop} values from band {band_num}")
                 else:
-                    logger.warning(f"Property {prop} not available in soil data")
+                    logger.warning(f"Property '{prop}' not available in soil data")
                     results[prop] = np.full(len(coords), np.nan)
 
             logger.info(
@@ -398,110 +434,83 @@ class SoilPipeline(Pipeline):
                 for prop in (properties or self.properties)
             }
 
-    def _get_band_mapping(self, tiff_path: str) -> Dict[str, int]:
-        """Get mapping from property names to band numbers."""
+    def _parse_property_from_description(self, description: str) -> str | None:
+        """Parse property name from an enhanced band description.
+
+        Maps the human-readable descriptions written by TiffSaver/SoilGridsDownloader
+        back to the canonical property keys used by this pipeline (e.g. ``"clay"``,
+        ``"ph"``, ``"carbon"``).
+
+        Note: API service IDs (``phh2o``, ``soc``) are intentionally mapped back to
+        the user-facing names (``ph``, ``carbon``) so they match ``self.properties``.
+        """
         try:
-            import rasterio
-
-            band_mapping = {}
-            with rasterio.open(tiff_path) as src:
-                for i in range(1, src.count + 1):
-                    try:
-                        desc = src.get_band_description(i) or f"band_{i}"
-                        # Parse enhanced description to get property name
-                        prop_name = self._parse_property_from_description(desc)
-                        if prop_name:
-                            band_mapping[prop_name] = i
-                    except Exception:
-                        pass
-
-            logger.debug(f"Band mapping: {band_mapping}")
-            return band_mapping
-
-        except Exception as e:
-            logger.error(f"Failed to get band mapping: {e}")
-            return {}
-
-    def _parse_property_from_description(self, description: str) -> Optional[str]:
-        """Parse property name from enhanced band description."""
-        try:
-            # Map enhanced descriptions back to property names
+            # Map enhanced descriptions to this pipeline's canonical property names.
+            # Keys are substrings of the descriptions produced by
+            # SoilGridsDownloader._enhance_band_description().
             property_mappings = {
                 "Clay content": "clay",
                 "Sand content": "sand",
                 "Silt content": "silt",
+                # pH: API uses 'phh2o', pipeline exposes as 'ph'
                 "pH in water": "ph",
-                "Organic carbon content": "carbon",
+                # Carbon: API uses 'soc', pipeline exposes as 'carbon'
                 "Soil organic carbon": "carbon",
+                "Organic carbon content": "carbon",
             }
 
             for desc_pattern, prop_name in property_mappings.items():
                 if desc_pattern.lower() in description.lower():
                     return prop_name
 
-            # Fallback: parse from coverage_id pattern
+            # Fallback: parse from coverage_id pattern (e.g. "clay_0-5cm_mean")
             if "_" in description:
                 parts = description.split("_")
-                if len(parts) >= 1:
+                if parts:
                     prop_candidate = parts[0].lower()
-                    if prop_candidate in [
-                        "clay",
-                        "sand",
-                        "silt",
-                        "ph",
-                        "phh2o",
-                        "carbon",
-                        "soc",
-                    ]:
-                        return "carbon" if prop_candidate == "soc" else prop_candidate
+                    # Reverse-alias API names to pipeline names
+                    _api_to_pipeline = {"phh2o": "ph", "soc": "carbon"}
+                    prop_candidate = _api_to_pipeline.get(
+                        prop_candidate, prop_candidate
+                    )
+                    if prop_candidate in ["clay", "sand", "silt", "ph", "carbon"]:
+                        return prop_candidate
 
             return None
 
         except Exception:
             return None
 
-    def _extract_band_values(
-        self, tiff_path: str, coords: np.ndarray, band: int
-    ) -> np.ndarray:
-        """Extract values from specific band using library function."""
-        try:
-            # Use library function with band parameter
-            values = extract_values_at_coords(
-                tiff_path, coords, source_crs="EPSG:4326", band=band
-            )
-            return values
-        except Exception as e:
-            logger.error(f"Error extracting band {band} values: {e}")
-            return np.full(len(coords), np.nan)
-
     def update_data(self) -> bool:
         """Update soil data from SoilGrids API."""
         try:
-            from ..config import get_config
-
-            # Generate output path using pipeline name
+            # Generate output path using pipeline name.
+            # Filename follows the TiffSaver convention: {anything}_{anything}_{tag}.tif
+            # where tag becomes part of the layer name: "{source_name}_{tag}".
+            date_str = datetime.date.today().strftime("%Y%m%d")
             data_dir = get_config().data_directory
-            output_path = os.path.join(data_dir, f"{self.name}_data.tif")
+            temp_path = os.path.join(data_dir, "temp", f"soil_{date_str}_soilgrids.tif")
 
             # Download data using SoilGrids downloader
             logger.info("Starting soil data update from SoilGrids API")
-            filepath = self.downloader.download_soil_data(output_path)
+            filepath = self.downloader.download(temp_path)
 
             if filepath == "failed":
                 logger.error("Failed to download soil data")
                 return False
 
             # Save metadata using pipeline name for database isolation
-            success = self.saver.save_tiff_metadata(
+            """ success = self.saver.save_tiff_metadata(
                 filepath,
                 self.data_source,
-                self.name,  # Use pipeline name instead of pipeline_id
+                self.name,
                 additional_metadata={
                     "properties": self.properties,
                     "data_source": "SoilGrids",
                     "api_url": "https://rest.soilgrids.org/soilgrids/v2.0/",
                 },
-            )
+            ) """
+            success = self.saver.save(filepath)
 
             if success:
                 logger.info("Successfully updated soil data from SoilGrids")
@@ -514,11 +523,11 @@ class SoilPipeline(Pipeline):
             logger.error(f"Error updating soil data: {e}")
             return False
 
-    def get_available_properties(self) -> List[str]:
+    def get_available_properties(self) -> list[str]:
         """Get list of available soil properties."""
         return self.properties.copy()
 
-    def get_data_info(self) -> Dict[str, Any]:
+    def get_data_info(self) -> dict[str, Any]:
         """Get detailed information about soil pipeline data."""
         base_info = super().get_data_info()
         base_info.update(

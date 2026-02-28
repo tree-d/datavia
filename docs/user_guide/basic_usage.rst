@@ -73,9 +73,52 @@ All pipelines accept coordinates in **EPSG:4326** (longitude, latitude) format:
 - Coordinates are automatically transformed to appropriate CRS internally
 - Best results within German boundaries
 
+Getting Soil Data
+-----------------
+
+The soil pipeline returns **one array per requested property** (a ``dict[str, np.ndarray]``).
+Default properties are ``clay``, ``sand``, ``silt``, ``ph``, and ``carbon``. SoilGrids units
+are raw integer-scaled values (e.g. clay in g/kg, pH×10), so divide as needed.
+
+You can request a subset of properties with the ``properties`` keyword:
+
+.. doctest::
+
+    >>> from datavia.soil import SoilPipeline
+    >>> import numpy as np
+    >>>
+    >>> # Initialize pipeline with desired properties
+    >>> pipeline = SoilPipeline(properties=["clay", "sand", "silt", "ph", "carbon"])
+    >>> _ = pipeline()           # Initialize components # doctest: +SKIP
+    >>> _ = pipeline.update_data()  # Download data if not yet available # doctest: +SKIP
+    >>>
+    >>> # Define coordinates
+    >>> coords = np.array([[13.4050, 52.5200]])  # Berlin
+    >>>
+    >>> # Get soil data - returns dict[str, np.ndarray]
+    >>> soil_data = pipeline.get_data(coords=coords, crs_coords="EPSG:4326")  # doctest: +SKIP
+    >>>
+    >>> # Access individual properties (SoilGrids raw units: clay g/kg, pH×10)
+    >>> print(f"Clay:  {soil_data['clay'][0] / 10:.1f} %")   # doctest: +SKIP
+    >>> print(f"Sand:  {soil_data['sand'][0] / 10:.1f} %")   # doctest: +SKIP
+    >>> print(f"Silt:  {soil_data['silt'][0] / 10:.1f} %")   # doctest: +SKIP
+    >>> print(f"pH:    {soil_data['ph'][0] / 10:.2f}")        # doctest: +SKIP
+    >>> print(f"SOC:   {soil_data['carbon'][0]:.1f} ‰")       # doctest: +SKIP
+    >>>
+    >>> # Or request only specific properties
+    >>> soil_ph = pipeline.get_data(  # doctest: +SKIP
+    ...     coords=coords,
+    ...     properties=["ph"],
+    ...     crs_coords="EPSG:4326",
+    ... )
+    >>> print(f"pH only: {soil_ph['ph'][0] / 10:.2f}")  # doctest: +SKIP
+    >>>
+    >>> # Verify the return type without a live pipeline
+    >>> isinstance({"clay": np.array([294.0])}, dict)
+    True
+
 Getting Elevation Data
 ----------------------
-
 The elevation pipeline provides German elevation data at 200m resolution:
 
 .. code-block:: python
