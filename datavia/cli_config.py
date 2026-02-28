@@ -24,12 +24,17 @@ ELEVATION_EXAMPLE = """
 
 SOIL_EXAMPLE = """
     # Example 2: Get soil data
+    # Note: SoilPipeline.get_data() returns dict[str, np.ndarray] - one array per property.
     try:
         soil_data = datavia.soil.get_data(coords=berlin_coords, crs_coords="EPSG:4326")
-        print(f"Berlin soil properties: {soil_data}")
+        print("Berlin soil properties:")
+        for prop, values in soil_data.items():
+            print(f"  {prop}: {values[0]:.2f}")
 
         soil_data = datavia.soil.get_data(coords=munich_coords, crs_coords="EPSG:4326")
-        print(f"Munich soil properties: {soil_data}")
+        print("Munich soil properties:")
+        for prop, values in soil_data.items():
+            print(f"  {prop}: {values[0]:.2f}")
     except Exception as e:
         print(f"Soil example failed: {e}")
         print("Note: Make sure to run 'datavia update soil' first!")"""
@@ -58,7 +63,12 @@ GENERAL_EXAMPLE = """
         try:
             print(f"Testing {pipeline.name} pipeline...")
             data = pipeline.get_data(coords=berlin_coords, crs_coords="EPSG:4326")
-            print(f"{pipeline.name} data: {data}")
+            # SoilPipeline returns dict[str, np.ndarray]; scalar pipelines return np.ndarray
+            if isinstance(data, dict):
+                for prop, values in data.items():
+                    print(f"  {pipeline.name}.{prop}: {values[0]:.2f}")
+            else:
+                print(f"  {pipeline.name}: {data[0]:.2f}")
         except Exception as e:
             print(f"{pipeline.name} failed: {e}")"""
 
@@ -104,10 +114,7 @@ def create_config_file(selected_pipelines: list[str], config_file: str) -> None:
         imports.append("from datavia.soil import SoilPipeline")
         pipeline_instances.append(
             """soil = SoilPipeline(
-    api_url="https://rest.soilgrids.org/soilgrids/v2.0/properties/query",
-    properties=["clay", "sand", "silt", "ph", "carbon"],
-    depths=["0-5cm", "5-15cm"],
-    resolution=250
+    properties=["clay", "sand", "silt", "ph", "carbon"]
 )"""
         )
 
@@ -224,7 +231,12 @@ def main() -> None:
         for pipeline in datavia.pipelines:
             try:
                 data = pipeline.get_data(coords=coord_array, crs_coords="EPSG:4326")
-                print(f"{{pipeline.name}}: {{data[0] if len(data) > 0 else 'No data'}}")
+                # SoilPipeline returns dict[str, np.ndarray]; others return np.ndarray
+                if isinstance(data, dict):
+                    summary = {{k: float(v[0]) for k, v in data.items()}}
+                    print(f"{{pipeline.name}}: {{summary}}")
+                else:
+                    print(f"{{pipeline.name}}: {{data[0] if len(data) > 0 else 'No data'}}")
             except Exception as e:
                 print(f"{{pipeline.name}}: Error - {{e}}")
 

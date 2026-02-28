@@ -138,15 +138,30 @@ class Getter(ABC):
         self.source_name = source_name
 
     @abstractmethod
-    def get_data(self, coords: np.ndarray, **kwargs: Any) -> np.ndarray:
+    def get_data(
+        self,
+        coords: np.ndarray,
+        crs_coords: str = "EPSG:4326",
+        interpolation_order: int = 3,
+        band: int = 1,
+        **kwargs: Any,
+    ) -> np.ndarray:
         """Get data values at specified coordinates.
 
         Parameters
         ----------
         coords : np.ndarray
             Array of coordinates, shape (n, 2) as [[lon, lat], ...]
+        crs_coords : str
+            CRS of the input coordinates. Defaults to "EPSG:4326".
+        interpolation_order : int
+            Interpolation order for raster sampling. Defaults to 3 (cubic).
+        band : int
+            Band number to extract (1-indexed). Defaults to 1 for backward
+            compatibility with single-band sources. For multi-band TIFFs use
+            :meth:`get_band_mapping` to resolve property names to band indices.
         **kwargs : Any
-            Additional parameters like crs_coords, interpolation method
+            Additional parameters passed to the underlying sampling function.
 
         Returns
         -------
@@ -230,9 +245,10 @@ class Pipeline:
         ValueError
             If URL was not provided during __init__ or __call__
         """
-        if self.url is None:
-            raise ValueError("URL is required for pipeline initialization")
-        self.downloader = self.downloader_class(self.url)
+        if self.url:
+            self.downloader = self.downloader_class(self.url)
+        else:
+            self.downloader = self.downloader_class(*args, **kwds)
         self.saver = self.saver_class(self.name)
         self.getter = self.getter_class(self.name)
         return self
@@ -276,6 +292,7 @@ class Pipeline:
         coords: np.ndarray,
         crs_coords: str = "EPSG:4326",
         interpolation_order: int = 3,
+        band: int = 1,
         **kwargs: Any,
     ) -> np.ndarray:
         """Get data values at specified coordinates.
@@ -287,6 +304,7 @@ class Pipeline:
                             - Shape: (n_points, 2)
             crs_coords (str): CRS of input coordinates. Defaults to "EPSG:4326".
             interpolation_order (int): Interpolation order for raster sampling.
+            band (int): Band number to extract (1-indexed). Defaults to 1.
         """
         if not self.getter:
             raise RuntimeError("Pipeline not initialized. Call pipeline() first.")
@@ -294,5 +312,6 @@ class Pipeline:
             coords=coords,
             crs_coords=crs_coords,
             interpolation_order=interpolation_order,
+            band=band,
             **kwargs,
         )

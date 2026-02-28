@@ -16,7 +16,7 @@ try:
     import rasterio
 except ImportError:  # pragma: no cover - optional dependency
     rasterio = None
-from scipy.ndimage import map_coordinates
+from scipy.ndimage import distance_transform_edt, map_coordinates
 
 from .coordinate_transforms import transform_coordinates
 
@@ -28,6 +28,7 @@ def spatial_interpolate(
     coords: np.ndarray,
     coords_crs: str = "EPSG:4326",
     interpolation_order: int = 3,
+    band: int = 1,
 ) -> np.ndarray:
     """
     Cubic interpolation of raster values at given coordinates.
@@ -44,6 +45,9 @@ def spatial_interpolate(
         CRS of input coordinates
     interpolation_order : int, default 3
         Interpolation order (1=linear, 3=cubic)
+    band : int, default 1
+        Band number to interpolate (1-indexed). Use for multi-band TIFFs to
+        select a specific band; defaults to band 1 for backward compatibility.
 
     Returns
     -------
@@ -62,11 +66,37 @@ def spatial_interpolate(
         )
 
     with rasterio.open(tiff_path) as src:
+        # Ensure coords is a numpy array so 2-D indexing works with plain lists
+        coords = np.asarray(coords, dtype=float)
+
         # Transform coordinates to raster CRS if needed
         if coords_crs != str(src.crs):
             coords = transform_coordinates(coords, coords_crs, str(src.crs))
 
-        band = src.read(1)
+        # Read the requested band (1-indexed); clamp to valid range
+        band_idx = max(1, min(band, src.count))
+        band_data = src.read(band_idx).astype(np.float64)
+
+        # Nodata handling: fill nodata cells with the value of the nearest valid
+        # pixel (nearest-neighbor propagation via distance transform).  This
+        # preserves the actual local signal rather than using a global median, so
+        # if a query point lands exactly on a nodata pixel its interpolated value
+        # is still derived from real nearby measurements.  Out-of-domain points
+        # (fully outside the raster extent) return NaN via mode='constant'.
+        nodata = src.nodata
+        if nodata is not None:
+            nodata_mask = band_data == nodata
+            if nodata_mask.any() and not nodata_mask.all():
+                # For each nodata pixel, find the nearest valid pixel index
+                _, nearest_idx = distance_transform_edt(
+                    nodata_mask, return_indices=True
+                )
+                filled = band_data.copy()
+                filled[nodata_mask] = band_data[
+                    nearest_idx[0][nodata_mask], nearest_idx[1][nodata_mask]
+                ]
+                band_data = filled
+
         transform = src.transform
 
         # Convert world coordinates to fractional row/col for all points at once
@@ -77,8 +107,8 @@ def spatial_interpolate(
         coord_array = np.vstack([rows, cols])
 
         # Perform interpolation for all points simultaneously
-        # Ensure proper types for scipy.ndimage.map_coordinates
-        input_array = np.asarray(band, dtype=np.float64)
+        # band_data is already float64 (cast above); just pass it directly
+        input_array = band_data
         coordinates = np.asarray(coord_array, dtype=np.float64)
 
         # Ensure order is one of the accepted literal values
@@ -105,4 +135,6 @@ def spatial_interpolate(
             mode="constant",
         )
 
-        return np.asarray(interpolated_values)
+        result = np.asarray(interpolated_values)
+
+        return result

@@ -3,6 +3,7 @@ getter_tiff.py
 
 Main entry point for TIFF data retrieval.
 Uses shared library code for coordinate transformations and spatial queries.
+Supports both single-band (default: band 1) and multi-band TIFFs.
 """
 
 import logging
@@ -12,6 +13,7 @@ import numpy as np
 
 from ..library.database.query import (
     check_source_exists,
+    get_band_metadata,
     get_raster_metadata,
     get_raster_paths,
 )
@@ -22,7 +24,13 @@ logger = logging.getLogger(__name__)
 
 
 class GetterTiff(Getter):
-    """Getter class for retrieving data from TIFF files."""
+    """Getter class for retrieving data from TIFF files.
+
+    Supports single-band and multi-band GeoTIFFs. For multi-band files the
+    desired band can be selected with the ``band`` parameter in
+    :meth:`get_data`. Use :meth:`get_band_mapping` to look up which band
+    index corresponds to which description/property stored in the database.
+    """
 
     def __init__(self, source_name: str, *args: Any, **kwds: Any) -> None:
         """Initialize getter with source name."""
@@ -33,6 +41,7 @@ class GetterTiff(Getter):
         coords: np.ndarray,
         crs_coords: str = "EPSG:4326",
         interpolation_order: int = 3,
+        band: int = 1,
         **kwargs: Any,
     ) -> np.ndarray:
         """
@@ -45,6 +54,10 @@ class GetterTiff(Getter):
                             - Shape: (n_points, 2)
             crs_coords (str): CRS of input coordinates. Defaults to "EPSG:4326".
             interpolation_order (int): Interpolation order for raster sampling.
+            band (int): Band number to extract (1-indexed). Defaults to 1 for
+                        backward compatibility with single-band sources. For
+                        multi-band TIFFs use :meth:`get_band_mapping` to find
+                        the correct band index for a given property.
 
         Returns:
             np.ndarray: Extracted raster values at coordinate locations.
@@ -55,11 +68,11 @@ class GetterTiff(Getter):
         """
         coord_type = "lon/lat" if crs_coords == "EPSG:4326" else "x/y"
         logger.debug(
-            f"Handling TIFF request for {self.source_name} at {len(coords)} ({coord_type}) coordinate pairs"
+            f"Handling TIFF request for {self.source_name} at {len(coords)} ({coord_type}) coordinate pairs, band={band}"
         )
 
         try:
-            # Use new Library database query functions
+            # Use Library database query functions
             tiff_paths = get_raster_paths(self.source_name)
             logger.debug(
                 f"Found {len(tiff_paths)} TIFF files for source: {self.source_name}"
@@ -87,12 +100,13 @@ class GetterTiff(Getter):
         for tiff_path in tiff_paths:
             logger.info(f"Using TIFF file: {tiff_path}")
             try:
-                # Pass coordinates with explicit CRS - processor handles coordinate order internally
+                # spatial_interpolate handles band selection via the band parameter
                 values = spatial_interpolate(
                     tiff_path=tiff_path,
                     coords=coords,
                     coords_crs=crs_coords,
                     interpolation_order=interpolation_order,
+                    band=band,
                 )
                 return values
             except Exception as extract_error:
@@ -103,3 +117,52 @@ class GetterTiff(Getter):
         raise RuntimeError(
             f"Failed to retrieve data from TIFF for source: {self.source_name}"
         )
+
+    def get_band_mapping(self, layer_name: str | None = None) -> dict[str, int]:
+        """Return a mapping from band description to band index for this source.
+
+        Queries the ``raster_band_metadata`` table (populated by
+        :class:`~datavia.core.saver_tiff.TiffSaver` when saving multi-band
+        TIFFs). When *layer_name* is ``None`` the bands of all layers for this
+        source are merged; the last writer wins on description collision.
+
+        Args:
+            layer_name (str | None): Restrict lookup to a specific layer.
+                Defaults to ``None`` (all layers for the source).
+
+        Returns:
+            dict[str, int]: Mapping of ``{description: band_index}`` as stored
+            in the database. Returns an empty dict when no band metadata is
+            available (e.g. single-band sources or data not yet downloaded).
+        """
+        try:
+            # get_band_metadata returns {layer_name: [{band_index, description}, ...]}
+            all_band_meta = get_band_metadata(self.source_name)
+
+            if not all_band_meta:
+                logger.debug(
+                    f"No band metadata found for source '{self.source_name}'. "
+                    "Source may be single-band or not yet downloaded."
+                )
+                return {}
+
+            mapping: dict[str, int] = {}
+
+            for lname, bands in all_band_meta.items():
+                # Filter to a specific layer when requested
+                if layer_name is not None and lname != layer_name:
+                    continue
+                for band_info in bands:
+                    desc = band_info.get("description", "")
+                    idx = band_info.get("band_index")
+                    if desc and idx is not None:
+                        mapping[desc] = int(idx)
+
+            logger.debug(f"Band mapping for source '{self.source_name}': {mapping}")
+            return mapping
+
+        except Exception as e:
+            logger.warning(
+                f"Could not retrieve band mapping for '{self.source_name}': {e}"
+            )
+            return {}
