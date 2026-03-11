@@ -10,441 +10,20 @@ Planned extensions:
 - BÜK shapefile integration (vector-based soil classification).
 """
 
-import datetime
 import logging
 import os
 import tempfile
-from typing import Any
 
 import numpy as np
-import rasterio
-from soilgrids import SoilGrids
 
 from datavia.config import get_config
-from datavia.core.getter_tiff import GetterTiff
-from datavia.core.interfaces import Downloader, Pipeline
-from datavia.core.saver_tiff import TiffSaver
+from datavia.core.interfaces import Pipeline
+
+from .multiband_getter import MultibandGetter
+from .multiband_saver import MultibandSaver
+from .soilgrids_downloader import SoilGridsDownloader
 
 logger = logging.getLogger(__name__)
-
-
-class SoilGridsDownloader(Downloader):
-    """Downloader for soil property data from the SoilGrids WCS API.
-
-    Downloads a configurable selection of soil properties and depth layers
-    for Germany, combining them into a single multi-band GeoTIFF to keep
-    storage requirements manageable.
-    """
-
-    def __init__(self, config: dict[str, Any]):
-        """Initialize the SoilGrids downloader.
-
-        Parameters
-        ----------
-        config : dict[str, Any]
-            Configuration dictionary with optional keys:
-
-            - ``properties`` (list[str]): Soil properties to download.
-              Defaults to ``["clay", "sand", "silt", "ph", "carbon"]``.
-            - ``depths`` (list[str]): Depth layers to download.
-              Defaults to ``["0-5cm", "5-15cm"]``.
-        """
-        self.config = config
-
-        self.sg = SoilGrids()
-        logger.info("SoilGrids package initialized successfully")
-
-        # Selective approach configuration from masterplan
-        self.priority_properties = config.get(
-            "properties", ["clay", "sand", "silt", "ph", "carbon"]
-        )
-        self.priority_depths = config.get("depths", ["0-5cm", "5-15cm"])
-        self.priority_statistic = config.get(
-            "statistic", "mean"
-        )  # Default to 'mean' if not specified
-        self.resolution = 250  # meters
-
-        # Germany bounding box (EPSG:4326 for SoilGrids API)
-        self.germany_bbox = {
-            "west": 5.866,
-            "south": 47.270,
-            "east": 15.042,
-            "north": 55.058,
-        }
-
-        logger.info(
-            f"SoilGrids downloader configured: {len(self.priority_properties)} properties x {len(self.priority_depths)} depths x 1 statistic ({self.priority_statistic})"
-        )
-
-    def get_coverage_ids(self) -> list[str]:
-        """Generate WCS coverage IDs for all configured property/depth combinations.
-
-        Returns
-        -------
-        list[str]
-            Coverage identifiers in the format ``{property}_{depth}_{statistic}``,
-            e.g. ``"clay_0-5cm_mean"``.
-        """
-        coverage_ids = []
-        for prop in self.priority_properties:
-            for depth in self.priority_depths:
-                coverage_id = f"{prop}_{depth}_{self.priority_statistic}"
-                coverage_ids.append(coverage_id)
-
-        logger.info(f"Generated {len(coverage_ids)} selective coverage IDs")
-        return coverage_ids
-
-    def download(self, output_path: str) -> str:
-        """Download all configured soil coverages and combine them into one multi-band GeoTIFF.
-
-        Each configured property/depth combination is downloaded individually and
-        then merged into a single output file where each band corresponds to one
-        coverage. Individual downloads are performed in a temporary directory.
-
-        Parameters
-        ----------
-        output_path : str
-            Absolute path for the resulting multi-band GeoTIFF file.
-
-        Returns
-        -------
-        str
-            Path to the written multi-band GeoTIFF, or ``"failed"`` if the
-            download could not be completed.
-        """
-        try:
-            coverage_ids = self.get_coverage_ids()
-            logger.info(
-                f"Starting SoilGrids selective download: {len(coverage_ids)} coverages"
-            )
-
-            # Create temporary directory for individual coverage files
-            temp_dir = os.path.dirname(output_path)
-            os.makedirs(temp_dir, exist_ok=True)
-
-            with tempfile.TemporaryDirectory(dir=temp_dir) as temp_work_dir:
-                temp_files = []
-
-                # Download each coverage using soilgrids package
-                for i, coverage_id in enumerate(coverage_ids):
-                    temp_file = self._download_single_coverage(
-                        coverage_id, temp_work_dir
-                    )
-                    if temp_file != "failed":
-                        temp_files.append((temp_file, coverage_id))
-                        logger.info(
-                            f"Downloaded {i + 1}/{len(coverage_ids)}: {coverage_id}"
-                        )
-                    else:
-                        logger.warning(f"Failed to download coverage: {coverage_id}")
-
-                if not temp_files:
-                    logger.error("No SoilGrids coverages downloaded successfully")
-                    return "failed"
-
-                # Combine individual TIFF files into multi-band TIFF
-                combined_file = self._combine_coverages(temp_files, output_path)
-                logger.info(f"SoilGrids selective download completed: {combined_file}")
-                return combined_file
-
-        except Exception as e:
-            logger.error(f"SoilGrids download failed: {e}")
-            return "failed"
-
-    def _download_single_coverage(self, coverage_id: str, temp_dir: str) -> str:
-        """Download a single WCS coverage and write it to a temporary GeoTIFF.
-
-        Translates user-facing property names to SoilGrids API service IDs
-        (e.g. ``"carbon"`` → ``"soc"``, ``"ph"`` → ``"phh2o"``), then requests
-        the coverage via the SoilGrids WCS service. Uses the Germany bounding
-        box and the resolution configured on this instance.
-
-        Parameters
-        ----------
-        coverage_id : str
-            Coverage identifier in the format ``{property}_{depth}_{statistic}``.
-        temp_dir : str
-            Directory where the single-coverage GeoTIFF will be written.
-
-        Returns
-        -------
-        str
-            Absolute path to the downloaded GeoTIFF, or ``"failed"`` if the
-            download or file validation did not succeed.
-        """
-        try:
-            # Parse coverage_id to get service_id (property)
-            service_id = coverage_id.split("_")[
-                0
-            ]  # e.g., 'clay' from 'clay_0-5cm_mean'
-            temp_filepath = os.path.join(temp_dir, f"{coverage_id}.tif")
-
-            # Map user-friendly property names to SoilGrids API service IDs
-            _service_id_aliases: dict[str, str] = {
-                "carbon": "soc",  # soil organic carbon
-                "ph": "phh2o",  # pH in H2O
-            }
-            if service_id in _service_id_aliases:
-                api_service_id = _service_id_aliases[service_id]
-                coverage_id_api = coverage_id.replace(
-                    service_id + "_", api_service_id + "_", 1
-                )
-                service_id = api_service_id
-            else:
-                coverage_id_api = coverage_id
-
-            # Use soilgrids package for download
-            self._get_coverage_data(
-                service_id=service_id,
-                coverage_id=coverage_id_api,
-                west=self.germany_bbox["west"],
-                south=self.germany_bbox["south"],
-                east=self.germany_bbox["east"],
-                north=self.germany_bbox["north"],
-                height=self.resolution,
-                width=self.resolution,
-                crs="urn:ogc:def:crs:EPSG::4326",
-                output=temp_filepath,
-            )
-
-            # Validate downloaded file
-            if os.path.exists(temp_filepath) and os.path.getsize(temp_filepath) > 0:
-                logger.debug(f"Saved SoilGrids coverage: {temp_filepath}")
-                return temp_filepath
-            else:
-                logger.error(
-                    f"SoilGrids download resulted in empty/missing file: {temp_filepath}"
-                )
-                return "failed"
-
-        except Exception as e:
-            logger.error(f"Failed to download coverage {coverage_id}: {e}")
-            return "failed"
-
-    def _combine_coverages(self, temp_files: list[tuple], output_path: str) -> str:
-        """Merge individual single-band GeoTIFFs into one multi-band GeoTIFF.
-
-        Uses the first file as the spatial profile template. Each input file
-        contributes one band to the output. The original CRS from the
-        downloaded data is preserved. Band descriptions are set via
-        :meth:`_enhance_band_description`.
-
-        Parameters
-        ----------
-        temp_files : list[tuple[str, str]]
-            List of ``(filepath, coverage_id)`` pairs to merge.
-        output_path : str
-            Absolute path for the resulting multi-band GeoTIFF.
-
-        Returns
-        -------
-        str
-            Path to the written multi-band GeoTIFF, or ``"failed"`` if merging
-            failed or no valid input files were found.
-        """
-        try:
-            # Read all input files
-            src_files = []
-            coverage_ids = []
-            for temp_file, coverage_id in temp_files:
-                try:
-                    src = rasterio.open(temp_file)
-                    src_files.append(src)
-                    coverage_ids.append(coverage_id)
-                    logger.debug(f"Opened coverage file: {coverage_id}")
-                except Exception as e:
-                    logger.warning(f"Failed to open {temp_file}: {e}")
-
-            if not src_files:
-                logger.error("No valid TIFF files to combine")
-                return "failed"
-
-            # Create multi-band output using first file as template.
-            # Keep the original CRS from the downloaded data (EPSG:4326) so that
-            # coordinate lookups in GetterTiff work correctly. Reprojection to
-            # EPSG:25832 can be added later as a dedicated transform step.
-            profile = src_files[0].profile.copy()
-            profile.update(count=len(src_files))  # Multi-band
-
-            with rasterio.open(output_path, "w", **profile) as dst:
-                for i, (src, coverage_id) in enumerate(
-                    zip(src_files, coverage_ids, strict=False), 1
-                ):
-                    try:
-                        data = src.read(1)  # Read single band
-                        dst.write(data, i)  # Write to band i
-
-                        # Store enhanced band metadata
-                        enhanced_desc = self._enhance_band_description(coverage_id)
-                        dst.set_band_description(i, enhanced_desc)
-                        logger.debug(f"Added band {i}: {enhanced_desc}")
-                    except Exception as e:
-                        logger.warning(f"Failed to process band {coverage_id}: {e}")
-
-            # Close source files
-            for src in src_files:
-                src.close()
-
-            logger.info(
-                f"Combined {len(src_files)} coverages into multi-band TIFF: {output_path}"
-            )
-            return output_path
-
-        except ImportError:
-            logger.error("rasterio not available - cannot combine coverages")
-            return "failed"
-        except Exception as e:
-            logger.error(f"Failed to combine coverages: {e}")
-            return "failed"
-
-    def _enhance_band_description(self, coverage_id: str) -> str:
-        """Convert a raw coverage ID into a human-readable band description.
-
-        Maps known property identifiers to descriptive labels including the
-        physical unit, depth layer, and statistical summary, e.g.
-        ``"clay_0-5cm_mean"`` → ``"Clay content (%) at 0-5cm depth (mean value)"``.
-        Returns the original coverage ID unchanged if parsing fails.
-
-        Parameters
-        ----------
-        coverage_id : str
-            Coverage identifier in the format ``{property}_{depth}_{statistic}``.
-
-        Returns
-        -------
-        str
-            Human-readable description, or the original ``coverage_id`` if the
-            format is unrecognised or an error occurs during parsing.
-        """
-        try:
-            if "_" not in coverage_id:
-                return coverage_id
-
-            parts = coverage_id.split("_")
-            if len(parts) >= 3:
-                property_name = parts[0]
-                depth = parts[1]
-                statistic = parts[2]
-
-                property_info = {
-                    "clay": "Clay content (%)",
-                    "sand": "Sand content (%)",
-                    "silt": "Silt content (%)",
-                    "ph": "pH in water",
-                    "phh2o": "pH in water",
-                    "carbon": "Organic carbon content (‰)",
-                    "soc": "Soil organic carbon (g/kg)",
-                }
-
-                prop_desc = property_info.get(property_name, property_name)
-                return f"{prop_desc} at {depth} depth ({statistic} value)"
-
-            return coverage_id
-
-        except Exception as e:
-            logger.debug(f"Failed to enhance coverage description '{coverage_id}': {e}")
-            return coverage_id
-
-    def _get_coverage_data(
-        self,
-        service_id,
-        coverage_id,
-        crs,
-        west,
-        south,
-        east,
-        north,
-        output,
-        width=None,
-        height=None,
-        **kwargs,
-    ):
-        """Request a single coverage from the SoilGrids WCS service and write it to disk.
-
-        Validates the CRS against the coverage's supported CRS list and derives
-        the correct resolution parameters from it. For EPSG:4326 the pixel
-        dimensions must be supplied via ``width``/``height``; for projected
-        CRSs a fixed 250 m resolution is used instead.
-
-        Parameters
-        ----------
-        service_id : str
-            SoilGrids service identifier, e.g. ``"clay"`` or ``"soc"``.
-        coverage_id : str
-            Full coverage identifier, e.g. ``"clay_0-5cm_mean"``.
-        crs : str
-            CRS in URN notation, e.g. ``"urn:ogc:def:crs:EPSG::4326"``.
-        west, south, east, north : float
-            Bounding box in the coordinate system defined by ``crs``.
-        output : str
-            Absolute path for the output GeoTIFF file (must end with ``.tif``).
-        width : int, optional
-            Pixel width of the requested coverage (required for EPSG:4326).
-        height : int, optional
-            Pixel height of the requested coverage (required for EPSG:4326).
-        **kwargs
-            Additional keyword arguments are accepted but ignored.
-
-        Raises
-        ------
-        ValueError
-            If ``crs`` is not supported by the coverage, the bounding box is
-            invalid, ``width``/``height`` are missing for EPSG:4326, or the
-            output path does not end with ``.tif``.
-        Exception
-            If the WCS server returns an error response.
-        """
-        try:
-            wcs, coverage_list = self.sg._get_service_and_coverage_list(service_id)
-            coverage_obj = self.sg._get_coverage_obj(wcs, coverage_list, coverage_id)
-
-            # Validate CRS
-            crs_list = [CRS.getcodeurn() for CRS in coverage_obj.supportedCRS]
-            if crs not in crs_list:
-                raise ValueError(f"CRS {crs} not supported. Available: {crs_list}")
-
-            # Set resolution parameters
-            if "4326" in crs:
-                if not (width and height):
-                    raise ValueError("Width and height required for EPSG:4326")
-                resx = resy = None
-            else:
-                width = height = None
-                resx = resy = 250
-
-            # Validate bounding box
-            if west > east or south > north:
-                raise ValueError("Invalid bounding box coordinates")
-            bbox = (west, south, east, north)
-
-            # Validate output file extension
-            if not output.endswith(".tif"):
-                raise ValueError("Output file must have .tif extension")
-
-            # Make WCS request
-            response = wcs.getCoverage(
-                identifier=coverage_id,
-                crs=crs,
-                bbox=bbox,
-                resx=resx,
-                resy=resy,
-                width=width,
-                height=height,
-                response_crs=crs,
-                format="GEOTIFF_INT16",
-            )
-
-            # Save response
-            if response.info()["Content-Type"] == "image/tiff":
-                with open(output, "wb") as file:
-                    file.write(response.read())
-            else:
-                error_info = response.read().decode("utf-8")
-                raise Exception(f"WCS server error: {error_info}")
-
-        except Exception as e:
-            logger.error(f"SoilGrids WCS request failed: {e}")
-            raise
 
 
 class SoilPipeline(Pipeline):
@@ -452,10 +31,9 @@ class SoilPipeline(Pipeline):
 
     Orchestrates downloading, storing, and querying multi-band GeoTIFF files
     containing soil properties for Germany. Uses :class:`SoilGridsDownloader`
-    for data acquisition, :class:`~datavia.core.saver_tiff.TiffSaver` for
-    storing data and registering metadata in PostGIS, and
-    :class:`~datavia.core.getter_tiff.GetterTiff` for coordinate-based value
-    retrieval.
+    for incremental data acquisition, :class:`MultibandSaver` for alignment-aware
+    storage and PostGIS metadata management, and :class:`MultibandGetter` for
+    coverage-ID-based coordinate value retrieval.
     """
 
     def __init__(
@@ -494,8 +72,8 @@ class SoilPipeline(Pipeline):
         super().__init__(
             name,
             downloader=SoilGridsDownloader,
-            saver=TiffSaver,
-            getter=GetterTiff,
+            saver=MultibandSaver,
+            getter=MultibandGetter,
             url=None,
         )
         self.data_source = "SoilGrids"
@@ -539,91 +117,99 @@ class SoilPipeline(Pipeline):
         return super().__call__(config, *args, **kwds)
 
     def get_data(
-        self, coords: np.ndarray, properties: list[str] | None = None, **kwargs
+        self,
+        coords: np.ndarray,
+        properties: list[str] | None = None,
+        crs_coords: str = "EPSG:4326",
+        interpolation_order: int = 3,
     ) -> dict[str, np.ndarray]:
         """Return soil property values at the given coordinates.
 
-        Retrieves the band-to-description mapping from the database via
-        :meth:`~datavia.core.getter_tiff.GetterTiff.get_band_mapping`, resolves
-        each requested property to its corresponding band index, and delegates
-        raster value extraction to
-        :meth:`~datavia.core.getter_tiff.GetterTiff.get_data`. Properties that
-        are not available in the stored data are returned as arrays of ``NaN``.
+        Each coverage ID stored in the database that matches a requested
+        property becomes an entry in the returned dict. This means multiple
+        depth layers for the same property (e.g. ``"clay_0-5cm_mean"`` and
+        ``"clay_5-15cm_mean"``) are returned as separate entries so that no
+        depth information is silently discarded.
 
         Parameters
         ----------
         coords : np.ndarray
             Array of coordinates with shape ``(n_points, 2)``.
-            Expected order is ``(longitude, latitude)`` for EPSG:4326.
+            Expected column order: ``(longitude, latitude)`` for EPSG:4326.
         properties : list[str], optional
-            Subset of soil properties to retrieve. Defaults to all properties
-            configured on this instance (``self.properties``).
-        **kwargs
-            Additional keyword arguments forwarded to
-            :meth:`~datavia.core.getter_tiff.GetterTiff.get_data`.
+            Canonical property names to retrieve, e.g. ``["clay", "ph"]``.
+            Defaults to all properties configured on this instance
+            (``self.properties``). Pass ``None`` to return all stored coverages.
+        crs_coords : str, optional
+            CRS of the input coordinates. Defaults to ``"EPSG:4326"``.
+        interpolation_order : int, optional
+            Interpolation order (1 = bilinear, 3 = cubic). Defaults to 3.
 
         Returns
         -------
         dict[str, np.ndarray]
-            Mapping from property name to a 1-D array of extracted values,
-            one value per coordinate. Unavailable properties map to arrays
-            filled with ``NaN``.
+            Mapping from **coverage ID** (e.g. ``"clay_0-5cm_mean"``) to a
+            1-D array of interpolated values, one entry per coordinate.
+            Coverage IDs that could not be extracted map to arrays filled
+            with ``NaN``.
 
         Raises
         ------
         RuntimeError
-            If the pipeline has not been initialised (getter is ``None``).
+            If the pipeline has not been initialised (call the pipeline first).
         """
-        try:
-            if not self.getter:
-                raise RuntimeError("Pipeline not initialized. Call the pipeline first.")
+        if not self.getter:
+            raise RuntimeError("Pipeline not initialized. Call the pipeline first.")
 
-            # Retrieve description→band_index mapping from the getter (DB-backed)
-            raw_band_mapping = self.getter.get_band_mapping()
+        # Build coverage_id → (uri, band_index) from the DB
+        coverage_map = self.getter.get_coverage_map()
 
-            if not raw_band_mapping:
-                logger.warning(
-                    "No band metadata available for source '%s'. "
-                    "Run update_data() first.",
-                    self.name,
-                )
-                return {
-                    prop: np.full(len(coords), np.nan)
-                    for prop in (properties or self.properties)
-                }
-
-            # Translate description keys → property names
-            prop_to_band: dict[str, int] = {}
-            for description, band_idx in raw_band_mapping.items():
-                prop_name = self._parse_property_from_description(description)
-                if prop_name and prop_name not in prop_to_band:
-                    prop_to_band[prop_name] = band_idx
-
-            requested_props = properties or self.properties
-            results: dict[str, np.ndarray] = {}
-
-            for prop in requested_props:
-                if prop in prop_to_band:
-                    band_num = prop_to_band[prop]
-                    # Delegate value extraction to the getter
-                    values = self.getter.get_data(coords, band=band_num, **kwargs)
-                    results[prop] = values
-                    logger.debug(f"Extracted {prop} values from band {band_num}")
-                else:
-                    logger.warning(f"Property '{prop}' not available in soil data")
-                    results[prop] = np.full(len(coords), np.nan)
-
-            logger.info(
-                f"Extracted soil data for {len(coords)} coordinates: {list(results.keys())}"
+        if not coverage_map:
+            logger.warning(
+                "No band metadata available for source '%s'. Run update_data() first.",
+                self.name,
             )
-            return results
+            return {}
 
-        except Exception as e:
-            logger.error(f"Error getting soil data: {e}")
-            return {
-                prop: np.full(len(coords), np.nan)
-                for prop in (properties or self.properties)
-            }
+        # Filter to requested properties: keep coverage IDs whose leading
+        # property token (e.g. "clay" from "clay_0-5cm_mean") matches.
+        requested_props = set(properties or self.properties)
+        matching_ids = [
+            cov_id
+            for cov_id in coverage_map
+            if self._parse_property_from_description(cov_id) in requested_props
+        ]
+
+        if not matching_ids:
+            logger.warning(
+                "None of the requested properties %s found in stored coverages %s",
+                sorted(requested_props),
+                sorted(coverage_map.keys()),
+            )
+            return {}
+
+        results: dict[str, np.ndarray] = {}
+        for coverage_id in matching_ids:
+            try:
+                values = self.getter.get_data_for_coverage(
+                    coverage_id=coverage_id,
+                    coords=coords,
+                    crs_coords=crs_coords,
+                    interpolation_order=interpolation_order,
+                )
+                results[coverage_id] = values
+                logger.debug("Extracted values for coverage '%s'", coverage_id)
+            except Exception as exc:
+                logger.warning("Failed to extract coverage '%s': %s", coverage_id, exc)
+                results[coverage_id] = np.full(len(coords), np.nan)
+
+        logger.info(
+            "Extracted %d coverage(s) for %d coordinate(s): %s",
+            len(results),
+            len(coords),
+            sorted(results.keys()),
+        )
+        return results
 
     def _parse_property_from_description(self, description: str) -> str | None:
         """Parse property name from an enhanced band description.
@@ -673,84 +259,105 @@ class SoilPipeline(Pipeline):
             return None
 
     def update_data(self) -> bool:
-        """Download the latest soil data from SoilGrids and register it in the database.
+        """Download missing soil coverages and register them in the database.
 
-        Generates a dated output path, runs the downloader to produce a
-        multi-band GeoTIFF, and passes the result to the saver which writes
-        file metadata to PostGIS.
+        Computes the delta between the configured coverage IDs and those
+        already stored in the database, downloads only the missing files, then
+        hands them to :class:`MultibandSaver` for alignment-checked storage.
+
+        If a file was manually deleted from the data directory, the stale
+        database rows are removed by a sync step before the delta is computed,
+        so the affected coverages are treated as missing and re-downloaded
+        automatically.
 
         Returns
         -------
         bool
-            ``True`` if both the download and the metadata save succeeded,
-            ``False`` otherwise.
+            ``True`` if all missing coverages were downloaded and stored
+            successfully, or if there was nothing to download.  ``False`` if
+            the download or storage step failed.
         """
+        if not self.downloader or not self.saver or not self.getter:
+            # Lazy-initialise pipeline components if not yet done
+            self()
+
+        # --- Reconcile filesystem with DB -------------------------------------
+        # Removes DB entries whose files have been manually deleted so that the
+        # delta computation below treats those coverages as missing.
+        self.saver.sync_files_and_database()
+
+        # --- Delta computation -------------------------------------------------
+        needed_ids = set(self.downloader.get_coverage_ids())
+        stored_ids = self.getter.get_stored_coverage_ids()
+        delta = needed_ids - stored_ids
+
+        if not delta:
+            logger.info(
+                "All %d coverage(s) already present in the database — nothing to download",
+                len(needed_ids),
+            )
+            return True
+
+        logger.info(
+            "Downloading %d missing coverage(s): %s",
+            len(delta),
+            sorted(delta),
+        )
+
+        # --- Download ----------------------------------------------------------
+        data_dir = get_config().data_directory
+        temp_dir = os.path.join(str(data_dir), "temp")
+        os.makedirs(temp_dir, exist_ok=True)
+
         try:
-            # Generate output path using pipeline name.
-            # Filename follows the TiffSaver convention: {anything}_{anything}_{tag}.tif
-            # where tag becomes part of the layer name: "{source_name}_{tag}".
-            date_str = datetime.date.today().strftime("%Y%m%d")
-            data_dir = get_config().data_directory
-            temp_path = os.path.join(data_dir, "temp", f"soil_{date_str}_soilgrids.tif")
+            with tempfile.TemporaryDirectory(dir=temp_dir) as work_dir:
+                new_files = self.downloader.download_coverages(sorted(delta), work_dir)
 
-            # Download data using SoilGrids downloader
-            logger.info("Starting soil data update from SoilGrids API")
-            filepath = self.downloader.download(temp_path)
+                if not new_files:
+                    logger.error("No coverages downloaded successfully")
+                    return False
 
-            if filepath == "failed":
-                logger.error("Failed to download soil data")
-                return False
+                # --- Save (alignment check + stack + DB registration) ----------
+                success = self.saver.save_coverages(new_files)
 
-            # Save metadata using pipeline name for database isolation
-            """ success = self.saver.save_tiff_metadata(
-                filepath,
-                self.data_source,
-                self.name,
-                additional_metadata={
-                    "properties": self.properties,
-                    "data_source": "SoilGrids",
-                    "api_url": "https://rest.soilgrids.org/soilgrids/v2.0/",
-                },
-            ) """
-            success = self.saver.save(filepath)
-
-            if success:
-                logger.info("Successfully updated soil data from SoilGrids")
-            else:
-                logger.error("Failed to save soil metadata")
-
-            return success
-
-        except Exception as e:
-            logger.error(f"Error updating soil data: {e}")
+        except Exception as exc:
+            logger.error("Error during update_data: %s", exc)
             return False
 
-    def get_available_properties(self) -> list[str]:
-        """Return soil properties that are actually present in the database.
+        if success:
+            logger.info(
+                "Successfully stored %d new coverage(s) for source '%s'",
+                len(new_files),
+                self.name,
+            )
+        else:
+            logger.error("Failed to store downloaded coverages")
+        return success
 
-        Queries the band metadata stored by
-        :class:`~datavia.core.saver_tiff.TiffSaver` via
-        :meth:`~datavia.core.getter_tiff.GetterTiff.get_band_mapping` and
-        translates the human-readable band descriptions back to canonical
-        property names using :meth:`_parse_property_from_description`.
+    def get_available_properties(self) -> list[str]:
+        """Return canonical property names that are actually present in the database.
+
+        Reads the stored coverage IDs via
+        :meth:`~datavia.soil.multiband_getter.MultibandGetter.get_stored_coverage_ids`
+        and translates each one to its canonical property name using
+        :meth:`_parse_property_from_description`.
 
         Falls back to the configured ``self.properties`` list when the getter
-        is not yet initialised or no band metadata exists in the database
-        (e.g. before the first :meth:`update_data` call).
+        is not yet initialised or no data has been stored yet.
 
         Returns
         -------
         list[str]
-            Property names found in the database, e.g.
-            ``["clay", "sand", "silt", "ph", "carbon"]``, or the configured
-            list if the database has no data yet.
+            Deduplicated canonical property names found in the database, e.g.
+            ``["clay", "sand", "silt", "ph", "carbon"]``, ordered by first
+            occurrence. Returns the configured list if the database is empty.
         """
         if self.getter:
-            raw_band_mapping = self.getter.get_band_mapping()
-            if raw_band_mapping:
+            stored_ids = self.getter.get_stored_coverage_ids()
+            if stored_ids:
                 available: list[str] = []
-                for description in raw_band_mapping:
-                    prop = self._parse_property_from_description(description)
+                for coverage_id in sorted(stored_ids):
+                    prop = self._parse_property_from_description(coverage_id)
                     if prop and prop not in available:
                         available.append(prop)
                 if available:
