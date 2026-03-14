@@ -2,9 +2,10 @@
 Soil Pipeline - Complete soil data integration.
 
 Provides end-to-end access to SoilGrids soil property data for Germany:
-- Downloads selected soil properties via the SoilGrids WCS API.
-- Stores results as a multi-band GeoTIFF and registers metadata in PostGIS.
-- Exposes coordinate-based value retrieval via a GetterTiff-backed interface.
+- Downloads each soil property/depth combination as an individual single-band GeoTIFF.
+- Registers each file as its own layer in PostGIS.
+- Supports incremental downloads: only missing coverages are fetched.
+- Exposes coordinate-based value retrieval via coverage-ID-specific file routing.
 
 Planned extensions:
 - BÜK shapefile integration (vector-based soil classification).
@@ -17,23 +18,114 @@ import tempfile
 import numpy as np
 
 from datavia.config import get_config
+from datavia.core.getter_tiff import GetterTiff
 from datavia.core.interfaces import Pipeline
+from datavia.core.saver_tiff import TiffSaver
+from datavia.library.database.query import get_layer_by_name, get_raster_metadata
+from datavia.library.interpolation import spatial_interpolate
 
-from .multiband_getter import MultibandGetter
-from .multiband_saver import MultibandSaver
 from .soilgrids_downloader import SoilGridsDownloader
 
 logger = logging.getLogger(__name__)
 
 
+class SoilGetterTiff(GetterTiff):
+    """GetterTiff extended with per-coverage-ID file routing for soil data.
+
+    Each soil coverage is stored as its own single-band GeoTIFF layer
+    (e.g. ``soil_clay_0-5cm_mean``). :meth:`get_data_for_coverage` routes
+    directly to the correct file instead of iterating over all source paths,
+    and :meth:`get_stored_coverage_ids` lists which coverages are registered
+    in the database.
+    """
+
+    def get_stored_coverage_ids(self) -> set[str]:
+        """Return coverage IDs registered in the database for this source.
+
+        Queries ``raster_layers`` and strips the ``{source_name}_`` prefix from
+        each layer name.
+
+        Returns
+        -------
+        set[str]
+            Coverage IDs present in the database, e.g.
+            ``{"clay_0-5cm_mean", "sand_5-15cm_mean"}``. Returns an empty set
+            before any data has been stored.
+        """
+        metadata_list = get_raster_metadata(self.source_name)
+        prefix = f"{self.source_name}_"
+        return {
+            m["layer_name"][len(prefix) :]
+            for m in metadata_list
+            if m["layer_name"].startswith(prefix)
+        }
+
+    def get_data_for_coverage(
+        self,
+        coverage_id: str,
+        coords: np.ndarray,
+        crs_coords: str = "EPSG:4326",
+        interpolation_order: int = 3,
+    ) -> np.ndarray:
+        """Return raster values at *coords* from the file for *coverage_id*.
+
+        Resolves the layer URI for ``{source_name}_{coverage_id}`` in
+        ``raster_layers`` and delegates to
+        :func:`~datavia.library.interpolation.spatial_interpolate`.
+
+        Parameters
+        ----------
+        coverage_id : str
+            Coverage identifier, e.g. ``"clay_0-5cm_mean"``.
+        coords : np.ndarray
+            Coordinate array of shape ``(n_points, 2)`` as
+            ``(longitude, latitude)`` for EPSG:4326.
+        crs_coords : str, optional
+            CRS of the input coordinates. Defaults to ``"EPSG:4326"``.
+        interpolation_order : int, optional
+            Interpolation order (1 = bilinear, 3 = cubic). Defaults to 3.
+
+        Returns
+        -------
+        np.ndarray
+            Interpolated values at each coordinate, shape ``(n_points,)``.
+
+        Raises
+        ------
+        ValueError
+            If *coverage_id* is not found in the database.
+        RuntimeError
+            If raster value extraction fails.
+        """
+        layer_name = f"{self.source_name}_{coverage_id}"
+        layer = get_layer_by_name(layer_name, self.source_name)
+        if layer is None:
+            raise ValueError(
+                f"Coverage '{coverage_id}' not found in database "
+                f"(looked for layer '{layer_name}')."
+            )
+        uri = layer["uri"]
+        try:
+            return spatial_interpolate(
+                tiff_path=uri,
+                coords=coords,
+                coords_crs=crs_coords,
+                interpolation_order=interpolation_order,
+                band=1,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to extract coverage '{coverage_id}' from '{uri}': {exc}"
+            ) from exc
+
+
 class SoilPipeline(Pipeline):
     """End-to-end pipeline for SoilGrids soil property data.
 
-    Orchestrates downloading, storing, and querying multi-band GeoTIFF files
-    containing soil properties for Germany. Uses :class:`SoilGridsDownloader`
-    for incremental data acquisition, :class:`MultibandSaver` for alignment-aware
-    storage and PostGIS metadata management, and :class:`MultibandGetter` for
-    coverage-ID-based coordinate value retrieval.
+    One single-band GeoTIFF is stored per coverage ID
+    (e.g. ``soil_clay_0-5cm_mean.tif``). Downloads are incremental: only
+    coverage IDs not yet present in the data directory are fetched. Manual
+    file deletions are reconciled automatically before each update.
     """
 
     def __init__(
@@ -72,8 +164,8 @@ class SoilPipeline(Pipeline):
         super().__init__(
             name,
             downloader=SoilGridsDownloader,
-            saver=MultibandSaver,
-            getter=MultibandGetter,
+            saver=TiffSaver,
+            getter=SoilGetterTiff,
             url=None,
         )
         self.data_source = "SoilGrids"
@@ -122,14 +214,15 @@ class SoilPipeline(Pipeline):
         properties: list[str] | None = None,
         crs_coords: str = "EPSG:4326",
         interpolation_order: int = 3,
-    ) -> dict[str, np.ndarray]:
+    ) -> np.ndarray | dict[str, np.ndarray]:
         """Return soil property values at the given coordinates.
 
-        Each coverage ID stored in the database that matches a requested
-        property becomes an entry in the returned dict. This means multiple
-        depth layers for the same property (e.g. ``"clay_0-5cm_mean"`` and
-        ``"clay_5-15cm_mean"``) are returned as separate entries so that no
-        depth information is silently discarded.
+        For single property requests, returns the interpolated values directly
+        as a 1-D array. For multiple properties, returns a dict mapping each
+        coverage ID to its interpolated values. Multiple depth layers for the
+        same property (e.g. ``"clay_0-5cm_mean"`` and ``"clay_5-15cm_mean"``)
+        are returned as separate entries so that no depth information is
+        silently discarded.
 
         Parameters
         ----------
@@ -147,11 +240,13 @@ class SoilPipeline(Pipeline):
 
         Returns
         -------
-        dict[str, np.ndarray]
-            Mapping from **coverage ID** (e.g. ``"clay_0-5cm_mean"``) to a
-            1-D array of interpolated values, one entry per coordinate.
-            Coverage IDs that could not be extracted map to arrays filled
-            with ``NaN``.
+        np.ndarray | dict[str, np.ndarray]
+            If exactly one coverage ID matches the request, returns a 1-D array
+            of interpolated values with shape ``(n_points,)``. If multiple
+            coverage IDs match, returns a mapping from **coverage ID** (e.g.
+            ``"clay_0-5cm_mean"``) to a 1-D array of interpolated values, one
+            entry per coordinate. Returns an empty dict if no matching
+            coverages are found or if extraction fails.
 
         Raises
         ------
@@ -161,43 +256,97 @@ class SoilPipeline(Pipeline):
         if not self.getter:
             raise RuntimeError("Pipeline not initialized. Call the pipeline first.")
 
-        # Build coverage_id → (uri, band_index) from the DB
-        coverage_map = self.getter.get_coverage_map()
-
-        if not coverage_map:
+        stored_ids = self.getter.get_stored_coverage_ids()
+        if not stored_ids:
             logger.warning(
-                "No band metadata available for source '%s'. Run update_data() first.",
-                self.name,
+                "No data stored for source '%s'. Run update_data() first.", self.name
             )
             return {}
 
-        # Filter to requested properties: keep coverage IDs whose leading
-        # property token (e.g. "clay" from "clay_0-5cm_mean") matches.
         requested_props = set(properties or self.properties)
+
+        # Warn about any property names that are not recognised at all so the
+        # caller realises the typo/alias problem before digging into empty results.
+        _known = {
+            "bdod",
+            "cec",
+            "cfvo",
+            "clay",
+            "nitrogen",
+            "ocd",
+            "ocs",
+            "phh2o",
+            "sand",
+            "silt",
+            "soc",
+            "wv0010",
+            "wv0033",
+            "wv1500",
+            "ph",
+            "carbon",
+        }
+        unknown_props = sorted(requested_props - _known)
+        if unknown_props:
+            logger.warning(
+                "Unknown propert%s requested: %s. "
+                "Call get_available_properties() to see what is stored locally.",
+                "y" if len(unknown_props) == 1 else "ies",
+                unknown_props,
+            )
+
         matching_ids = [
             cov_id
-            for cov_id in coverage_map
+            for cov_id in sorted(stored_ids)
             if self._parse_property_from_description(cov_id) in requested_props
         ]
 
-        if not matching_ids:
+        # Warn about recognised properties that simply have no stored coverage yet.
+        matched_props = {
+            self._parse_property_from_description(cov_id) for cov_id in matching_ids
+        } - {None}
+        missing_props = sorted((requested_props & _known) - matched_props)
+        if missing_props:
             logger.warning(
-                "None of the requested properties %s found in stored coverages %s",
-                sorted(requested_props),
-                sorted(coverage_map.keys()),
+                "Propert%s %s not found in local database. "
+                "Run update_data() to download them, "
+                "or call get_available_properties() to see what is available.",
+                "y" if len(missing_props) == 1 else "ies",
+                missing_props,
             )
+
+        if not matching_ids:
             return {}
+
+        if len(matching_ids) == 1:
+            logger.info(
+                "Extracting values for coverage '%s' at %d coordinate(s)",
+                matching_ids[0],
+                len(coords),
+            )
+            try:
+                return self.getter.get_data_for_coverage(
+                    coverage_id=matching_ids[0],
+                    coords=coords,
+                    crs_coords=crs_coords,
+                    interpolation_order=interpolation_order,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to extract coverage '%s': %s",
+                    matching_ids[0],
+                    exc,
+                )
+                return {}
 
         results: dict[str, np.ndarray] = {}
         for coverage_id in matching_ids:
             try:
-                values = self.getter.get_data_for_coverage(
+                results[coverage_id] = self.getter.get_data_for_coverage(
                     coverage_id=coverage_id,
                     coords=coords,
                     crs_coords=crs_coords,
                     interpolation_order=interpolation_order,
                 )
-                results[coverage_id] = values
                 logger.debug("Extracted values for coverage '%s'", coverage_id)
             except Exception as exc:
                 logger.warning("Failed to extract coverage '%s': %s", coverage_id, exc)
@@ -212,78 +361,83 @@ class SoilPipeline(Pipeline):
         return results
 
     def _parse_property_from_description(self, description: str) -> str | None:
-        """Parse property name from an enhanced band description.
+        """Return the canonical property name from a coverage ID.
 
-        Maps the human-readable descriptions written by TiffSaver/SoilGridsDownloader
-        back to the canonical property keys used by this pipeline (e.g. ``"clay"``,
-        ``"ph"``, ``"carbon"``).
+        Coverage IDs are raw strings like ``"clay_0-5cm_mean"`` or the API
+        service variant ``"phh2o_0-5cm_mean"``. The first underscore-separated
+        token is the property identifier; API aliases (``phh2o``, ``soc``) are
+        mapped back to the user-facing names (``ph``, ``carbon``).
 
-        Note: API service IDs (``phh2o``, ``soc``) are intentionally mapped back to
-        the user-facing names (``ph``, ``carbon``) so they match ``self.properties``.
+        Parameters
+        ----------
+        description : str
+            Raw coverage ID as stored in ``raster_layers.layer_name``.
+
+        Returns
+        -------
+        str | None
+            Canonical property name, or ``None`` if the token is not
+            recognised.
         """
         try:
-            # Map enhanced descriptions to this pipeline's canonical property names.
-            # Keys are substrings of the descriptions produced by
-            # SoilGridsDownloader._enhance_band_description().
-            property_mappings = {
-                "Clay content": "clay",
-                "Sand content": "sand",
-                "Silt content": "silt",
-                # pH: API uses 'phh2o', pipeline exposes as 'ph'
-                "pH in water": "ph",
-                # Carbon: API uses 'soc', pipeline exposes as 'carbon'
-                "Soil organic carbon": "carbon",
-                "Organic carbon content": "carbon",
-            }
-
-            for desc_pattern, prop_name in property_mappings.items():
-                if desc_pattern.lower() in description.lower():
-                    return prop_name
-
-            # Fallback: parse from coverage_id pattern (e.g. "clay_0-5cm_mean")
-            if "_" in description:
-                parts = description.split("_")
-                if parts:
-                    prop_candidate = parts[0].lower()
-                    # Reverse-alias API names to pipeline names
-                    _api_to_pipeline = {"phh2o": "ph", "soc": "carbon"}
-                    prop_candidate = _api_to_pipeline.get(
-                        prop_candidate, prop_candidate
-                    )
-                    if prop_candidate in ["clay", "sand", "silt", "ph", "carbon"]:
-                        return prop_candidate
-
-            return None
-
+            if "_" not in description:
+                return None
+            prop_candidate = description.split("_")[0].lower()
+            _api_to_pipeline = {"phh2o": "ph", "soc": "carbon"}
+            prop_candidate = _api_to_pipeline.get(prop_candidate, prop_candidate)
+            canonical = ["clay", "sand", "silt", "ph", "carbon"]
+            return prop_candidate if prop_candidate in canonical else None
         except Exception:
             return None
 
     def update_data(self) -> bool:
-        """Download missing soil coverages and register them in the database.
+        """Download missing soil coverages and register each as its own layer.
 
         Computes the delta between the configured coverage IDs and those
-        already stored in the database, downloads only the missing files, then
-        hands them to :class:`MultibandSaver` for alignment-checked storage.
-
-        If a file was manually deleted from the data directory, the stale
-        database rows are removed by a sync step before the delta is computed,
-        so the affected coverages are treated as missing and re-downloaded
-        automatically.
+        already present on disk and in the database. Only missing coverages
+        are downloaded. Manually deleted files are detected by
+        :meth:`~datavia.core.saver_tiff.TiffSaver.sync_files_and_database`
+        before the delta is computed so they are re-downloaded automatically.
 
         Returns
         -------
         bool
-            ``True`` if all missing coverages were downloaded and stored
-            successfully, or if there was nothing to download.  ``False`` if
-            the download or storage step failed.
+            ``True`` if all missing coverages were downloaded and stored, or
+            if nothing was missing. ``False`` if any download or save step
+            failed.
         """
         if not self.downloader or not self.saver or not self.getter:
-            # Lazy-initialise pipeline components if not yet done
             self()
 
-        # --- Reconcile filesystem with DB -------------------------------------
-        # Removes DB entries whose files have been manually deleted so that the
-        # delta computation below treats those coverages as missing.
+        # --- Validate configured properties against known API names -----------
+        _known_api = {
+            "bdod",
+            "cec",
+            "cfvo",
+            "clay",
+            "nitrogen",
+            "ocd",
+            "ocs",
+            "phh2o",
+            "sand",
+            "silt",
+            "soc",
+            "wv0010",
+            "wv0033",
+            "wv1500",
+            "ph",
+            "carbon",
+        }
+        unrecognised = sorted(set(self.properties) - _known_api)
+        if unrecognised:
+            logger.warning(
+                "Unrecognised propert%s in pipeline configuration: %s. "
+                "Call get_remote_available_properties() to see what the "
+                "SoilGrids API currently offers.",
+                "y" if len(unrecognised) == 1 else "ies",
+                unrecognised,
+            )
+
         self.saver.sync_files_and_database()
 
         # --- Delta computation -------------------------------------------------
@@ -293,16 +447,12 @@ class SoilPipeline(Pipeline):
 
         if not delta:
             logger.info(
-                "All %d coverage(s) already present in the database — nothing to download",
+                "All %d coverage(s) already present — nothing to download",
                 len(needed_ids),
             )
             return True
 
-        logger.info(
-            "Downloading %d missing coverage(s): %s",
-            len(delta),
-            sorted(delta),
-        )
+        logger.info("Downloading %d missing coverage(s): %s", len(delta), sorted(delta))
 
         # --- Download ----------------------------------------------------------
         data_dir = get_config().data_directory
@@ -317,40 +467,34 @@ class SoilPipeline(Pipeline):
                     logger.error("No coverages downloaded successfully")
                     return False
 
-                # --- Save (alignment check + stack + DB registration) ----------
-                success = self.saver.save_coverages(new_files)
-
+                # --- Save each coverage as its own layer -----------------------
+                saved = sum(1 for path, _ in new_files if self.saver.save(path))
         except Exception as exc:
             logger.error("Error during update_data: %s", exc)
             return False
 
-        if success:
-            logger.info(
-                "Successfully stored %d new coverage(s) for source '%s'",
-                len(new_files),
-                self.name,
-            )
-        else:
-            logger.error("Failed to store downloaded coverages")
-        return success
+        logger.info(
+            "Saved %d/%d coverage(s) for source '%s'",
+            saved,
+            len(new_files),
+            self.name,
+        )
+        return saved == len(new_files)
 
     def get_available_properties(self) -> list[str]:
-        """Return canonical property names that are actually present in the database.
+        """Return canonical property names present in the database.
 
-        Reads the stored coverage IDs via
-        :meth:`~datavia.soil.multiband_getter.MultibandGetter.get_stored_coverage_ids`
-        and translates each one to its canonical property name using
-        :meth:`_parse_property_from_description`.
-
-        Falls back to the configured ``self.properties`` list when the getter
-        is not yet initialised or no data has been stored yet.
+        Reads stored coverage IDs from ``raster_layers`` via
+        :meth:`SoilGetterTiff.get_stored_coverage_ids` and translates each to
+        its canonical property name. Falls back to ``self.properties`` when
+        no data has been stored yet.
 
         Returns
         -------
         list[str]
-            Deduplicated canonical property names found in the database, e.g.
-            ``["clay", "sand", "silt", "ph", "carbon"]``, ordered by first
-            occurrence. Returns the configured list if the database is empty.
+            Deduplicated canonical property names, e.g.
+            ``["clay", "sand", "silt", "ph", "carbon"]``. Returns the
+            configured list if the database is empty.
         """
         if self.getter:
             stored_ids = self.getter.get_stored_coverage_ids()
@@ -363,9 +507,7 @@ class SoilPipeline(Pipeline):
                 if available:
                     return available
 
-        logger.debug(
-            "No band metadata found in database — returning configured properties."
-        )
+        logger.debug("No stored layers found — returning configured properties.")
         return self.properties.copy()
 
     def get_remote_available_properties(self) -> list[str]:

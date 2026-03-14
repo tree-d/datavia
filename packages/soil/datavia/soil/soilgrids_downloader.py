@@ -87,43 +87,23 @@ class SoilGridsDownloader(Downloader):
         logger.info("Generated %d coverage IDs", len(coverage_ids))
         return coverage_ids
 
-    def download(self, output_path: str) -> str:
-        """Download all configured coverages into a temporary directory beside *output_path*.
+    def download(self) -> str:
+        """Satisfy the :class:`~datavia.core.interfaces.Downloader` abstract interface.
 
-        .. deprecated::
-            This method exists for backward compatibility with
-            :class:`~datavia.core.interfaces.Pipeline`. New code should call
-            :meth:`download_coverages` directly so that the caller receives
-            individual per-coverage paths and can apply alignment checks before
-            combining.
-
-        Parameters
-        ----------
-        output_path : str
-            Destination path for the combined multi-band GeoTIFF that the
-            legacy :meth:`~datavia.soil.pipeline.SoilPipeline.update_data`
-            workflow expects. The directory of this path is used as the
-            temporary working area.
+        :meth:`~datavia.soil.pipeline.SoilPipeline.update_data` calls
+        :meth:`download_coverages` directly with only the missing coverage IDs,
+        so this method is never invoked in normal use. It is provided solely to
+        fulfil the interface contract.
 
         Returns
         -------
         str
             Path to the first successfully downloaded single-band file, or
-            ``"failed"`` if no coverage could be downloaded. The caller is
-            responsible for combining files.
+            ``"failed"`` if no coverage could be downloaded.
         """
-        temp_dir = os.path.dirname(output_path)
-        os.makedirs(temp_dir, exist_ok=True)
-
-        with tempfile.TemporaryDirectory(dir=temp_dir) as temp_work_dir:
-            results = self.download_coverages(self.get_coverage_ids(), temp_work_dir)
-
-        if not results:
-            return "failed"
-
-        # Return the path of the first successful download so that the
-        # legacy pipeline flow gets a non-"failed" sentinel value.
-        return results[0][0]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            results = self.download_coverages(self.get_coverage_ids(), temp_dir)
+        return results[0][0] if results else "failed"
 
     def download_coverages(
         self,
@@ -335,47 +315,3 @@ class SoilGridsDownloader(Downloader):
         except Exception as exc:
             logger.error("SoilGrids WCS request failed for %s: %s", coverage_id, exc)
             raise
-
-    def get_band_description(self, coverage_id: str) -> str:
-        """Convert a raw coverage ID into a human-readable band description.
-
-        Maps known property identifiers to descriptive labels including the
-        physical unit, depth layer, and statistical summary, e.g.
-        ``"clay_0-5cm_mean"`` → ``"Clay content (%) at 0-5cm depth (mean value)"``.
-        Returns the original coverage ID unchanged if parsing fails.
-
-        Parameters
-        ----------
-        coverage_id : str
-            Coverage identifier in the format ``{property}_{depth}_{statistic}``.
-
-        Returns
-        -------
-        str
-            Human-readable description, or the original ``coverage_id`` if the
-            format is unrecognised or an error occurs during parsing.
-        """
-        try:
-            parts = coverage_id.split("_")
-            if len(parts) < 3:
-                return coverage_id
-
-            property_name, depth, statistic = parts[0], parts[1], parts[2]
-
-            property_labels: dict[str, str] = {
-                "clay": "Clay content (%)",
-                "sand": "Sand content (%)",
-                "silt": "Silt content (%)",
-                "ph": "pH in water",
-                "phh2o": "pH in water",
-                "carbon": "Organic carbon content (‰)",
-                "soc": "Soil organic carbon (g/kg)",
-            }
-            prop_desc = property_labels.get(property_name, property_name)
-            return f"{prop_desc} at {depth} depth ({statistic} value)"
-
-        except Exception as exc:
-            logger.debug(
-                "Failed to build band description for %r: %s", coverage_id, exc
-            )
-            return coverage_id
