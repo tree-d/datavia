@@ -43,15 +43,12 @@ class TiffSaver(Saver):
             bool: True if save operation was successful
         """
         try:
-            # Extract layer name from filename
-            filename = os.path.basename(data_path)
-            name_parts = os.path.splitext(filename)[0].split("_")
-            if len(name_parts) < 3:
-                raise ValueError(
-                    "Expected filename with at least 3 underscore-separated parts. "
-                    f"Got '{filename}'."
-                )
-            layer_name = f"{self.source_name}_{name_parts[2]}"
+            # Derive the layer name from the full file stem so that any filename
+            # maps to a unique, unambiguous layer: ``clay_0-5cm_mean.tif`` →
+            # ``soil_clay_0-5cm_mean``, ``downloaded_file_1234.tif`` →
+            # ``elevation_downloaded_file_1234``.
+            stem = os.path.splitext(os.path.basename(data_path))[0]
+            layer_name = f"{self.source_name}_{stem}"
 
             # Destination path in data directory
             dest_path = os.path.join(self.data_dir, layer_name + ".tif")
