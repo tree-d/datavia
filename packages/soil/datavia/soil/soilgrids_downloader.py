@@ -70,8 +70,28 @@ class SoilGridsDownloader(Downloader):
             self.priority_statistic,
         )
 
-    def get_coverage_ids(self) -> list[str]:
-        """Generate WCS coverage IDs for all configured property/depth combinations.
+    def get_coverage_ids(
+        self,
+        properties: list[str] | None = None,
+        depths: list[str] | None = None,
+        statistic: str | None = None,
+    ) -> list[str]:
+        """Generate WCS coverage IDs for a given property/depth/statistic combination.
+
+        Each parameter defaults to the instance-level value set during
+        ``__init__`` so the method can be called with no arguments for the
+        standard use-case, or with explicit overrides for targeted
+        one-off operations.
+
+        Parameters
+        ----------
+        properties : list[str], optional
+            Soil property names. Defaults to ``self.priority_properties``.
+        depths : list[str], optional
+            Depth layer strings. Defaults to ``self.priority_depths``.
+        statistic : str, optional
+            Statistical summary identifier. Defaults to
+            ``self.priority_statistic``.
 
         Returns
         -------
@@ -79,10 +99,13 @@ class SoilGridsDownloader(Downloader):
             Coverage identifiers in the format ``{property}_{depth}_{statistic}``,
             e.g. ``"clay_0-5cm_mean"``.
         """
+        effective_properties = properties or self.priority_properties
+        effective_depths = depths or self.priority_depths
+        effective_statistic = statistic or self.priority_statistic
         coverage_ids = [
-            f"{prop}_{depth}_{self.priority_statistic}"
-            for prop in self.priority_properties
-            for depth in self.priority_depths
+            f"{prop}_{depth}_{effective_statistic}"
+            for prop in effective_properties
+            for depth in effective_depths
         ]
         logger.info("Generated %d coverage IDs", len(coverage_ids))
         return coverage_ids
