@@ -118,6 +118,32 @@ class GetterTiff(Getter):
             f"Failed to retrieve data from TIFF for source: {self.source_name}"
         )
 
+    def check_existing_layers(self) -> set[str]:
+        """Return layer names already registered in the database for this source.
+
+        Queries the ``raster_layers`` table via
+        :func:`~datavia.library.database.query.get_raster_metadata` and
+        returns the set of layer names that belong to this source.  An empty
+        set is returned when no data has been stored yet or when the database
+        is unavailable.
+
+        Returns
+        -------
+        set[str]
+            Layer names present in the database, e.g.
+            ``{"elevation_dgm200"}``. Empty when nothing is stored.
+        """
+        try:
+            metadata_list = get_raster_metadata(self.source_name)
+            return {m["layer_name"] for m in metadata_list}
+        except Exception as exc:
+            logger.warning(
+                "Could not retrieve existing layers for source '%s': %s",
+                self.source_name,
+                exc,
+            )
+            return set()
+
     def get_band_mapping(self, layer_name: str | None = None) -> dict[str, int]:
         """Return a mapping from band description to band index for this source.
 

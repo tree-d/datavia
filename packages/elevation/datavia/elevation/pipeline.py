@@ -29,14 +29,21 @@ class ElevationPipeline(Pipeline):
         super().__init__(name, downloader, saver, getter, url=url)
 
     def update_data(self):
-        """Update elevation data by downloading and saving new TIFF data."""
-        if self.saver is None:
+        """Update elevation data by downloading and saving if not already stored.
+
+        Follows the canonical pipeline flow:
+        1. Synchronise the filesystem and database (maintenance, Saver).
+        2. Ask the Getter which layers are already stored (DB read).
+        3. Download and save only when no data exists yet.
+        """
+        if self.getter is None or self.downloader is None or self.saver is None:
             self()
         logger.info("Checking elevation data...")
-        files = self.saver.sync_files_and_database()
-        if not files:
-            logger.info("No elevation data found. Downloading new data...")
-            return super().update_data()
-        else:
+        # Maintenance step: reconcile filesystem with DB metadata.
+        self.saver.sync_files_and_database()
+        existing_layers = self.getter.check_existing_layers()
+        if existing_layers:
             logger.info("Elevation data already up to date.")
             return True
+        logger.info("No elevation data found. Downloading new data...")
+        return super().update_data()
