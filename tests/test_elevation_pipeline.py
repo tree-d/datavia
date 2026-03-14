@@ -34,21 +34,21 @@ def test_elevation_pipeline_e2e():
         meinehoehe.sync_files_and_database()
         meinehoehe.update_data()
 
-        # Verify files were created
-        found_files, _, _ = meinehoehe.saver.check_data_exists()
-        assert found_files, "No elevation data files were found after update."
+        # Verify layers are registered — the Getter is the authorised DB reader.
+        existing_layers = meinehoehe.getter.check_existing_layers()
+        assert existing_layers, "No elevation data layers were found after update."
 
         # Test data retrieval
         coords = np.array([[10.0, 50.0], [11.0, 51.0]])
         elevation_data = meinehoehe.get_data(coords=coords, crs_coords="EPSG:4326")
 
         assert elevation_data is not None, "get_data should return data, not None."
-        assert len(elevation_data) == len(
-            coords
-        ), "Should receive one elevation value per coordinate."
-        assert np.all(
-            elevation_data > 0
-        ), "Elevation values should be positive for the given coordinates."
+        assert len(elevation_data) == len(coords), (
+            "Should receive one elevation value per coordinate."
+        )
+        assert np.all(elevation_data > 0), (
+            "Elevation values should be positive for the given coordinates."
+        )
 
     finally:
         # Teardown: Stop the container after the test

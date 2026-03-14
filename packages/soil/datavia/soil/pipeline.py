@@ -21,7 +21,7 @@ from datavia.config import get_config
 from datavia.core.getter_tiff import GetterTiff
 from datavia.core.interfaces import Pipeline
 from datavia.core.saver_tiff import TiffSaver
-from datavia.library.database.query import get_layer_by_name, get_raster_metadata
+from datavia.library.database.query import get_layer_by_name
 from datavia.library.interpolation import spatial_interpolate
 
 from .soilgrids_downloader import SoilGridsDownloader
@@ -42,8 +42,9 @@ class SoilGetterTiff(GetterTiff):
     def get_stored_coverage_ids(self) -> set[str]:
         """Return coverage IDs registered in the database for this source.
 
-        Queries ``raster_layers`` and strips the ``{source_name}_`` prefix from
-        each layer name.
+        Strips the ``{source_name}_`` prefix from each layer name returned by
+        :meth:`check_existing_layers` so callers receive plain coverage IDs
+        (e.g. ``"clay_0-5cm_mean"``) instead of full layer names.
 
         Returns
         -------
@@ -52,12 +53,11 @@ class SoilGetterTiff(GetterTiff):
             ``{"clay_0-5cm_mean", "sand_5-15cm_mean"}``. Returns an empty set
             before any data has been stored.
         """
-        metadata_list = get_raster_metadata(self.source_name)
         prefix = f"{self.source_name}_"
         return {
-            m["layer_name"][len(prefix) :]
-            for m in metadata_list
-            if m["layer_name"].startswith(prefix)
+            layer[len(prefix) :]
+            for layer in self.check_existing_layers()
+            if layer.startswith(prefix)
         }
 
     def get_data_for_coverage(
