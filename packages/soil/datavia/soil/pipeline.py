@@ -126,7 +126,19 @@ class SoilPipeline(Pipeline):
     (e.g. ``soil_clay_0-5cm_mean.tif``). Downloads are incremental: only
     coverage IDs not yet present in the data directory are fetched. Manual
     file deletions are reconciled automatically before each update.
+
+    Class-level alias tables are the single source of truth for translating
+    between SoilGrids API property names (e.g. ``"soc"``, ``"phh2o"``) and
+    the user-facing names used throughout this pipeline (``"carbon"``, ``"ph"``).
+    All methods that parse, filter, or compare coverage IDs reference these
+    constants instead of defining their own inline dicts.
     """
+
+    #: Maps SoilGrids API property names to canonical pipeline names.
+    _API_TO_PIPELINE: dict[str, str] = {"phh2o": "ph", "soc": "carbon"}
+
+    #: Reverse mapping: canonical pipeline name → SoilGrids API service ID.
+    _PIPELINE_TO_API: dict[str, str] = {"ph": "phh2o", "carbon": "soc"}
 
     def __init__(
         self,
@@ -208,10 +220,51 @@ class SoilPipeline(Pipeline):
         }
         return super().__call__(config, *args, **kwds)
 
+    def configure(
+        self,
+        properties: list[str] | None = None,
+        depths: list[str] | None = None,
+        value: str | None = None,
+    ) -> None:
+        """Update the pipeline-level configuration attributes in place.
+
+        Changed attributes are propagated to the downloader instance when it
+        has already been initialised (i.e. after the first ``__call__``). Call
+        :meth:`update_data` afterwards to download any newly requested
+        coverages.
+
+        Parameters
+        ----------
+        properties : list[str], optional
+            Replacement list of soil properties. When ``None`` the current
+            value is kept unchanged.
+        depths : list[str], optional
+            Replacement list of depth layers. When ``None`` the current value
+            is kept unchanged.
+        value : str, optional
+            Replacement statistic identifier (e.g. ``"Q0.05"``, ``"mean"``).
+            When ``None`` the current value is kept unchanged.
+        """
+        if properties is not None:
+            self.properties = properties
+        if depths is not None:
+            self.depths = depths
+        if value is not None:
+            self.statistic = value
+
+        logger.info(
+            "SoilPipeline reconfigured — properties=%s, depths=%s, statistic=%s",
+            self.properties,
+            self.depths,
+            self.statistic,
+        )
+
     def get_data(
         self,
         coords: np.ndarray,
         properties: list[str] | None = None,
+        depths: list[str] | None = None,
+        value: str | None = None,
         crs_coords: str = "EPSG:4326",
         interpolation_order: int = 3,
     ) -> np.ndarray | dict[str, np.ndarray]:
@@ -219,20 +272,26 @@ class SoilPipeline(Pipeline):
 
         For single property requests, returns the interpolated values directly
         as a 1-D array. For multiple properties, returns a dict mapping each
-        coverage ID to its interpolated values. Multiple depth layers for the
-        same property (e.g. ``"clay_0-5cm_mean"`` and ``"clay_5-15cm_mean"``)
-        are returned as separate entries so that no depth information is
-        silently discarded.
+        coverage ID to its interpolated values. Each coverage ID encodes the
+        property, depth, and statistic (e.g. ``"clay_0-5cm_mean"``), so
+        results are always unambiguous.
 
         Parameters
         ----------
         coords : np.ndarray
             Array of coordinates with shape ``(n_points, 2)``.
             Expected column order: ``(longitude, latitude)`` for EPSG:4326.
-        properties : list[str], optional
+        properties : list[str] or str, optional
             Canonical property names to retrieve, e.g. ``["clay", "ph"]``.
-            Defaults to all properties configured on this instance
-            (``self.properties``). Pass ``None`` to return all stored coverages.
+            A plain string (``"clay"``) is accepted as shorthand for a
+            single-element list. Defaults to ``self.properties``.
+        depths : list[str] or str, optional
+            Depth layers to include, e.g. ``["0-5cm"]`` or ``"0-5cm"``.
+            A plain string is accepted as shorthand for a single-element
+            list. Defaults to ``self.depths``.
+        value : str, optional
+            Statistic to retrieve, e.g. ``"Q0.05"`` or ``"mean"``.
+            Defaults to ``self.statistic``.
         crs_coords : str, optional
             CRS of the input coordinates. Defaults to ``"EPSG:4326"``.
         interpolation_order : int, optional
@@ -255,6 +314,13 @@ class SoilPipeline(Pipeline):
         """
         if not self.getter:
             raise RuntimeError("Pipeline not initialized. Call the pipeline first.")
+
+        # Coerce plain strings to single-element lists so callers can write
+        # properties="clay" or depths="0-5cm" as a convenience shorthand.
+        if isinstance(properties, str):
+            properties = [properties]
+        if isinstance(depths, str):
+            depths = [depths]
 
         stored_ids = self.getter.get_stored_coverage_ids()
         if not stored_ids:
@@ -294,24 +360,32 @@ class SoilPipeline(Pipeline):
                 unknown_props,
             )
 
+        effective_depths = set(depths or self.depths)
+        effective_statistic = value or self.statistic
+
         matching_ids = [
             cov_id
             for cov_id in sorted(stored_ids)
             if self._parse_property_from_description(cov_id) in requested_props
+            and self._parse_depth_from_coverage_id(cov_id) in effective_depths
+            and self._parse_statistic_from_coverage_id(cov_id) == effective_statistic
         ]
 
-        # Warn about recognised properties that simply have no stored coverage yet.
-        matched_props = {
-            self._parse_property_from_description(cov_id) for cov_id in matching_ids
-        } - {None}
-        missing_props = sorted((requested_props & _known) - matched_props)
-        if missing_props:
+        # Warn per missing coverage ID (e.g. "carbon_60-100cm_mean not found").
+        # Build the full set of coverage IDs the caller intended to retrieve,
+        # then subtract the ones that matched so each gap is reported individually.
+        requested_ids = {
+            f"{prop}_{depth}_{effective_statistic}"
+            for prop in (requested_props & _known)
+            for depth in effective_depths
+        }
+        normalised_stored = {self._normalize_coverage_id(cid) for cid in stored_ids}
+        missing_ids = sorted(requested_ids - set(matching_ids) - normalised_stored)
+        for missing_id in missing_ids:
             logger.warning(
-                "Propert%s %s not found in local database. "
-                "Run update_data() to download them, "
-                "or call get_available_properties() to see what is available.",
-                "y" if len(missing_props) == 1 else "ies",
-                missing_props,
+                "Coverage '%s' not found in local database. "
+                "Run update_data() to download it.",
+                missing_id,
             )
 
         if not matching_ids:
@@ -360,6 +434,49 @@ class SoilPipeline(Pipeline):
         )
         return results
 
+    def _parse_depth_from_coverage_id(self, coverage_id: str) -> str | None:
+        """Return the depth token from a coverage ID.
+
+        Coverage IDs follow the pattern ``{property}_{depth}_{statistic}``,
+        e.g. ``"clay_0-5cm_mean"``. This method extracts the second
+        underscore-separated token.
+
+        Parameters
+        ----------
+        coverage_id : str
+            Raw coverage ID as stored in ``raster_layers.layer_name``.
+
+        Returns
+        -------
+        str | None
+            Depth string such as ``"0-5cm"``, or ``None`` if the ID does
+            not contain at least three underscore-separated tokens.
+        """
+        parts = coverage_id.split("_")
+        return parts[1] if len(parts) >= 3 else None
+
+    def _parse_statistic_from_coverage_id(self, coverage_id: str) -> str | None:
+        """Return the statistic token from a coverage ID.
+
+        Coverage IDs follow the pattern ``{property}_{depth}_{statistic}``,
+        e.g. ``"clay_0-5cm_mean"``. This method extracts the third
+        underscore-separated token.
+
+        Parameters
+        ----------
+        coverage_id : str
+            Raw coverage ID as stored in ``raster_layers.layer_name``.
+
+        Returns
+        -------
+        str | None
+            Statistic string such as ``"mean"`` or ``"Q0.05"``, or ``None``
+            if the ID does not contain at least three underscore-separated
+            tokens.
+        """
+        parts = coverage_id.split("_")
+        return parts[2] if len(parts) >= 3 else None
+
     def _parse_property_from_description(self, description: str) -> str | None:
         """Return the canonical property name from a coverage ID.
 
@@ -383,14 +500,46 @@ class SoilPipeline(Pipeline):
             if "_" not in description:
                 return None
             prop_candidate = description.split("_")[0].lower()
-            _api_to_pipeline = {"phh2o": "ph", "soc": "carbon"}
-            prop_candidate = _api_to_pipeline.get(prop_candidate, prop_candidate)
+            prop_candidate = self._API_TO_PIPELINE.get(prop_candidate, prop_candidate)
             canonical = ["clay", "sand", "silt", "ph", "carbon"]
             return prop_candidate if prop_candidate in canonical else None
         except Exception:
             return None
 
-    def update_data(self) -> bool:
+    def _normalize_coverage_id(self, coverage_id: str) -> str:
+        """Return *coverage_id* with any API property name replaced by its pipeline alias.
+
+        Stored coverage IDs may use either the SoilGrids API service name
+        (e.g. ``"soc_0-5cm_mean"``) or the pipeline alias
+        (e.g. ``"carbon_0-5cm_mean"``). This method normalises both forms to
+        the pipeline alias so they compare equal during delta computation.
+
+        Parameters
+        ----------
+        coverage_id : str
+            Raw coverage ID, e.g. ``"soc_0-5cm_mean"`` or
+            ``"carbon_0-5cm_mean"``.
+
+        Returns
+        -------
+        str
+            Coverage ID with the property token replaced by its canonical
+            pipeline name, e.g. ``"carbon_0-5cm_mean"``. Returns the
+            original string unchanged when the property token is already
+            canonical or is unknown.
+        """
+        parts = coverage_id.split("_", 1)  # split only on the first underscore
+        if not parts:
+            return coverage_id
+        canonical_prop = self._API_TO_PIPELINE.get(parts[0], parts[0])
+        return f"{canonical_prop}_{parts[1]}" if len(parts) == 2 else coverage_id
+
+    def update_data(
+        self,
+        properties: list[str] | None = None,
+        depths: list[str] | None = None,
+        value: str | None = None,
+    ) -> bool:
         """Download missing soil coverages and register each as its own layer.
 
         Computes the delta between the configured coverage IDs and those
@@ -398,6 +547,21 @@ class SoilPipeline(Pipeline):
         are downloaded. Manually deleted files are detected by
         :meth:`~datavia.core.saver_tiff.TiffSaver.sync_files_and_database`
         before the delta is computed so they are re-downloaded automatically.
+
+        Parameters
+        ----------
+        properties : list[str] or str, optional
+            Override the set of properties to download for this call only.
+            A plain string is accepted as shorthand for a single-element list.
+            The pipeline-level ``self.properties`` is not mutated. Defaults
+            to ``self.properties``.
+        depths : list[str] or str, optional
+            Override the set of depth layers for this call only. A plain
+            string is accepted as shorthand for a single-element list.
+            Defaults to ``self.depths``.
+        value : str, optional
+            Override the statistic for this call only. Defaults to
+            ``self.statistic``.
 
         Returns
         -------
@@ -408,6 +572,13 @@ class SoilPipeline(Pipeline):
         """
         if not self.downloader or not self.saver or not self.getter:
             self()
+
+        # Coerce plain strings to single-element lists so callers can write
+        # properties="clay" or depths="0-5cm" as a convenience shorthand.
+        if isinstance(properties, str):
+            properties = [properties]
+        if isinstance(depths, str):
+            depths = [depths]
 
         # --- Validate configured properties against known API names -----------
         _known_api = {
@@ -428,7 +599,8 @@ class SoilPipeline(Pipeline):
             "ph",
             "carbon",
         }
-        unrecognised = sorted(set(self.properties) - _known_api)
+        effective_properties = properties or self.properties
+        unrecognised = sorted(set(effective_properties) - _known_api)
         if unrecognised:
             logger.warning(
                 "Unrecognised propert%s in pipeline configuration: %s. "
@@ -441,9 +613,21 @@ class SoilPipeline(Pipeline):
         self.saver.sync_files_and_database()
 
         # --- Delta computation -------------------------------------------------
-        needed_ids = set(self.downloader.get_coverage_ids())
+        # Pass effective values directly; get_coverage_ids() falls back to the
+        # downloader's own defaults when a parameter is None.
+        needed_ids = set(
+            self.downloader.get_coverage_ids(
+                properties=properties or self.properties,
+                depths=depths or self.depths,
+                statistic=value or self.statistic,
+            )
+        )
         stored_ids = self.getter.get_stored_coverage_ids()
-        delta = needed_ids - stored_ids
+        # Normalise stored IDs to pipeline naming (e.g. soc → carbon) before
+        # the set difference so that data downloaded under an API name is not
+        # re-downloaded simply because the name differs from the pipeline alias.
+        normalised_stored = {self._normalize_coverage_id(cid) for cid in stored_ids}
+        delta = needed_ids - normalised_stored
 
         if not delta:
             logger.info(
@@ -527,9 +711,8 @@ class SoilPipeline(Pipeline):
             ``["clay", "sand", "silt", "ph", "carbon"]``. Returns an empty
             list if the API cannot be reached.
         """
-        # Same alias table as SoilGridsDownloader._download_single_coverage
-        _pipeline_to_api = {"carbon": "soc", "ph": "phh2o"}
-        _api_to_pipeline = {v: k for k, v in _pipeline_to_api.items()}
+        _api_to_pipeline = self._API_TO_PIPELINE
+        _pipeline_to_api = self._PIPELINE_TO_API
 
         available_remote: list[str] = []
         for prop in self.downloader.priority_properties:
