@@ -15,9 +15,8 @@ Covers:
       partial failure, unrecognised property warning.
 """
 
-import os
 import tempfile
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -127,15 +126,17 @@ class TestSoilGetterTiffGetDataForCoverage:
         self, getter: SoilGetterTiff
     ) -> None:
         """A coverage ID absent from the database raises a ValueError."""
-        with patch(
-            "datavia.soil.pipeline.get_layer_by_name",
-            return_value=None,
+        with (
+            patch(
+                "datavia.soil.pipeline.get_layer_by_name",
+                return_value=None,
+            ),
+            pytest.raises(ValueError, match="not found in database"),
         ):
-            with pytest.raises(ValueError, match="not found in database"):
-                getter.get_data_for_coverage(
-                    "clay_0-5cm_mean",
-                    np.array([[10.0, 50.0]]),
-                )
+            getter.get_data_for_coverage(
+                "clay_0-5cm_mean",
+                np.array([[10.0, 50.0]]),
+            )
 
     def test_raises_runtime_error_on_extraction_failure(
         self, getter: SoilGetterTiff
@@ -150,24 +151,26 @@ class TestSoilGetterTiffGetDataForCoverage:
                 "datavia.soil.pipeline.spatial_interpolate",
                 side_effect=OSError("file not found"),
             ),
+            pytest.raises(RuntimeError, match="Failed to extract"),
         ):
-            with pytest.raises(RuntimeError, match="Failed to extract"):
-                getter.get_data_for_coverage(
-                    "clay_0-5cm_mean",
-                    np.array([[10.0, 50.0]]),
-                )
+            getter.get_data_for_coverage(
+                "clay_0-5cm_mean",
+                np.array([[10.0, 50.0]]),
+            )
 
     def test_layer_name_built_from_source_name_and_coverage(
         self, getter: SoilGetterTiff
     ) -> None:
         """The DB query uses '{source_name}_{coverage_id}' as the layer name."""
         mock_layer_lookup = MagicMock(return_value=None)
-        with patch("datavia.soil.pipeline.get_layer_by_name", mock_layer_lookup):
-            with pytest.raises(ValueError):
-                getter.get_data_for_coverage(
-                    "clay_0-5cm_mean",
-                    np.array([[10.0, 50.0]]),
-                )
+        with (
+            patch("datavia.soil.pipeline.get_layer_by_name", mock_layer_lookup),
+            pytest.raises(ValueError),
+        ):
+            getter.get_data_for_coverage(
+                "clay_0-5cm_mean",
+                np.array([[10.0, 50.0]]),
+            )
         mock_layer_lookup.assert_called_once_with("soil_clay_0-5cm_mean", "soil")
 
 

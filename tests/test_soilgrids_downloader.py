@@ -42,7 +42,9 @@ def downloader():
     so no network requests are made during ``__init__``.
     """
     with patch(_SOILGRIDS_CLASS_PATH):
-        from datavia.soil.soilgrids_downloader import SoilGridsDownloader
+        from datavia.soil.soilgrids_downloader import (  # noqa: PLC0415
+            SoilGridsDownloader,
+        )
 
         return SoilGridsDownloader({})
 
@@ -55,7 +57,9 @@ def downloader_custom():
     ``"Q0.05"`` to verify that non-default values are stored unchanged.
     """
     with patch(_SOILGRIDS_CLASS_PATH):
-        from datavia.soil.soilgrids_downloader import SoilGridsDownloader
+        from datavia.soil.soilgrids_downloader import (  # noqa: PLC0415
+            SoilGridsDownloader,
+        )
 
         return SoilGridsDownloader(
             {
@@ -136,7 +140,7 @@ class TestSoilGridsDownloaderGetCoverageIds:
         assert ids == ["clay_0-5cm_mean"]
 
     def test_count_matches_cartesian_product(self, downloader) -> None:
-        """Number of IDs equals len(properties) × len(depths)."""
+        """Number of IDs equals len(properties) x len(depths)."""
         ids = downloader.get_coverage_ids(
             properties=["clay", "sand", "silt"],
             depths=["0-5cm", "5-15cm"],
@@ -181,7 +185,9 @@ class TestSoilGridsDownloaderSingleCoverage:
 
     def _build_downloader_with_fake_wcs(self, tif_content: bytes = b"\x00" * 256):
         """Return a downloader whose WCS call writes *tif_content* to disk."""
-        from datavia.soil.soilgrids_downloader import SoilGridsDownloader
+        from datavia.soil.soilgrids_downloader import (  # noqa: PLC0415
+            SoilGridsDownloader,
+        )
 
         def _write_fake_tiff(service_id, coverage_id, output, **kwargs):
             with open(output, "wb") as fh:
@@ -249,7 +255,9 @@ class TestSoilGridsDownloaderSingleCoverage:
 
     def test_wcs_exception_returns_failed(self) -> None:
         """Any exception raised by the WCS call returns 'failed'."""
-        from datavia.soil.soilgrids_downloader import SoilGridsDownloader
+        from datavia.soil.soilgrids_downloader import (  # noqa: PLC0415
+            SoilGridsDownloader,
+        )
 
         with patch(_SOILGRIDS_CLASS_PATH):
             dl = SoilGridsDownloader({})
@@ -269,7 +277,9 @@ class TestSoilGridsDownloaderDownloadCoverages:
 
     def _build_downloader_with_selective_success(self, failing_ids: set[str]):
         """Return a downloader that fails for coverage IDs in *failing_ids*."""
-        from datavia.soil.soilgrids_downloader import SoilGridsDownloader
+        from datavia.soil.soilgrids_downloader import (  # noqa: PLC0415
+            SoilGridsDownloader,
+        )
 
         def selective_download(coverage_id: str, temp_dir: str) -> str:
             if coverage_id in failing_ids:
@@ -307,7 +317,9 @@ class TestSoilGridsDownloaderDownloadCoverages:
 
     def test_empty_input_returns_empty_list(self) -> None:
         """An empty coverage ID list returns an empty list without errors."""
-        from datavia.soil.soilgrids_downloader import SoilGridsDownloader
+        from datavia.soil.soilgrids_downloader import (  # noqa: PLC0415
+            SoilGridsDownloader,
+        )
 
         with patch(_SOILGRIDS_CLASS_PATH):
             dl = SoilGridsDownloader({})
@@ -342,7 +354,9 @@ class TestSoilGridsGetCoverageDataValidation:
         self, supported_crs_urn: str = "urn:ogc:def:crs:EPSG::4326"
     ):
         """Return a downloader with a WCS layer that advertises *supported_crs_urn*."""
-        from datavia.soil.soilgrids_downloader import SoilGridsDownloader
+        from datavia.soil.soilgrids_downloader import (  # noqa: PLC0415
+            SoilGridsDownloader,
+        )
 
         mock_crs_obj = MagicMock()
         mock_crs_obj.getcodeurn.return_value = supported_crs_urn
@@ -455,7 +469,9 @@ class TestSoilGridsDownloaderDownloadFallback:
 
     def test_returns_string_result(self) -> None:
         """download() returns a string (path or 'failed')."""
-        from datavia.soil.soilgrids_downloader import SoilGridsDownloader
+        from datavia.soil.soilgrids_downloader import (  # noqa: PLC0415
+            SoilGridsDownloader,
+        )
 
         with patch(_SOILGRIDS_CLASS_PATH):
             dl = SoilGridsDownloader({})
@@ -467,7 +483,9 @@ class TestSoilGridsDownloaderDownloadFallback:
 
     def test_returns_failed_when_no_coverages_downloaded(self) -> None:
         """download() returns 'failed' if download_coverages returns an empty list."""
-        from datavia.soil.soilgrids_downloader import SoilGridsDownloader
+        from datavia.soil.soilgrids_downloader import (  # noqa: PLC0415
+            SoilGridsDownloader,
+        )
 
         with patch(_SOILGRIDS_CLASS_PATH):
             dl = SoilGridsDownloader({})
@@ -476,7 +494,9 @@ class TestSoilGridsDownloaderDownloadFallback:
 
     def test_returns_first_path_when_download_succeeds(self) -> None:
         """download() returns the path of the first successful coverage."""
-        from datavia.soil.soilgrids_downloader import SoilGridsDownloader
+        from datavia.soil.soilgrids_downloader import (  # noqa: PLC0415
+            SoilGridsDownloader,
+        )
 
         with patch(_SOILGRIDS_CLASS_PATH):
             dl = SoilGridsDownloader({})

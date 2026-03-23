@@ -85,7 +85,7 @@ def test_soilgrids_coverage_downloaded_and_retrievable(live_database) -> None:
 
     Expected raw storage unit: g/kg (integer-scaled).
     Conversion to percentage: divide by 10.
-    Plausible clay range for Central Europe: 5 – 60 %.
+    Plausible clay range for Central Europe: 5 - 60 %.
     """
     pipeline = SoilPipeline(
         properties=["clay"],
@@ -141,9 +141,9 @@ def test_hihydrosoil_coverage_downloaded_and_retrievable(live_database) -> None:
     """Field capacity at 0-5 cm is downloaded from HiHydroSoil and returns
     plausible values.
 
-    Expected raw storage unit: integers × 10 000.
+    Expected raw storage unit: integers x 10 000.
     Conversion to cm³/cm³: multiply by 0.0001.
-    Plausible field-capacity range: 0.05 – 0.55 cm³/cm³.
+    Plausible field-capacity range: 0.05 - 0.55 cm\u00b3/cm\u00b3.
     """
     pipeline = SoilPipeline(
         properties=["field_capacity"],
