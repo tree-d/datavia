@@ -1,3 +1,5 @@
+"""Integration tests for the elevation pipeline executed through the datavia interface."""
+
 import logging
 import os
 
