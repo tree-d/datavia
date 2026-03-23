@@ -1,3 +1,5 @@
+"""Integration tests for the elevation pipeline (requires running backend)."""
+
 import logging
 import os
 
