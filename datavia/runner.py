@@ -54,7 +54,11 @@ def stop_container() -> None:
         time.sleep(2)
 
         # Remove containers and networks
-        subprocess.run(["docker", "compose", "down"], cwd=str(compose_dir), check=True)  # nosec B603 B607
+        subprocess.run(
+            ["docker", "compose", "down"],
+            cwd=str(compose_dir),
+            check=True,  # nosec B603 B607
+        )
 
         # Additional wait to ensure cleanup is complete
         time.sleep(1)
