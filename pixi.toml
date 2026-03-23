@@ -14,15 +14,15 @@ test-docs-with-io = {cmd = "python scripts/test_docs_with_io.py --verbose"}
 
 # Development workflow tasks (require dev feature to be active)
 # No suffix = core + all packages (used in CI and by default locally)
-format = {cmd = "black datavia/ tests/ packages/ && isort datavia/ tests/ packages/"}
-format-check = {cmd = "black --check datavia/ tests/ packages/ && isort --check-only datavia/ tests/ packages/"}
+format = {cmd = "ruff format datavia/ tests/ packages/"}
+format-check = {cmd = "ruff format --check datavia/ tests/ packages/"}
 lint = {cmd = "ruff check datavia/ tests/ packages/"}
 type-check = {cmd = "mypy datavia/ --ignore-missing-imports"}
 security-scan = {cmd = "bandit -r datavia/ packages/ -f json -o bandit-report.json"}
 
 # -core suffix = core and tests only, for faster local feedback when not touching packages
-format-core = {cmd = "black datavia/ tests/ && isort datavia/ tests/"}
-format-check-core = {cmd = "black --check datavia/ tests/ && isort --check-only datavia/ tests/"}
+format-core = {cmd = "ruff format datavia/ tests/"}
+format-check-core = {cmd = "ruff format --check datavia/ tests/"}
 lint-core = {cmd = "ruff check datavia/ tests/"}
 
 test-unit = {cmd = "python -m pytest tests/test_config.py tests/test_coordinate_transforms.py tests/test_runner.py tests/test_spatial_ops.py -v"}
@@ -40,8 +40,6 @@ ci-pr-check = [{task = "ci-check"}, {task = "docs"}, {task = "test-docs-verbose"
 ruff = ">=0.8.0,<1.0"
 mypy = ">=1.13.0,<2.0"
 bandit = ">=1.9.3,<2.0"
-black = ">=24.0.0,<25.0"
-isort = ">=5.13.0,<6.0"
 pytest = ">=8.0.0,<9.0"
 pytest-cov = ">=7.0.0,<8.0"
 pytest-mock = ">=3.14.1,<4.0"

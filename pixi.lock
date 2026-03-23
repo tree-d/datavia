@@ -1259,7 +1259,7 @@ packages:
 - pypi: ./
   name: datavia
   version: 1.0.0.dev0
-  sha256: 990b876d2fbe74ac1ff9019000e32f8088de6359813300a8171276e1bb61996f
+  sha256: 98c055e092ee5e3b5542a134434723a0acfcc6ee35c7c31b738013d1a80dd7ef
   requires_dist:
   - numpy>=2.2.0,<3.0
   - rasterio>=1.4.3,<2.0
@@ -1293,8 +1293,6 @@ packages:
   - pytest-cov>=7.0.0,<8.0 ; extra == 'dev'
   - pytest-mock>=3.14.1,<4.0 ; extra == 'dev'
   - xdoctest>=1.1.0,<2.0 ; extra == 'dev'
-  - black>=24.0.0,<25.0 ; extra == 'dev'
-  - isort>=5.13.0,<6.0 ; extra == 'dev'
   - ruff>=0.8.0,<1.0 ; extra == 'dev'
   - mypy>=1.13.0,<2.0 ; extra == 'dev'
   - bandit>=1.9.3,<2.0 ; extra == 'dev'
