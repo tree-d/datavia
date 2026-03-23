@@ -324,7 +324,6 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/24/f2/dd9f0dc00c51e1d39a7770683800464ded8550b416660066dd2b950e8b76/owslib-0.34.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/b3/a3/448f05b15e318bd6bea9a32cfaf11e886c4ae61fa3eee6e09ed5c3b74bb2/pyproj-3.7.1-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/bd/24/12818598c362d7f300f18e74db45963dbcb85150324092410c8b49405e42/pyproject_hooks-1.2.0-py3-none-any.whl
-      - pypi: https://files.pythonhosted.org/packages/2a/2f/63d2cacc0e525f8e3398bcf32bd3620385f22cd1600834ec49d7f3597a7b/rioxarray-0.19.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/04/54/6f679c435d28e0a568d8e8a7c0a93a09010818634c3c3907fc98d8983770/roman_numerals-4.1.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/53/97/d2cbbaa10c9b826af0e10fdf836e1bf344d9f0abb873ebc34d1f49642d3f/roman_numerals_py-3.1.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/c8/78/3565d011c61f5a43488987ee32b6f3f656e7f107ac2782dd57bdd7d91d9a/snowballstemmer-3.0.1-py3-none-any.whl
@@ -665,7 +664,6 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/24/f2/dd9f0dc00c51e1d39a7770683800464ded8550b416660066dd2b950e8b76/owslib-0.34.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/b3/a3/448f05b15e318bd6bea9a32cfaf11e886c4ae61fa3eee6e09ed5c3b74bb2/pyproj-3.7.1-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/bd/24/12818598c362d7f300f18e74db45963dbcb85150324092410c8b49405e42/pyproject_hooks-1.2.0-py3-none-any.whl
-      - pypi: https://files.pythonhosted.org/packages/2a/2f/63d2cacc0e525f8e3398bcf32bd3620385f22cd1600834ec49d7f3597a7b/rioxarray-0.19.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/04/54/6f679c435d28e0a568d8e8a7c0a93a09010818634c3c3907fc98d8983770/roman_numerals-4.1.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/53/97/d2cbbaa10c9b826af0e10fdf836e1bf344d9f0abb873ebc34d1f49642d3f/roman_numerals_py-3.1.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/c8/78/3565d011c61f5a43488987ee32b6f3f656e7f107ac2782dd57bdd7d91d9a/snowballstemmer-3.0.1-py3-none-any.whl
@@ -1261,7 +1259,7 @@ packages:
 - pypi: ./
   name: datavia
   version: 1.0.0.dev0
-  sha256: e554e2b4ae80ea23e607376eeb4e96dcbbc5e251b031f9ed27cd5d022aff4f24
+  sha256: 990b876d2fbe74ac1ff9019000e32f8088de6359813300a8171276e1bb61996f
   requires_dist:
   - numpy>=2.2.0,<3.0
   - rasterio>=1.4.3,<2.0
@@ -1281,7 +1279,6 @@ packages:
   - rich>=14.0.0,<15.0
   - matplotlib>=3.10.1,<4.0
   - scipy>=1.16.0,<2.0
-  - rioxarray>=0.19.0,<0.20
   - tifffile>=2025.3.30
   - datavia-elevation>=1.0.0.dev0,<2.0 ; extra == 'elevation'
   - datavia-soil>=1.0.0.dev0,<2.0 ; extra == 'soil'
@@ -4028,19 +4025,6 @@ packages:
   - pkg:pypi/rich-toolkit?source=hash-mapping
   size: 17357
   timestamp: 1733750834072
-- pypi: https://files.pythonhosted.org/packages/2a/2f/63d2cacc0e525f8e3398bcf32bd3620385f22cd1600834ec49d7f3597a7b/rioxarray-0.19.0-py3-none-any.whl
-  name: rioxarray
-  version: 0.19.0
-  sha256: 494ee4fff1781072d55ee5276f5d07b63d93b05093cb33b926a12186ba5bb8ef
-  requires_dist:
-  - packaging
-  - rasterio>=1.4.3
-  - xarray>=2024.7.0
-  - pyproj>=3.3
-  - numpy>=1.23
-  - scipy ; extra == 'interp'
-  - scipy ; extra == 'all'
-  requires_python: '>=3.10'
 - pypi: https://files.pythonhosted.org/packages/04/54/6f679c435d28e0a568d8e8a7c0a93a09010818634c3c3907fc98d8983770/roman_numerals-4.1.0-py3-none-any.whl
   name: roman-numerals
   version: 4.1.0
