@@ -1,11 +1,20 @@
 """
 Soil Pipeline - Complete soil data integration.
 
-Provides end-to-end access to SoilGrids soil property data for Germany:
-- Downloads each soil property/depth combination as an individual single-band GeoTIFF.
-- Registers each file as its own layer in PostGIS.
-- Supports incremental downloads: only missing coverages are fetched.
-- Exposes coordinate-based value retrieval via coverage-ID-specific file routing.
+Provides end-to-end access to soil property data for Germany from two sources:
+
+SoilGrids (WCS API):
+- Properties: clay, sand, silt, ph, carbon and more.
+- Downloads each property/depth combination as an individual single-band GeoTIFF.
+
+HiHydroSoil (HTTP GeoTIFF catalogue, vsicurl streaming):
+- Properties: field_capacity, wilting_point, porosity, hydraulic_conductivity.
+- Six depth layers per property; only the Germany window is downloaded.
+
+Both sources are managed through a single SoilPipeline instance backed by a
+CompositeDownloader that routes each coverage ID to the correct remote service.
+All data is registered as individual single-band GeoTIFF layers in PostGIS.
+Downloads are incremental: only missing coverages are fetched on each call.
 
 Planned extensions:
 - BÜK shapefile integration (vector-based soil classification).
@@ -25,7 +34,8 @@ from datavia.core.saver_tiff import TiffSaver
 from datavia.library.database.query import get_layer_by_name
 from datavia.library.interpolation import spatial_interpolate
 
-from .soilgrids_downloader import SoilGridsDownloader
+from .composite_downloader import CompositeDownloader
+from .soilgrids_downloader import SoilGridsDownloader  # noqa: F401 (re-exported)
 
 logger = logging.getLogger(__name__)
 
@@ -121,33 +131,89 @@ class SoilGetterTiff(GetterTiff):
 
 
 class SoilPipeline(Pipeline):
-    """End-to-end pipeline for SoilGrids soil property data.
+    """End-to-end pipeline for multi-source soil property data.
 
-    One single-band GeoTIFF is stored per coverage ID
-    (e.g. ``soil_clay_0-5cm_mean.tif``). Downloads are incremental: only
-    coverage IDs not yet present in the data directory are fetched. Manual
-    file deletions are reconciled automatically before each update.
+    Integrates SoilGrids (WCS) and HiHydroSoil (HTTP GeoTIFF) into a single
+    pipeline. One single-band GeoTIFF is stored per coverage ID (e.g.
+    ``soil_clay_0-5cm_mean.tif``, ``soil_field_capacity_0-5cm_mean.tif``).
+    Downloads are incremental: only coverage IDs not yet present in the data
+    directory are fetched. Manual file deletions are reconciled automatically
+    before each update.
 
     Class-level alias tables are the single source of truth for translating
-    between SoilGrids API property names (e.g. ``"soc"``, ``"phh2o"``) and
-    the user-facing names used throughout this pipeline (``"carbon"``, ``"ph"``).
+    between source API names (e.g. ``"soc"``, ``"WCpF2"``) and the canonical
+    pipeline names used throughout (``"carbon"``, ``"field_capacity"``).
     All methods that parse, filter, or compare coverage IDs reference these
-    constants instead of defining their own inline dicts.
+    constants instead of defining their own inline mappings.
     """
 
-    #: Maps SoilGrids API property names to canonical pipeline names.
-    _API_TO_PIPELINE: ClassVar[dict[str, str]] = {"phh2o": "ph", "soc": "carbon"}
+    #: Maps all API property names (SoilGrids + HiHydroSoil) to canonical pipeline names.
+    _API_TO_PIPELINE: ClassVar[dict[str, str]] = {
+        # SoilGrids
+        "phh2o": "ph",
+        "soc": "carbon",
+        # HiHydroSoil
+        "WCpF2": "field_capacity",
+        "WCpF4.2": "wilting_point",
+        "WCsat": "porosity",
+        "Ksat": "hydraulic_conductivity",
+    }
 
-    #: Reverse mapping: canonical pipeline name → SoilGrids API service ID.
-    _PIPELINE_TO_API: ClassVar[dict[str, str]] = {"ph": "phh2o", "carbon": "soc"}
+    #: Reverse mapping: canonical pipeline name → source-specific API service ID.
+    _PIPELINE_TO_API: ClassVar[dict[str, str]] = {
+        # SoilGrids
+        "ph": "phh2o",
+        "carbon": "soc",
+        # HiHydroSoil
+        "field_capacity": "WCpF2",
+        "wilting_point": "WCpF4.2",
+        "porosity": "WCsat",
+        "hydraulic_conductivity": "Ksat",
+    }
+
+    #: All valid property tokens (canonical names and API aliases) across all sources.
+    #: Used for prefix-based coverage ID parsing and property validation.
+    _KNOWN_PROPERTIES: ClassVar[frozenset[str]] = frozenset(
+        {
+            # SoilGrids API names
+            "bdod",
+            "cec",
+            "cfvo",
+            "clay",
+            "nitrogen",
+            "ocd",
+            "ocs",
+            "phh2o",
+            "sand",
+            "silt",
+            "soc",
+            "wv0010",
+            "wv0033",
+            "wv1500",
+            # SoilGrids canonical aliases
+            "ph",
+            "carbon",
+            # HiHydroSoil canonical names
+            "field_capacity",
+            "wilting_point",
+            "porosity",
+            "hydraulic_conductivity",
+            # HiHydroSoil API names (kept for normalisation of any legacy stored IDs)
+            "WCpF2",
+            "WCpF4.2",
+            "WCsat",
+            "Ksat",
+        }
+    )
 
     def __init__(
         self,
         name: str = "soil",
         properties: list[str] | None = None,
         depths: list[str] | None = None,
+        hihydrosoil_depths: list[str] | None = None,
         value: str = "mean",
-    ):
+    ) -> None:
         """Initialize the soil pipeline with a configurable set of properties and depth layers.
 
         Parameters
@@ -156,43 +222,63 @@ class SoilPipeline(Pipeline):
             Identifier used for database isolation and file naming.
             Defaults to ``"soil"``.
         properties : list[str], optional
-            Soil properties to download and expose. Supported values are a
-            subset of the SoilGrids API properties:
-            ``"bdod"``, ``"cec"``, ``"cfvo"``, ``"clay"``, ``"nitrogen"``,
-            ``"ocd"``, ``"ocs"``, ``"phh2o"``, ``"sand"``, ``"silt"``,
-            ``"soc"``, ``"wv0010"``, ``"wv0033"``, ``"wv1500"``.
-            Pipeline-friendly aliases ``"ph"`` and ``"carbon"`` are also accepted.
-            Defaults to ``["clay", "sand", "silt", "ph", "carbon"]``.
+            Soil properties to download and expose. Accepts canonical names
+            from both SoilGrids (``"clay"``, ``"sand"``, ``"silt"``,
+            ``"ph"``, ``"carbon"``, ``"bdod"``, ``"cec"``, ``"cfvo"``,
+            ``"nitrogen"``, ``"ocd"``, ``"ocs"``, ``"wv0010"``,
+            ``"wv0033"``, ``"wv1500"``) and HiHydroSoil
+            (``"field_capacity"``, ``"wilting_point"``, ``"porosity"``,
+            ``"hydraulic_conductivity"``).
+            Defaults to ``["clay", "sand", "silt", "ph", "carbon",
+            "field_capacity", "wilting_point", "porosity",
+            "hydraulic_conductivity"]``.
         depths : list[str], optional
-            Depth layers to include. Available options:
+            Depth layers for SoilGrids properties. Available options:
             ``"0-5cm"``, ``"0-30cm"``, ``"5-15cm"``, ``"15-30cm"``,
             ``"30-60cm"``, ``"60-100cm"``, ``"100-200cm"``.
             Defaults to ``["0-5cm", "5-15cm"]``.
+        hihydrosoil_depths : list[str], optional
+            Depth layers specifically for HiHydroSoil properties. Available
+            options: ``"0-5cm"``, ``"5-15cm"``, ``"15-30cm"``,
+            ``"30-60cm"``, ``"60-100cm"``, ``"100-200cm"``.
+            Defaults to all six layers when ``None``.
         value : str, optional
             Statistical summary to retrieve for each property/depth combination.
-            Supported values are "Q0.05", "Q0.5", "Q0.95", "mean", "uncertainty".
+            SoilGrids supports ``"Q0.05"``, ``"Q0.5"``, ``"Q0.95"``,
+            ``"mean"``, ``"uncertainty"``.
+            HiHydroSoil supports only ``"mean"``.
+            Defaults to ``"mean"``.
         """
         if properties is None:
-            properties = ["clay", "sand", "silt", "ph", "carbon"]
+            properties = [
+                "clay",
+                "sand",
+                "silt",
+                "ph",
+                "carbon",
+                "field_capacity",
+                "wilting_point",
+                "porosity",
+                "hydraulic_conductivity",
+            ]
         super().__init__(
             name,
-            downloader=SoilGridsDownloader,
+            downloader=CompositeDownloader,
             saver=TiffSaver,
             getter=SoilGetterTiff,
             url=None,
         )
-        self.data_source = "SoilGrids"
-        if depths is None:
-            depths = ["0-5cm", "5-15cm"]
-        self.depths = depths
-        if properties:
-            self.properties = properties
-        else:
-            self.properties = ["clay", "sand", "silt", "ph", "carbon"]
-
+        self.data_source = "SoilGrids+HiHydroSoil"
+        self.depths = depths if depths is not None else ["0-5cm", "5-15cm"]
+        self.hihydrosoil_depths = hihydrosoil_depths  # None → backend default (all 6)
+        self.properties = properties
         self.statistic = value
         logger.info(
-            f"SoilPipeline initialized with properties: {self.properties} and depths: {self.depths}"
+            "SoilPipeline initialized — properties: %s, SoilGrids depths: %s, "
+            "HiHydroSoil depths: %s",
+            self.properties,
+            self.depths,
+            self.hihydrosoil_depths or "(all 6 default)",
         )
 
     def __call__(self, *args, **kwds):
@@ -214,17 +300,20 @@ class SoilPipeline(Pipeline):
         Any
             Return value of the parent pipeline call.
         """
-        config = {
+        config: dict = {
             "properties": self.properties,
             "depths": self.depths,
             "statistic": self.statistic,
         }
+        if self.hihydrosoil_depths is not None:
+            config["hihydrosoil_depths"] = self.hihydrosoil_depths
         return super().__call__(config, *args, **kwds)
 
     def configure(
         self,
         properties: list[str] | None = None,
         depths: list[str] | None = None,
+        hihydrosoil_depths: list[str] | None = None,
         value: str | None = None,
     ) -> None:
         """Update the pipeline-level configuration attributes in place.
@@ -237,11 +326,14 @@ class SoilPipeline(Pipeline):
         Parameters
         ----------
         properties : list[str], optional
-            Replacement list of soil properties. When ``None`` the current
-            value is kept unchanged.
+            Replacement list of soil properties (any source). When ``None``
+            the current value is kept unchanged.
         depths : list[str], optional
-            Replacement list of depth layers. When ``None`` the current value
-            is kept unchanged.
+            Replacement SoilGrids depth layers. When ``None`` the current
+            value is kept unchanged.
+        hihydrosoil_depths : list[str], optional
+            Replacement HiHydroSoil depth layers. When ``None`` the current
+            value is kept unchanged.
         value : str, optional
             Replacement statistic identifier (e.g. ``"Q0.05"``, ``"mean"``).
             When ``None`` the current value is kept unchanged.
@@ -250,13 +342,17 @@ class SoilPipeline(Pipeline):
             self.properties = properties
         if depths is not None:
             self.depths = depths
+        if hihydrosoil_depths is not None:
+            self.hihydrosoil_depths = hihydrosoil_depths
         if value is not None:
             self.statistic = value
 
         logger.info(
-            "SoilPipeline reconfigured — properties=%s, depths=%s, statistic=%s",
+            "SoilPipeline reconfigured — properties=%s, SoilGrids depths=%s, "
+            "HiHydroSoil depths=%s, statistic=%s",
             self.properties,
             self.depths,
+            self.hihydrosoil_depths or "(all 6 default)",
             self.statistic,
         )
 
@@ -334,25 +430,7 @@ class SoilPipeline(Pipeline):
 
         # Warn about any property names that are not recognised at all so the
         # caller realises the typo/alias problem before digging into empty results.
-        _known = {
-            "bdod",
-            "cec",
-            "cfvo",
-            "clay",
-            "nitrogen",
-            "ocd",
-            "ocs",
-            "phh2o",
-            "sand",
-            "silt",
-            "soc",
-            "wv0010",
-            "wv0033",
-            "wv1500",
-            "ph",
-            "carbon",
-        }
-        unknown_props = sorted(requested_props - _known)
+        unknown_props = sorted(requested_props - self._KNOWN_PROPERTIES)
         if unknown_props:
             logger.warning(
                 "Unknown propert%s requested: %s. "
@@ -377,7 +455,7 @@ class SoilPipeline(Pipeline):
         # then subtract the ones that matched so each gap is reported individually.
         requested_ids = {
             f"{prop}_{depth}_{effective_statistic}"
-            for prop in (requested_props & _known)
+            for prop in (requested_props & self._KNOWN_PROPERTIES)
             for depth in effective_depths
         }
         normalised_stored = {self._normalize_coverage_id(cid) for cid in stored_ids}
@@ -435,12 +513,50 @@ class SoilPipeline(Pipeline):
         )
         return results
 
+    def _split_coverage_id(self, coverage_id: str) -> tuple[str, str, str] | None:
+        """Split a coverage ID into its three constituent tokens.
+
+        Coverage IDs follow the pattern ``{property}_{depth}_{statistic}``
+        where the property token may itself contain underscores for compound
+        names such as ``"field_capacity"`` or ``"hydraulic_conductivity"``.
+        Positional ``split("_")`` is therefore unreliable; this method
+        matches the longest known property token as a prefix instead.
+
+        Parameters
+        ----------
+        coverage_id : str
+            Raw coverage ID as stored in ``raster_layers.layer_name``,
+            e.g. ``"clay_0-5cm_mean"`` or ``"field_capacity_0-5cm_mean"``.
+
+        Returns
+        -------
+        tuple[str, str, str] | None
+            ``(property_token, depth, statistic)`` triple on success, or
+            ``None`` if the ID cannot be matched against any known property
+            token.
+        """
+        # Try longest tokens first so "field_capacity" wins over any shorter
+        # prefix that might accidentally match.
+        for token in sorted(self._KNOWN_PROPERTIES, key=len, reverse=True):
+            prefix = token + "_"
+            if coverage_id.startswith(prefix):
+                remainder = coverage_id[len(prefix) :]
+                sep = remainder.find("_")
+                if sep == -1:
+                    continue  # no statistic token — malformed ID
+                depth = remainder[:sep]
+                statistic = remainder[sep + 1 :]
+                if depth and statistic:
+                    return token, depth, statistic
+        return None
+
     def _parse_depth_from_coverage_id(self, coverage_id: str) -> str | None:
         """Return the depth token from a coverage ID.
 
-        Coverage IDs follow the pattern ``{property}_{depth}_{statistic}``,
-        e.g. ``"clay_0-5cm_mean"``. This method extracts the second
-        underscore-separated token.
+        Coverage IDs follow the pattern ``{property}_{depth}_{statistic}``
+        where the property token may contain underscores (e.g.
+        ``"field_capacity_0-5cm_mean"``). Delegates to
+        :meth:`_split_coverage_id` for robust prefix-based parsing.
 
         Parameters
         ----------
@@ -450,18 +566,19 @@ class SoilPipeline(Pipeline):
         Returns
         -------
         str | None
-            Depth string such as ``"0-5cm"``, or ``None`` if the ID does
-            not contain at least three underscore-separated tokens.
+            Depth string such as ``"0-5cm"``, or ``None`` if the ID cannot
+            be matched against any known property token.
         """
-        parts = coverage_id.split("_")
-        return parts[1] if len(parts) >= 3 else None
+        parsed = self._split_coverage_id(coverage_id)
+        return parsed[1] if parsed is not None else None
 
     def _parse_statistic_from_coverage_id(self, coverage_id: str) -> str | None:
         """Return the statistic token from a coverage ID.
 
-        Coverage IDs follow the pattern ``{property}_{depth}_{statistic}``,
-        e.g. ``"clay_0-5cm_mean"``. This method extracts the third
-        underscore-separated token.
+        Coverage IDs follow the pattern ``{property}_{depth}_{statistic}``
+        where the property token may contain underscores (e.g.
+        ``"field_capacity_0-5cm_mean"``). Delegates to
+        :meth:`_split_coverage_id` for robust prefix-based parsing.
 
         Parameters
         ----------
@@ -472,19 +589,19 @@ class SoilPipeline(Pipeline):
         -------
         str | None
             Statistic string such as ``"mean"`` or ``"Q0.05"``, or ``None``
-            if the ID does not contain at least three underscore-separated
-            tokens.
+            if the ID cannot be matched against any known property token.
         """
-        parts = coverage_id.split("_")
-        return parts[2] if len(parts) >= 3 else None
+        parsed = self._split_coverage_id(coverage_id)
+        return parsed[2] if parsed is not None else None
 
     def _parse_property_from_description(self, description: str) -> str | None:
         """Return the canonical property name from a coverage ID.
 
-        Coverage IDs are raw strings like ``"clay_0-5cm_mean"`` or the API
-        service variant ``"phh2o_0-5cm_mean"``. The first underscore-separated
-        token is the property identifier; API aliases (``phh2o``, ``soc``) are
-        mapped back to the user-facing names (``ph``, ``carbon``).
+        Handles both single-word (``"clay_0-5cm_mean"``) and compound
+        (``"field_capacity_0-5cm_mean"``) property tokens, as well as raw
+        API service names (``"phh2o"``, ``"soc"``, ``"WCpF2"``), by
+        delegating to :meth:`_split_coverage_id` and then applying
+        :attr:`_API_TO_PIPELINE`.
 
         Parameters
         ----------
@@ -494,46 +611,47 @@ class SoilPipeline(Pipeline):
         Returns
         -------
         str | None
-            Canonical property name, or ``None`` if the token is not
-            recognised.
+            Canonical property name (e.g. ``"ph"``, ``"field_capacity"``),
+            or ``None`` if the description cannot be parsed.
         """
         try:
-            if "_" not in description:
+            parsed = self._split_coverage_id(description)
+            if parsed is None:
                 return None
-            prop_candidate = description.split("_")[0].lower()
-            prop_candidate = self._API_TO_PIPELINE.get(prop_candidate, prop_candidate)
-            canonical = ["clay", "sand", "silt", "ph", "carbon"]
-            return prop_candidate if prop_candidate in canonical else None
+            prop_token = parsed[0]
+            return self._API_TO_PIPELINE.get(prop_token, prop_token)
         except Exception:
             return None
 
     def _normalize_coverage_id(self, coverage_id: str) -> str:
         """Return *coverage_id* with any API property name replaced by its pipeline alias.
 
-        Stored coverage IDs may use either the SoilGrids API service name
-        (e.g. ``"soc_0-5cm_mean"``) or the pipeline alias
-        (e.g. ``"carbon_0-5cm_mean"``). This method normalises both forms to
-        the pipeline alias so they compare equal during delta computation.
+        Stored coverage IDs may use either an API service name
+        (e.g. ``"soc_0-5cm_mean"``, ``"WCpF2_0-5cm_mean"``) or the
+        canonical pipeline alias (``"carbon_0-5cm_mean"``,
+        ``"field_capacity_0-5cm_mean"``). This method normalises both forms
+        so they compare equal during delta computation. Delegates to
+        :meth:`_split_coverage_id` for robustness with compound names.
 
         Parameters
         ----------
         coverage_id : str
             Raw coverage ID, e.g. ``"soc_0-5cm_mean"`` or
-            ``"carbon_0-5cm_mean"``.
+            ``"field_capacity_0-5cm_mean"``.
 
         Returns
         -------
         str
             Coverage ID with the property token replaced by its canonical
-            pipeline name, e.g. ``"carbon_0-5cm_mean"``. Returns the
-            original string unchanged when the property token is already
-            canonical or is unknown.
+            pipeline name. Returns the original string unchanged when the
+            ID cannot be parsed.
         """
-        parts = coverage_id.split("_", 1)  # split only on the first underscore
-        if not parts:
+        parsed = self._split_coverage_id(coverage_id)
+        if parsed is None:
             return coverage_id
-        canonical_prop = self._API_TO_PIPELINE.get(parts[0], parts[0])
-        return f"{canonical_prop}_{parts[1]}" if len(parts) == 2 else coverage_id
+        prop_token, depth, statistic = parsed
+        canonical_prop = self._API_TO_PIPELINE.get(prop_token, prop_token)
+        return f"{canonical_prop}_{depth}_{statistic}"
 
     def update_data(
         self,
@@ -581,32 +699,13 @@ class SoilPipeline(Pipeline):
         if isinstance(depths, str):
             depths = [depths]
 
-        # --- Validate configured properties against known API names -----------
-        _known_api = {
-            "bdod",
-            "cec",
-            "cfvo",
-            "clay",
-            "nitrogen",
-            "ocd",
-            "ocs",
-            "phh2o",
-            "sand",
-            "silt",
-            "soc",
-            "wv0010",
-            "wv0033",
-            "wv1500",
-            "ph",
-            "carbon",
-        }
+        # --- Validate configured properties against all known property tokens --
         effective_properties = properties or self.properties
-        unrecognised = sorted(set(effective_properties) - _known_api)
+        unrecognised = sorted(set(effective_properties) - self._KNOWN_PROPERTIES)
         if unrecognised:
             logger.warning(
                 "Unrecognised propert%s in pipeline configuration: %s. "
-                "Call get_remote_available_properties() to see what the "
-                "SoilGrids API currently offers.",
+                "Call get_available_properties() to see what is stored locally.",
                 "y" if len(unrecognised) == 1 else "ies",
                 unrecognised,
             )
