@@ -103,9 +103,9 @@ class TestSoilGridsDownloaderInit:
     def test_germany_bbox_values_are_finite_floats(self, downloader) -> None:
         """All bounding-box values are finite floating-point numbers."""
         for key, val in downloader.germany_bbox.items():
-            assert isinstance(val, float), (
-                f"Expected float for key '{key}', got {type(val)}"
-            )
+            assert isinstance(
+                val, float
+            ), f"Expected float for key '{key}', got {type(val)}"
 
     def test_custom_properties_stored(self, downloader_custom) -> None:
         """Custom property list is stored unchanged."""

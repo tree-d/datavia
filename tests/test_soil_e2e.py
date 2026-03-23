@@ -22,10 +22,10 @@ import os
 
 import numpy as np
 import pytest
+from datavia.soil.pipeline import SoilPipeline
 
 from datavia.library.database.start import initialize_database
 from datavia.runner import get_container_status, start_container, stop_container
-from datavia.soil.pipeline import SoilPipeline
 
 logging.basicConfig(level=logging.INFO)
 
@@ -103,9 +103,9 @@ def test_soilgrids_coverage_downloaded_and_retrievable(live_database) -> None:
 
     # Verify the coverage is registered in the database.
     stored = pipeline.getter.get_stored_coverage_ids()
-    assert any("clay" in cid for cid in stored), (
-        f"No clay coverage found in stored IDs: {stored}"
-    )
+    assert any(
+        "clay" in cid for cid in stored
+    ), f"No clay coverage found in stored IDs: {stored}"
 
     # Retrieve values at German city coordinates.
     values = pipeline.get_data(
@@ -120,9 +120,9 @@ def test_soilgrids_coverage_downloaded_and_retrievable(live_database) -> None:
     if isinstance(values, dict):
         values = values.get(_SOILGRIDS_COVERAGE_ID, np.array([]))
 
-    assert len(values) == len(_GERMAN_COORDS), (
-        "Expected one value per input coordinate."
-    )
+    assert len(values) == len(
+        _GERMAN_COORDS
+    ), "Expected one value per input coordinate."
     assert not np.all(np.isnan(values)), "All returned values are NaN."
 
     # Plausibility: raw values are g/kg integer-scaled; divide by 10 for %.
@@ -161,9 +161,9 @@ def test_hihydrosoil_coverage_downloaded_and_retrievable(live_database) -> None:
     )
 
     stored = pipeline.getter.get_stored_coverage_ids()
-    assert any("field_capacity" in cid for cid in stored), (
-        f"No field_capacity coverage found in stored IDs: {stored}"
-    )
+    assert any(
+        "field_capacity" in cid for cid in stored
+    ), f"No field_capacity coverage found in stored IDs: {stored}"
 
     values = pipeline.get_data(
         coords=_GERMAN_COORDS,
@@ -217,15 +217,15 @@ def test_multi_source_pipeline_returns_dict_keyed_by_coverage_id(
         crs_coords="EPSG:4326",
     )
 
-    assert isinstance(result, dict), (
-        "Expected a dict when multiple coverage IDs match the request."
-    )
-    assert _SOILGRIDS_COVERAGE_ID in result, (
-        f"'{_SOILGRIDS_COVERAGE_ID}' missing from result keys: {list(result)}"
-    )
-    assert _HIHYDROSOIL_COVERAGE_ID in result, (
-        f"'{_HIHYDROSOIL_COVERAGE_ID}' missing from result keys: {list(result)}"
-    )
+    assert isinstance(
+        result, dict
+    ), "Expected a dict when multiple coverage IDs match the request."
+    assert (
+        _SOILGRIDS_COVERAGE_ID in result
+    ), f"'{_SOILGRIDS_COVERAGE_ID}' missing from result keys: {list(result)}"
+    assert (
+        _HIHYDROSOIL_COVERAGE_ID in result
+    ), f"'{_HIHYDROSOIL_COVERAGE_ID}' missing from result keys: {list(result)}"
 
     for cov_id, values in result.items():
         assert len(values) == len(_GERMAN_COORDS), (
@@ -267,9 +267,9 @@ def test_second_update_data_call_skips_already_stored_coverages(
     pipeline2.sync_files_and_database()
 
     second_result = pipeline2.update_data()
-    assert second_result is True, (
-        "Second update_data() call failed even though coverage is already stored."
-    )
+    assert (
+        second_result is True
+    ), "Second update_data() call failed even though coverage is already stored."
 
 
 # ---------------------------------------------------------------------------
@@ -319,9 +319,9 @@ def test_configure_then_update_downloads_new_coverage(live_database) -> None:
     pipeline.configure(properties=["clay", "sand"], depths=["0-5cm"])
     second_result = pipeline.update_data()
 
-    assert second_result is True, (
-        "update_data() after configure() returned False. sand coverage download failed."
-    )
+    assert (
+        second_result is True
+    ), "update_data() after configure() returned False. sand coverage download failed."
 
     available = pipeline.get_available_properties()
     assert "clay" in available
