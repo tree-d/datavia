@@ -14,6 +14,7 @@ Planned extensions:
 import logging
 import os
 import tempfile
+from typing import ClassVar
 
 import numpy as np
 
@@ -135,10 +136,10 @@ class SoilPipeline(Pipeline):
     """
 
     #: Maps SoilGrids API property names to canonical pipeline names.
-    _API_TO_PIPELINE: dict[str, str] = {"phh2o": "ph", "soc": "carbon"}
+    _API_TO_PIPELINE: ClassVar[dict[str, str]] = {"phh2o": "ph", "soc": "carbon"}
 
     #: Reverse mapping: canonical pipeline name → SoilGrids API service ID.
-    _PIPELINE_TO_API: dict[str, str] = {"ph": "phh2o", "carbon": "soc"}
+    _PIPELINE_TO_API: ClassVar[dict[str, str]] = {"ph": "phh2o", "carbon": "soc"}
 
     def __init__(
         self,
