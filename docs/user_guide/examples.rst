@@ -120,7 +120,7 @@ Combine elevation and soil data for environmental analysis:
     ...         'Elevation_m': elevations,
     ...         'Clay_pct': soil_data['clay_0-5cm_mean'] / 10,    # SoilGrids g/kg → %
     ...         'Soil_pH': soil_data['ph_0-5cm_mean'] / 10,       # SoilGrids pH×10 → pH
-    ...         'SOC_permille': soil_data['carbon_0-5cm_mean'],    # Organic carbon content ‰
+    ...         'SOC_g_per_kg': soil_data['carbon_0-5cm_mean'] / 10,  # dg/kg → g/kg
     ...     })
     ...     
     ...     # Display results

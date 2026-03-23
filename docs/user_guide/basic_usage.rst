@@ -108,8 +108,8 @@ You can request a subset of properties with the ``properties`` keyword:
     Silt:  14.4 %
     >>> _ = print(f"pH:    {soil_data['ph_0-5cm_mean'][0] / 10:.2f}")        # doctest: +SKIP
     pH:    5.35
-    >>> _ = print(f"SOC:   {soil_data['carbon_0-5cm_mean'][0]:.1f} ‰")       # doctest: +SKIP
-    SOC:   781.6 ‰
+    >>> _ = print(f"SOC:   {soil_data['carbon_0-5cm_mean'][0] / 10:.1f} g/kg")      # doctest: +SKIP
+    SOC:   78.2 g/kg
     >>>
     >>> # HiHydroSoil hydraulic properties are stored as integers ×10 000;
     >>> # multiply by 0.0001 to get physical units (cm³/cm³ or cm/day for Ksat).

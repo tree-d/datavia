@@ -53,7 +53,7 @@ print(f"Clay:  {soil_data['clay_0-5cm_mean'] / 10:.1f} %")      # g/kg → %
 print(f"Sand:  {soil_data['sand_0-5cm_mean'] / 10:.1f} %")
 print(f"Silt:  {soil_data['silt_0-5cm_mean'] / 10:.1f} %")
 print(f"pH:    {soil_data['ph_0-5cm_mean'] / 10:.2f}")           # pH×10 → pH
-print(f"SOC:   {soil_data['carbon_0-5cm_mean']:.1f} ‰")
+print(f"SOC:   {soil_data['carbon_0-5cm_mean'] / 10:.1f} g/kg")  # dg/kg → g/kg
 
 # HiHydroSoil values are stored as integers × 10 000 → multiply by 0.0001
 print(f"Field capacity:         {soil_data['field_capacity_0-5cm_mean'] * 0.0001:.4f} cm³/cm³")
@@ -91,24 +91,24 @@ print(soil.get_available_properties())
 
 ## Properties
 
-| Canonical name            | Source        | Unit (raw)         | Notes                         |
-|---------------------------|---------------|--------------------|-------------------------------|
-| `clay`                    | SoilGrids     | g/kg (÷10 → %)     |                               |
-| `sand`                    | SoilGrids     | g/kg (÷10 → %)     |                               |
-| `silt`                    | SoilGrids     | g/kg (÷10 → %)     |                               |
-| `ph`                      | SoilGrids     | pH×10 (÷10 → pH)   | API name: `phh2o`             |
-| `carbon`                  | SoilGrids     | dg/kg (‰)          | API name: `soc`               |
-| `bdod`                    | SoilGrids     | cg/cm³             | Bulk density                  |
-| `cec`                     | SoilGrids     | mmol(c)/kg         | Cation exchange capacity      |
-| `cfvo`                    | SoilGrids     | cm³/100cm³         | Coarse fragments              |
-| `nitrogen`                | SoilGrids     | cg/kg              |                               |
-| `ocd`                     | SoilGrids     | hg/m³              | Organic carbon density        |
-| `ocs`                     | SoilGrids     | t/ha               | Organic carbon stock          |
-| `wv0010`, `wv0033`, `wv1500` | SoilGrids  | cm³/100cm³         | Volumetric water content      |
-| `field_capacity`          | HiHydroSoil   | int (×10⁴); ×0.0001 → cm³/cm³  | API name: `WCpF2`    |
-| `wilting_point`           | HiHydroSoil   | int (×10⁴); ×0.0001 → cm³/cm³  | API name: `WCpF4.2`  |
-| `porosity`                | HiHydroSoil   | int (×10⁴); ×0.0001 → cm³/cm³  | API name: `WCsat`    |
-| `hydraulic_conductivity`  | HiHydroSoil   | int (×10⁴); ×0.0001 → cm/day   | API name: `Ksat`     |
+| Canonical name               | Source      | Mapped unit (raw)          | ÷ factor | Conventional unit       | Notes                        |
+|------------------------------|-------------|----------------------------|----------|-------------------------|------------------------------|
+| `clay`                       | SoilGrids   | g/kg                       | 10       | g/100g (%)              |                              |
+| `sand`                       | SoilGrids   | g/kg                       | 10       | g/100g (%)              |                              |
+| `silt`                       | SoilGrids   | g/kg                       | 10       | g/100g (%)              |                              |
+| `ph`                         | SoilGrids   | pH×10                      | 10       | pH                      | API name: `phh2o`            |
+| `carbon`                     | SoilGrids   | dg/kg                      | 10       | g/kg                    | API name: `soc`              |
+| `bdod`                       | SoilGrids   | cg/cm³                     | 100      | kg/dm³                  | Bulk density                 |
+| `cec`                        | SoilGrids   | mmol(c)/kg                 | 10       | cmol(c)/kg              | Cation exchange capacity     |
+| `cfvo`                       | SoilGrids   | cm³/dm³ (vol‰)             | 100      | cm³/100cm³ (vol%)       | Coarse fragments             |
+| `nitrogen`                   | SoilGrids   | cg/kg                      | 100      | g/kg                    |                              |
+| `ocd`                        | SoilGrids   | hg/m³                      | 10       | kg/m³                   | Organic carbon density       |
+| `ocs`                        | SoilGrids   | t/ha                       | 10       | kg/m²                   | Organic carbon stock         |
+| `wv0010`, `wv0033`, `wv1500` | SoilGrids   | 10⁻³ cm³/cm³               | 10       | 10⁻² cm³/cm³ (v%)       | Volumetric water content     |
+| `field_capacity`             | HiHydroSoil | int (×10⁴)                 | 10 000   | cm³/cm³                 | API name: `WCpF2`            |
+| `wilting_point`              | HiHydroSoil | int (×10⁴)                 | 10 000   | cm³/cm³                 | API name: `WCpF4.2`          |
+| `porosity`                   | HiHydroSoil | int (×10⁴)                 | 10 000   | cm³/cm³                 | API name: `WCsat`            |
+| `hydraulic_conductivity`     | HiHydroSoil | int (×10⁴)                 | 10 000   | cm/day                  | API name: `Ksat`             |
 
 ### SoilGrids depth layers
 `"0-5cm"`, `"0-30cm"`, `"5-15cm"`, `"15-30cm"`, `"30-60cm"`, `"60-100cm"`, `"100-200cm"`
