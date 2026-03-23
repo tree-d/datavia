@@ -33,18 +33,14 @@ Available Pipelines
     >>> # German elevation data from BKG DGM200 (200m resolution)
     >>> elevation_pipeline = ElevationPipeline()
 
-**Soil Pipeline** (In development)
+**Soil Pipeline**
 
 .. doctest::
 
-    >>> try:
-    ...     from datavia.soil import SoilPipeline
-    ... except ImportError:
-    ...     SoilPipeline = None
+    >>> from datavia.soil import SoilPipeline
     >>> 
-    >>> # Soil properties from SoilGrids API
-    >>> if SoilPipeline is not None:  # doctest: +SKIP
-    ...     soil_pipeline = SoilPipeline()  # doctest: +SKIP
+    >>> # Soil properties from SoilGrids and HiHydroSoil
+    >>> soil_pipeline = SoilPipeline()
 
 Coordinate Systems
 ------------------
@@ -76,9 +72,13 @@ All pipelines accept coordinates in **EPSG:4326** (longitude, latitude) format:
 Getting Soil Data
 -----------------
 
-The soil pipeline returns **one array per requested property** (a ``dict[str, np.ndarray]``).
-Default properties are ``clay``, ``sand``, ``silt``, ``ph``, and ``carbon``. SoilGrids units
-are raw integer-scaled values (e.g. clay in g/kg, pH×10), so divide as needed.
+The soil pipeline integrates **SoilGrids** (WCS API) and **HiHydroSoil** (HTTP GeoTIFF
+catalogue) into a single interface. ``get_data()`` returns a
+``dict[str, np.ndarray]`` keyed by **coverage ID** — which encodes the property,
+depth layer, and statistic, e.g. ``"clay_0-5cm_mean"``.
+For single-coverage requests it returns a plain ``np.ndarray`` instead.
+
+SoilGrids values are integer-scaled (clay in g/kg, pH×10), so divide as needed.
 
 You can request a subset of properties with the ``properties`` keyword:
 
@@ -87,40 +87,48 @@ You can request a subset of properties with the ``properties`` keyword:
     >>> from datavia.soil import SoilPipeline
     >>> import numpy as np
     >>>
-    >>> # Initialize pipeline with desired properties
-    >>> pipeline = SoilPipeline(properties=["clay", "sand", "silt", "ph", "carbon"])
+    >>> # Initialize pipeline (default properties: clay, sand, silt, ph, carbon,
+    >>> # field_capacity, wilting_point, porosity, hydraulic_conductivity)
+    >>> pipeline = SoilPipeline()
     >>> _ = pipeline()           # Initialize components # doctest: +SKIP
     >>> _ = pipeline.update_data()  # Download data if not yet available # doctest: +SKIP
     >>>
     >>> # Define coordinates
     >>> coords = np.array([[13.4050, 52.5200]])  # Berlin
     >>>
-    >>> # Get soil data - returns dict[str, np.ndarray]
+    >>> # Get soil data - returns dict[str, np.ndarray] keyed by coverage ID
     >>> soil_data = pipeline.get_data(coords=coords, crs_coords="EPSG:4326")  # doctest: +SKIP
     >>>
-    >>> # Access individual properties (SoilGrids raw units: clay g/kg, pH×10)
-    >>> _ = print(f"Clay:  {soil_data['clay'][0] / 10:.1f} %")   # doctest: +SKIP
+    >>> # Access SoilGrids properties — keys are coverage IDs, e.g. "clay_0-5cm_mean"
+    >>> _ = print(f"Clay:  {soil_data['clay_0-5cm_mean'][0] / 10:.1f} %")   # doctest: +SKIP
     Clay:  29.4 %
-    >>> _ = print(f"Sand:  {soil_data['sand'][0] / 10:.1f} %")   # doctest: +SKIP
+    >>> _ = print(f"Sand:  {soil_data['sand_0-5cm_mean'][0] / 10:.1f} %")   # doctest: +SKIP
     Sand:  56.3 %
-    >>> _ = print(f"Silt:  {soil_data['silt'][0] / 10:.1f} %")   # doctest: +SKIP
+    >>> _ = print(f"Silt:  {soil_data['silt_0-5cm_mean'][0] / 10:.1f} %")   # doctest: +SKIP
     Silt:  14.4 %
-    >>> _ = print(f"pH:    {soil_data['ph'][0] / 10:.2f}")        # doctest: +SKIP
+    >>> _ = print(f"pH:    {soil_data['ph_0-5cm_mean'][0] / 10:.2f}")        # doctest: +SKIP
     pH:    5.35
-    >>> _ = print(f"SOC:   {soil_data['carbon'][0]:.1f} ‰")       # doctest: +SKIP
+    >>> _ = print(f"SOC:   {soil_data['carbon_0-5cm_mean'][0]:.1f} ‰")       # doctest: +SKIP
     SOC:   781.6 ‰
     >>>
-    >>> # Or request only specific properties
+    >>> # HiHydroSoil hydraulic properties are stored as integers ×10 000;
+    >>> # multiply by 0.0001 to get physical units (cm³/cm³ or cm/day for Ksat).
+    >>> _ = print(f"Field capacity: {soil_data['field_capacity_0-5cm_mean'][0] * 0.0001:.4f} cm³/cm³")  # doctest: +SKIP
+    >>> _ = print(f"Wilting point:  {soil_data['wilting_point_0-5cm_mean'][0] * 0.0001:.4f} cm³/cm³")   # doctest: +SKIP
+    >>> _ = print(f"Porosity:       {soil_data['porosity_0-5cm_mean'][0] * 0.0001:.4f} cm³/cm³")        # doctest: +SKIP
+    >>>
+    >>> # Single-property request — returns np.ndarray directly (not a dict)
     >>> soil_ph = pipeline.get_data(  # doctest: +SKIP
     ...     coords=coords,
     ...     properties=["ph"],
+    ...     depths=["0-5cm"],
     ...     crs_coords="EPSG:4326",
     ... )
-    >>> _ = print(f"pH only: {soil_ph['ph'][0] / 10:.2f}")  # doctest: +SKIP
+    >>> _ = print(f"pH only: {soil_ph[0] / 10:.2f}")  # doctest: +SKIP
     pH only: 5.35
     >>>
     >>> # Verify the return type without a live pipeline
-    >>> isinstance({"clay": np.array([294.0])}, dict)
+    >>> isinstance({"clay_0-5cm_mean": np.array([294.0])}, dict)
     True
 
 Getting Elevation Data

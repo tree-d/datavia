@@ -53,8 +53,6 @@ class CompositeDownloader(Downloader):
               absent. Useful because HiHydroSoil supports depths that
               SoilGrids does not (e.g. ``"15-30cm"``).
         """
-        self.config = config
-
         # Build per-backend configs, splitting the shared property list so
         # each backends only receives components it recognises.
         hihydro_known = set(HiHydroSoilDownloader._CANONICAL_TO_PREFIX)

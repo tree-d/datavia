@@ -74,7 +74,6 @@ class HiHydroSoilDownloader(Downloader):
             - ``statistic`` (str): Statistical summary to retrieve.
               Only ``"mean"`` is currently supported. Defaults to ``"mean"``.
         """
-        self.config = config
         self.priority_properties: list[str] = config.get(
             "properties",
             [

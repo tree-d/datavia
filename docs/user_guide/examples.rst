@@ -108,7 +108,8 @@ Combine elevation and soil data for environmental analysis:
     ...     
     ...     # Get environmental data
     ...     elevations = dv.elevation.get_data(coords=coords, crs_coords="EPSG:4326")
-    ...     # SoilPipeline.get_data() returns dict[str, np.ndarray] - one array per property
+    ...     # get_data() returns dict[str, np.ndarray] keyed by coverage ID,
+    ...     # e.g. {"clay_0-5cm_mean": array([...]), "ph_0-5cm_mean": array([...]), ...}
     ...     soil_data = dv.soil.get_data(coords=coords, crs_coords="EPSG:4326")
     ...     
     ...     # Create analysis dataframe
@@ -117,9 +118,9 @@ Combine elevation and soil data for environmental analysis:
     ...         'Longitude': coords[:, 0],
     ...         'Latitude': coords[:, 1],
     ...         'Elevation_m': elevations,
-    ...         'Clay_pct': soil_data['clay'] / 10,    # SoilGrids unit: g/kg → %
-    ...         'Soil_pH': soil_data['ph'] / 10,       # SoilGrids unit: pH×10
-    ...         'SOC_permille': soil_data['carbon'],   # Organic carbon content ‰
+    ...         'Clay_pct': soil_data['clay_0-5cm_mean'] / 10,    # SoilGrids g/kg → %
+    ...         'Soil_pH': soil_data['ph_0-5cm_mean'] / 10,       # SoilGrids pH×10 → pH
+    ...         'SOC_permille': soil_data['carbon_0-5cm_mean'],    # Organic carbon content ‰
     ...     })
     ...     
     ...     # Display results
