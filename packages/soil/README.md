@@ -1,20 +1,11 @@
 # Datavia Soil Pipeline
 
 Soil data pipeline for the Datavia geospatial data integration system.
-
-## ⚠️ Development Status Warning
-
-**This package is currently under active development and has known structural issues:**
-
-- **Interface Incompatibility**: `SoilPipeline.__call__` passes `url=None`, but the core `Pipeline.__call__` requires a valid URL parameter. Calling `SoilPipeline()` followed by `pipeline()` will raise a `ValueError`.
-
-- **Downloader Configuration Mismatch**: `SoilGridsDownloader` expects a dictionary config, but the Pipeline base class passes a string URL. The constructor signatures are incompatible.
-
-- **Missing Methods**: Uses `self.saver.get_my_raster_layers`, `self.saver.save_tiff_metadata`, and `super().get_data_info()` which are not defined in the core base classes.
-
-- **Import Path Issues**: Imports `from ..config import get_config` but config is in the core datavia package. Should be `from datavia.config import get_config`.
-
-**Recommendation**: This package is not production-ready. Use with caution and expect API changes. Consider using the elevation pipeline for stable functionality until soil pipeline development is complete.
+Integrates two remote sources — **SoilGrids** (WCS API) and **HiHydroSoil**
+(HTTP GeoTIFF catalogue) — through a single `SoilPipeline` interface backed by
+a `CompositeDownloader` that routes each coverage to the correct backend.
+All data is registered as individual single-band GeoTIFF layers in PostGIS.
+Downloads are incremental: only missing coverages are fetched on each call.
 
 ## Installation
 
@@ -36,40 +27,134 @@ pip install dist/datavia-*.whl dist/datavia_soil-*.whl
 
 ```python
 from datavia import Datavia
+from datavia.soil import SoilPipeline
 import numpy as np
 
-try:
-    from datavia.soil import SoilPipeline
-    
-    # Initialize soil pipeline
-    soil = SoilPipeline()
-    
-    # Create controller
-    dv = Datavia(pipelines=[soil])
-    dv()
-    
-    # Get soil data for coordinates (longitude, latitude)
-    coords = np.array([[10.0, 50.0], [11.0, 51.0]])
-    soil_data = soil.get_data(coords=coords, crs_coords="EPSG:4326")
-    
-    # Access soil properties
-    print(f"Clay content: {soil_data['clay']} %")
-    print(f"Sand content: {soil_data['sand']} %") 
-    print(f"Silt content: {soil_data['silt']} %")
-    print(f"pH values: {soil_data['ph']}")
-    print(f"Organic carbon: {soil_data['carbon']} ‰")
-    
-except ImportError:
-    print("Soil pipeline not installed. Install with: pip install datavia[soil]")
+# Initialize pipeline (defaults: clay, sand, silt, ph, carbon +
+# field_capacity, wilting_point, porosity, hydraulic_conductivity)
+soil = SoilPipeline()
+
+# Create controller and initialise all components
+dv = Datavia(pipelines=[soil])
+dv()
+
+# Download missing coverages (incremental — safe to call repeatedly)
+soil.update_data()
+
+# Get soil data for coordinates (longitude, latitude in EPSG:4326)
+coords = np.array([[10.0, 50.0], [11.0, 51.0]])
+
+# get_data() returns dict[str, np.ndarray] keyed by coverage ID,
+# e.g. {"clay_0-5cm_mean": array([...]), "sand_0-5cm_mean": array([...]), ...}
+soil_data = soil.get_data(coords=coords, crs_coords="EPSG:4326")
+
+# SoilGrids values are integer-scaled — convert to common units:
+print(f"Clay:  {soil_data['clay_0-5cm_mean'] / 10:.1f} %")      # g/kg → %
+print(f"Sand:  {soil_data['sand_0-5cm_mean'] / 10:.1f} %")
+print(f"Silt:  {soil_data['silt_0-5cm_mean'] / 10:.1f} %")
+print(f"pH:    {soil_data['ph_0-5cm_mean'] / 10:.2f}")           # pH×10 → pH
+print(f"SOC:   {soil_data['carbon_0-5cm_mean']:.1f} ‰")
+
+# HiHydroSoil values are stored as integers × 10 000 → multiply by 0.0001
+print(f"Field capacity:         {soil_data['field_capacity_0-5cm_mean'] * 0.0001:.4f} cm³/cm³")
+print(f"Wilting point:          {soil_data['wilting_point_0-5cm_mean'] * 0.0001:.4f} cm³/cm³")
+print(f"Porosity:               {soil_data['porosity_0-5cm_mean'] * 0.0001:.4f} cm³/cm³")
+print(f"Hydraulic conductivity: {soil_data['hydraulic_conductivity_0-5cm_mean'] * 0.0001:.4f} cm/day")
 ```
 
-## Data Source
+### Requesting specific properties and depths
 
-- **Source**: SoilGrids API (ISRIC - World Soil Information)
-- **Resolution**: 250m
-- **Coverage**: Germany (selective download strategy)
-- **Format**: Multi-band GeoTIFF
-- **Properties**: Clay, sand, silt, pH, organic carbon content
+```python
+# Single property, single depth → returns np.ndarray directly (not a dict)
+clay_values = soil.get_data(
+    coords=coords,
+    properties=["clay"],
+    depths=["0-5cm"],
+    crs_coords="EPSG:4326",
+)
+
+# Reconfigure the pipeline for a different property set
+soil.configure(
+    properties=["clay", "ph", "field_capacity"],
+    depths=["0-5cm", "5-15cm"],
+)
+soil.update_data()  # download any newly requested coverages
+```
+
+### Checking available data
+
+```python
+# Properties currently stored in the local database
+print(soil.get_available_properties())
+# ['clay', 'carbon', 'field_capacity', 'hydraulic_conductivity', ...]
+```
+
+## Properties
+
+| Canonical name            | Source        | Unit (raw)         | Notes                         |
+|---------------------------|---------------|--------------------|-------------------------------|
+| `clay`                    | SoilGrids     | g/kg (÷10 → %)     |                               |
+| `sand`                    | SoilGrids     | g/kg (÷10 → %)     |                               |
+| `silt`                    | SoilGrids     | g/kg (÷10 → %)     |                               |
+| `ph`                      | SoilGrids     | pH×10 (÷10 → pH)   | API name: `phh2o`             |
+| `carbon`                  | SoilGrids     | dg/kg (‰)          | API name: `soc`               |
+| `bdod`                    | SoilGrids     | cg/cm³             | Bulk density                  |
+| `cec`                     | SoilGrids     | mmol(c)/kg         | Cation exchange capacity      |
+| `cfvo`                    | SoilGrids     | cm³/100cm³         | Coarse fragments              |
+| `nitrogen`                | SoilGrids     | cg/kg              |                               |
+| `ocd`                     | SoilGrids     | hg/m³              | Organic carbon density        |
+| `ocs`                     | SoilGrids     | t/ha               | Organic carbon stock          |
+| `wv0010`, `wv0033`, `wv1500` | SoilGrids  | cm³/100cm³         | Volumetric water content      |
+| `field_capacity`          | HiHydroSoil   | int (×10⁴); ×0.0001 → cm³/cm³  | API name: `WCpF2`    |
+| `wilting_point`           | HiHydroSoil   | int (×10⁴); ×0.0001 → cm³/cm³  | API name: `WCpF4.2`  |
+| `porosity`                | HiHydroSoil   | int (×10⁴); ×0.0001 → cm³/cm³  | API name: `WCsat`    |
+| `hydraulic_conductivity`  | HiHydroSoil   | int (×10⁴); ×0.0001 → cm/day   | API name: `Ksat`     |
+
+### SoilGrids depth layers
+`"0-5cm"`, `"0-30cm"`, `"5-15cm"`, `"15-30cm"`, `"30-60cm"`, `"60-100cm"`, `"100-200cm"`
+(default: `["0-5cm", "5-15cm"]`)
+
+### HiHydroSoil depth layers
+`"0-5cm"`, `"5-15cm"`, `"15-30cm"`, `"30-60cm"`, `"60-100cm"`, `"100-200cm"`
+(default: all six)
+
+### Statistics
+SoilGrids: `"Q0.05"`, `"Q0.5"`, `"Q0.95"`, `"mean"`, `"uncertainty"` (default: `"mean"`)
+HiHydroSoil: `"mean"` only
+
+## Data Sources
+
+| Source        | Protocol     | Resolution | Coverage          |
+|---------------|--------------|------------|-------------------|
+| SoilGrids     | WCS API      | 250 m      | Germany (bbox)    |
+| HiHydroSoil   | HTTP vsicurl | 250 m      | Germany (clip)    |
+
+- **SoilGrids**: [ISRIC – World Soil Information](https://www.isric.org/)
+- **HiHydroSoil**: [BioDT OpenDAP catalogue](http://opendap.biodt.eu/grasslands-pdt/soilMapsHiHydroSoil/)
+
+## Data Licensing & Attribution
+
+### SoilGrids
+
+SoilGrids maps are published under the
+[Creative Commons Attribution 4.0 International Licence (CC-BY 4.0)](https://creativecommons.org/licenses/by/4.0/).
+Any publication or product that uses SoilGrids data **must cite**:
+
+> Poggio, L., de Sousa, L. M., Batjes, N. H., Heuvelink, G. B. M., Kempen, B.,
+> Ribeiro, E., and Rossiter, D.: SoilGrids 2.0: producing soil information for the
+> globe with quantified spatial uncertainty,
+> *SOIL*, 7, 217–240, 2021.
+> [https://doi.org/10.5194/soil-7-217-2021](https://doi.org/10.5194/soil-7-217-2021)
+
+### HiHydroSoil
+
+HiHydroSoil v2.0 is free to use and redistribute **with attribution**
+(see [License\_HHSv2.txt](http://opendap.biodt.eu/grasslands-pdt/soilMapsHiHydroSoil/License_HHSv2.txt)).
+Any publication or product that uses HiHydroSoil data **must include**:
+
+> Simons, G.W.H., R. Koster, P. Droogers. 2020.
+> HiHydroSoil v2.0 – A high resolution soil map of global hydraulic properties.
+> FutureWater Report 213.
 
 ## Dependencies
 

@@ -43,8 +43,6 @@ class SoilGridsDownloader(Downloader):
             - ``statistic`` (str): Statistical summary to retrieve.
               Defaults to ``"mean"``.
         """
-        self.config = config
-
         self.sg = SoilGrids()
         logger.info("SoilGrids package initialized successfully")
 

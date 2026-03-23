@@ -19,10 +19,10 @@ Datavia uses a modular architecture where **pipelines** combine three core compo
 
 Available pipeline packages:
 
-* **Elevation Pipeline** (``datavia[elevation]``): German BKG DGM200 (200m resolution)
-* **Soil Pipeline** (``datavia[soil]``): SoilGrids API with selective download (280MB strategy)
-* **Weather Pipeline** (``datavia[weather]``): Planned - DWD weather data
-* **Radiation Pipeline**: Planned - CAMS radiation data
+* **Elevation Pipeline** (``datavia[elevation]``): German BKG DGM200 (200 m resolution)
+* **Soil Pipeline** (``datavia[soil]``): SoilGrids (WCS) + HiHydroSoil (HTTP GeoTIFF) — incremental download per coverage
+* **Weather Pipeline** (``datavia[weather]``): Planned — DWD weather data
+* **Radiation Pipeline**: Planned — CAMS radiation data
 
 Quick Start
 -----------
@@ -100,17 +100,18 @@ Core Interfaces
 Current Data Sources
 ~~~~~~~~~~~~~~~~~~~~
 
-**✅ Elevation Data (Working)**
+**✅ Elevation Data**
 
-* **Source**: BKG DGM200 German elevation model (200m resolution)
+* **Source**: BKG DGM200 German elevation model (200 m resolution)
 * **Pipeline**: ``ElevationPipeline`` in ``datavia.elevation`` namespace package
-* **Usage**: Fully functional, tested with Berlin (~35.5m), Munich (~511.9m)
+* **Usage**: Fully functional, tested with Berlin (~35.5 m), Munich (~511.9 m)
 
-**🔄 Soil Data (In Development)**
+**✅ Soil Data**
 
-* **Source**: SoilGrids API (properties like clay%, pH, organic carbon)
+* **Sources**: SoilGrids API (clay, sand, silt, pH, carbon, …) and HiHydroSoil catalogue
+  (field capacity, wilting point, porosity, hydraulic conductivity)
 * **Pipeline**: ``SoilPipeline`` in ``datavia.soil`` namespace package
-* **Status**: API integration in progress
+* **Download**: Incremental — one single-band GeoTIFF per coverage ID
 
 System Management
 ~~~~~~~~~~~~~~~~~
@@ -146,6 +147,46 @@ Development Setup
     
     # Run tests
     pytest
+
+Data Licensing & Attribution
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Data downloaded by Datavia's pipelines is subject to the following third-party
+licences. **Any application or publication that uses data obtained through
+Datavia must comply with these requirements.**
+
+**Elevation — BKG DGM200**
+   Licence: Datenlizenz Deutschland – Namensnennung – Version 2.0
+   (`dl-de/by-2-0 <https://www.govdata.de/dl-de/by-2-0>`_)
+
+   Required attribution notice (Quellenvermerk):
+
+   .. code-block:: text
+
+      © GeoBasis-DE / BKG (year of last data access) dl-de/by-2-0 (Daten verändert)
+
+**Soil — SoilGrids (ISRIC)**
+   Licence: `Creative Commons Attribution 4.0 (CC-BY 4.0)
+   <https://creativecommons.org/licenses/by/4.0/>`_
+
+   Required citation:
+
+      Poggio, L., de Sousa, L. M., Batjes, N. H., Heuvelink, G. B. M., Kempen, B.,
+      Ribeiro, E., and Rossiter, D.: SoilGrids 2.0: producing soil information for the
+      globe with quantified spatial uncertainty,
+      *SOIL*, 7, 217–240, 2021.
+      https://doi.org/10.5194/soil-7-217-2021
+
+**Soil — HiHydroSoil v2.0 (FutureWater)**
+   Licence: Free use with attribution
+   (see `License_HHSv2.txt
+   <http://opendap.biodt.eu/grasslands-pdt/soilMapsHiHydroSoil/License_HHSv2.txt>`_)
+
+   Required citation:
+
+      Simons, G.W.H., R. Koster, P. Droogers. 2020.
+      HiHydroSoil v2.0 – A high resolution soil map of global hydraulic properties.
+      FutureWater Report 213.
 
 Documentation
 =============

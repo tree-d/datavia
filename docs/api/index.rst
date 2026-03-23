@@ -111,6 +111,30 @@ Soil Pipeline
    :undoc-members:
    :show-inheritance:
 
+SoilGrids Downloader
+~~~~~~~~~~~~~~~~~~~~
+
+.. automodule:: datavia.soil.soilgrids_downloader
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+HiHydroSoil Downloader
+~~~~~~~~~~~~~~~~~~~~~~
+
+.. automodule:: datavia.soil.hihydrosoil_downloader
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Composite Downloader
+~~~~~~~~~~~~~~~~~~~~
+
+.. automodule:: datavia.soil.composite_downloader
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 Configuration
 -------------
 
