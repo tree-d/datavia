@@ -80,8 +80,6 @@ dev = [
     "pytest-cov>=7.0.0,<8.0",
     "pytest-mock>=3.14.1,<4.0",
     "xdoctest>=1.1.0,<2.0",
-    "black>=24.0.0,<25.0",
-    "isort>=5.13.0,<6.0",
     "ruff>=0.8.0,<1.0",
     "mypy>=1.13.0,<2.0",
     "bandit>=1.9.3,<2.0",
@@ -147,35 +145,6 @@ packages = ["datavia"]
 [tool.hatch.metadata]
 allow-direct-references = true
 
-# Development tools configuration
-[tool.black]
-line-length = 88
-target-version = ['py312']
-include = '\.pyi?$'
-extend-exclude = '''
-/(
-  # directories
-  \.eggs
-  | \.git
-  | \.hg
-  | \.mypy_cache
-  | \.tox
-  | \.venv
-  | build
-  | dist
-)/
-'''
-
-[tool.isort]
-profile = "black"
-line_length = 88
-multi_line_output = 3
-include_trailing_comma = true
-force_grid_wrap = 0
-use_parentheses = true
-ensure_newline_before_comments = true
-src_paths = ["datavia", "tests"]
-
 [tool.ruff]
 line-length = 88
 target-version = "py312"
@@ -197,7 +166,7 @@ select = [
     "PLW", # pylint warnings
 ]
 ignore = [
-    "E501", # line too long (handled by black)
+    "E501", # line too long (handled by ruff format)
     "B008", # do not perform function calls in argument defaults
     "N999", # invalid module name (for packages)
 ]
@@ -206,6 +175,11 @@ ignore = [
 # Enforce naming conventions per coding standards AC1+ and AC2+
 # Allow leading underscores for private/protected (Python convention AC2+)
 ignore-names = ["_*", "__*"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
 
 [tool.mypy]
 python_version = "3.12"

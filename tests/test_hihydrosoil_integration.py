@@ -376,6 +376,6 @@ class TestCompositeDownloaderGetCoverageIds:
         hihydro_props = set(HiHydroSoilDownloader._CANONICAL_TO_PREFIX)
         for cid in composite_downloader.soilgrids.get_coverage_ids():
             prop = CompositeDownloader._property_token(cid)
-            assert (
-                prop not in hihydro_props
-            ), f"SoilGrids downloader received HiHydroSoil property '{prop}'"
+            assert prop not in hihydro_props, (
+                f"SoilGrids downloader received HiHydroSoil property '{prop}'"
+            )

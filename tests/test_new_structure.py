@@ -11,9 +11,9 @@ def test_datavia_core_imports():
 
         assert hasattr(datavia, "__path__"), "datavia should be a namespace package."
         assert hasattr(datavia.core, "__path__"), "datavia.core should be a package."
-        assert hasattr(
-            datavia.library, "__path__"
-        ), "datavia.library should be a package."
+        assert hasattr(datavia.library, "__path__"), (
+            "datavia.library should be a package."
+        )
     except ImportError as e:
         print(f"Core datavia import failed: {e}")
 
@@ -24,9 +24,9 @@ def test_datavia_pipeline_imports():
         # This should succeed as it's part of the main project
         import datavia.elevation  # noqa: PLC0415
 
-        assert hasattr(
-            datavia.elevation, "__path__"
-        ), "datavia.elevation should be a package."
+        assert hasattr(datavia.elevation, "__path__"), (
+            "datavia.elevation should be a package."
+        )
     except ImportError as e:
         print(f"datavia.elevation pipeline import failed: {e}")
 
