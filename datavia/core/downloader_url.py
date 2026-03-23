@@ -216,7 +216,9 @@ class URLDownloader(Downloader):
             ) as e:
                 retry_count += 1
                 wait_time = min(30, 5 * (2**retry_count))
-                wait_time = wait_time * (0.8 + 0.4 * random.random())
+                wait_time = wait_time * (
+                    0.8 + 0.4 * random.random()  # nosec B311 - jitter, not crypto
+                )
                 logger.warning(
                     f"Connection issue: {e} \nRetrying in {wait_time:.1f} seconds..."
                 )

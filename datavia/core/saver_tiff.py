@@ -307,7 +307,9 @@ class TiffSaver(Saver):
                     try:
                         if descs and len(descs) >= i and descs[i - 1]:
                             desc = descs[i - 1]
-                    except Exception:
+                    except (
+                        Exception
+                    ):  # nosec B110 - intentional fallback when description unavailable
                         pass
 
                     # Fallback to get_band_description
@@ -321,7 +323,9 @@ class TiffSaver(Saver):
                             tags = src.tags(i)
                             if tags:
                                 desc = ";".join(f"{k}={v}" for k, v in tags.items())
-                        except Exception:
+                        except (
+                            Exception
+                        ):  # nosec B110 - intentional fallback when tags unavailable
                             pass
 
                     if not desc:

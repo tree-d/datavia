@@ -14,7 +14,7 @@ get_container_status : Check if container is running
 """
 
 import logging
-import subprocess
+import subprocess  # nosec B404 - subprocess required for docker-compose management
 import time
 
 from .config import get_config
@@ -29,7 +29,9 @@ def start_container() -> None:
     """Start the datavia container with proper error handling."""
     try:
         subprocess.run(
-            ["docker", "compose", "up", "-d"], cwd=str(compose_dir), check=True
+            ["docker", "compose", "up", "-d"],
+            cwd=str(compose_dir),
+            check=True,  # nosec B603 B607
         )
         # Wait a moment for containers to fully initialize
         time.sleep(2)
@@ -43,14 +45,18 @@ def stop_container() -> None:
     try:
         # Stop containers gracefully with timeout
         subprocess.run(
-            ["docker", "compose", "stop", "-t", "10"], cwd=str(compose_dir), check=True
+            ["docker", "compose", "stop", "-t", "10"],
+            cwd=str(compose_dir),
+            check=True,  # nosec B603 B607
         )
 
         # Wait for containers to fully stop
         time.sleep(2)
 
         # Remove containers and networks
-        subprocess.run(["docker", "compose", "down"], cwd=str(compose_dir), check=True)
+        subprocess.run(
+            ["docker", "compose", "down"], cwd=str(compose_dir), check=True
+        )  # nosec B603 B607
 
         # Additional wait to ensure cleanup is complete
         time.sleep(1)
@@ -62,7 +68,7 @@ def stop_container() -> None:
         subprocess.run(
             ["docker", "compose", "down", "--remove-orphans"],
             cwd=str(compose_dir),
-            check=False,
+            check=False,  # nosec B603 B607
         )
         raise
 
@@ -75,7 +81,7 @@ def get_container_status() -> bool:
             cwd=str(compose_dir),
             capture_output=True,
             text=True,
-            check=True,
+            check=True,  # nosec B603 B607
         )
         return bool(result.stdout.strip())
     except subprocess.CalledProcessError:
