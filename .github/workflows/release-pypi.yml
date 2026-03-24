@@ -164,20 +164,9 @@ jobs:
           echo "tag=v$VERSION" >> $GITHUB_OUTPUT
           echo "Release version: $VERSION"
 
-      - name: Update version in pyproject.toml
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          sed -i "s/version = \".*\"/version = \"$VERSION\"/g" pyproject.toml
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add pyproject.toml
-          # Commit and push so the version bump lands on the remote branch.
-          # On tag-triggered runs pyproject.toml is already at the right version
-          # so the diff will be empty and nothing is pushed.
-          git diff --cached --exit-code || (
-            git commit -m "Bump version to $VERSION" &&
-            git push origin HEAD:${GITHUB_REF_NAME}
-          )
+      # Version is managed manually in pyproject.toml before pushing to release.
+      # The build job applies the version to pyproject.toml at build time via sed,
+      # so no git write-back is needed here.
 
   # Job 4: Build Release Packages
   build:
