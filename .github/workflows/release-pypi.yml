@@ -190,10 +190,27 @@ jobs:
           VERSION="${{ needs.version.outputs.version }}"
           sed -i "s/version = \".*\"/version = \"$VERSION\"/g" pyproject.toml
 
-      - name: Build packages
+      - name: Clean previous builds
         run: |
-          chmod +x scripts/build_packages.sh
-          ./scripts/build_packages.sh
+          rm -rf dist/ build/ *.egg-info/
+          rm -rf packages/*/dist/ packages/*/build/ packages/*/*.egg-info/
+
+      - name: Build core datavia package
+        run: pixi run -e dev python -m build
+
+      - name: Build elevation package
+        working-directory: packages/elevation
+        run: pixi run -e dev --manifest-path ../../pixi.toml python -m build
+
+      - name: Build soil package
+        working-directory: packages/soil
+        run: pixi run -e dev --manifest-path ../../pixi.toml python -m build
+
+      - name: Collect all dist artifacts
+        run: |
+          mkdir -p dist/
+          find packages/*/dist/ -name "*.whl" -o -name "*.tar.gz" | \
+            xargs -I{} cp {} dist/ 2>/dev/null || true
 
       - name: Verify packages
         # twine is a dev-feature tool; must run in the dev environment.
