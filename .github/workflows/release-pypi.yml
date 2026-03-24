@@ -60,7 +60,12 @@ jobs:
         uses: prefix-dev/setup-pixi@v0.4.1
         with:
           pixi-version: ${{ env.PIXI_VERSION }}
-          environments: dev
+          run-install: false
+
+      - name: Install dependencies
+        # run-install: false prevents setup-pixi from installing only the default
+        # environment. We install dev explicitly so pytest and coverage are available.
+        run: pixi install -e dev
 
       # Run ALL tests including slower integration tests
       - name: Run comprehensive test suite
@@ -98,7 +103,12 @@ jobs:
         uses: prefix-dev/setup-pixi@v0.4.1
         with:
           pixi-version: ${{ env.PIXI_VERSION }}
-          environments: dev
+          run-install: false
+
+      - name: Install dependencies
+        # run-install: false prevents setup-pixi from installing only the default
+        # environment. We install dev explicitly so ruff, mypy and bandit are available.
+        run: pixi install -e dev
 
       # All quality checks must pass for release
       - name: Check formatting and import sorting
@@ -168,7 +178,12 @@ jobs:
         uses: prefix-dev/setup-pixi@v0.4.1
         with:
           pixi-version: ${{ env.PIXI_VERSION }}
-          environments: dev
+          run-install: false
+
+      - name: Install build dependencies
+        # run-install: false prevents setup-pixi from installing only the default
+        # environment. We install dev explicitly so python-build and twine are available.
+        run: pixi install -e dev
 
       - name: Update version in pyproject.toml
         run: |
