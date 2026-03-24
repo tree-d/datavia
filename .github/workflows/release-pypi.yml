@@ -46,7 +46,9 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        python-version: ['3.9', '3.10', '3.11', '3.12']
+        python-version: ['3.12']
+        # pyproject.toml requires Python >=3.12; testing older versions
+        # would always fail at the dependency-install stage.
 
     steps:
       - name: Checkout repository
@@ -55,7 +57,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -76,11 +78,10 @@ jobs:
             --cov=datavia \
             --cov-report=xml \
             --cov-report=html \
-            --junitxml=test-results-release-py${{ matrix.python-version }}.xml \
-            --timeout=300  # 5 minute timeout for longer tests
+            --junitxml=test-results-release-py${{ matrix.python-version }}.xml
 
       - name: Upload test results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: test-results-release-py${{ matrix.python-version }}
@@ -101,7 +102,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
@@ -184,7 +185,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
@@ -194,9 +195,9 @@ jobs:
           pixi-version: ${{ env.PIXI_VERSION }}
 
       - name: Install build dependencies
-        run: |
-          pixi install
-          pixi add build twine
+        # 'build' and 'twine' are already declared in [project.optional-dependencies.dev]
+        # in pyproject.toml; no need to add them at runtime (which would mutate pixi.toml).
+        run: pixi install --all
 
       - name: Update version in pyproject.toml
         run: |
@@ -221,7 +222,7 @@ jobs:
           python -c "import datavia; print(f'Version: {datavia.__version__}')"
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: release-packages-${{ needs.version.outputs.version }}
           path: dist/
@@ -231,18 +232,17 @@ jobs:
     name: Publish to TestPyPI
     needs: [test, quality-gate, version, build]
     runs-on: ubuntu-latest
+    # Parentheses are required: without them || binds more loosely than &&,
+    # making the last condition (push to release branch) bypass all quality checks.
     if: >
       needs.test.result == 'success' &&
       needs.quality-gate.result == 'success' &&
-      github.event.inputs.test_pypi_only == 'true' ||
-      github.ref == 'refs/heads/release'
-    environment:
-      name: testpypi
-      url: https://test.pypi.org/p/datavia
+      (github.event.inputs.test_pypi_only == 'true' ||
+      github.ref == 'refs/heads/release')
 
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: release-packages-${{ needs.version.outputs.version }}
           path: dist/
@@ -259,19 +259,19 @@ jobs:
     name: Publish to PyPI
     needs: [test, quality-gate, version, build, publish-test]
     runs-on: ubuntu-latest
+    # != 'failure' (not == 'success') allows this job to proceed when
+    # publish-test was 'skipped' (e.g. tag-only releases without TestPyPI step).
     if: >
       needs.test.result == 'success' &&
       needs.quality-gate.result == 'success' &&
+      needs.publish-test.result != 'failure' &&
       github.event.inputs.test_pypi_only != 'true' &&
       (startsWith(github.ref, 'refs/tags/v') ||
       github.ref == 'refs/heads/release')
-    environment:
-      name: pypi
-      url: https://pypi.org/p/datavia
 
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: release-packages-${{ needs.version.outputs.version }}
           path: dist/
@@ -295,7 +295,7 @@ jobs:
           fetch-depth: 0
 
       - name: Download artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: release-packages-${{ needs.version.outputs.version }}
           path: dist/

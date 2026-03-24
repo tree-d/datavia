@@ -39,6 +39,6 @@ cd ../..
 echo "📦 Building soil package..."  
 cd packages/soil
 pixi run --environment dev python -m build
-cd ../../..
+cd ../..
 
 echo "✅ All packages built successfully!"
