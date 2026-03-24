@@ -12,7 +12,7 @@ check_build_tool() {
 		exit 1
 	fi
 
-	if ! pixi run --environment dev python -m build --version >/dev/null 2>&1; then
+	if ! pixi run --environment dev python -c "import build" >/dev/null 2>&1; then
 		echo "❌ Python build module not available. Ensure 'dev' environment is installed with: pixi install -e dev"
 		exit 1
 	fi

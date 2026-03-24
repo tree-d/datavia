@@ -56,11 +56,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-
       - name: Setup pixi
         uses: prefix-dev/setup-pixi@v0.4.1
         with:
@@ -101,11 +96,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Setup pixi
         uses: prefix-dev/setup-pixi@v0.4.1
@@ -180,20 +170,14 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
       - name: Setup pixi
         uses: prefix-dev/setup-pixi@v0.4.1
         with:
           pixi-version: ${{ env.PIXI_VERSION }}
 
       - name: Install build dependencies
-        # 'build' and 'twine' are already declared in [project.optional-dependencies.dev]
-        # in pyproject.toml; no need to add them at runtime (which would mutate pixi.toml).
-        run: pixi install --all
+        # build and twine live in the dev feature; install that environment explicitly.
+        run: pixi install -e dev
 
       - name: Update version in pyproject.toml
         run: |
@@ -210,13 +194,15 @@ jobs:
         run: |
           pixi run -e dev twine check dist/*.whl dist/*.tar.gz
 
-      # Test installation
+      # Test installation into an isolated target directory to avoid
+      # conflicts with the datavia already present in the pixi dev env.
       - name: Test package installation
         run: |
-          python -m venv test_env
-          source test_env/bin/activate
-          pip install dist/*.whl
-          python -c "import datavia; print(f'Version: {datavia.__version__}')"
+          pixi run -e dev pip install dist/datavia-*.whl --target /tmp/wheel_test
+          pixi run -e dev python -c "
+          import sys; sys.path.insert(0, '/tmp/wheel_test')
+          import datavia; print(f'Version: {datavia.__version__}')
+          "
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
