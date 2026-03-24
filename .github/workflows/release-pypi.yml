@@ -60,10 +60,7 @@ jobs:
         uses: prefix-dev/setup-pixi@v0.4.1
         with:
           pixi-version: ${{ env.PIXI_VERSION }}
-
-      - name: Install dependencies
-        # Tests live in the dev environment (pytest is a dev feature).
-        run: pixi install -e dev
+          environments: dev
 
       # Run ALL tests including slower integration tests
       - name: Run comprehensive test suite
@@ -101,10 +98,7 @@ jobs:
         uses: prefix-dev/setup-pixi@v0.4.1
         with:
           pixi-version: ${{ env.PIXI_VERSION }}
-
-      - name: Install dependencies
-        # ruff, mypy and bandit are dev-feature tools; default env lacks them.
-        run: pixi install -e dev
+          environments: dev
 
       # All quality checks must pass for release
       - name: Check formatting and import sorting
@@ -174,10 +168,7 @@ jobs:
         uses: prefix-dev/setup-pixi@v0.4.1
         with:
           pixi-version: ${{ env.PIXI_VERSION }}
-
-      - name: Install build dependencies
-        # build and twine live in the dev feature; install that environment explicitly.
-        run: pixi install -e dev
+          environments: dev
 
       - name: Update version in pyproject.toml
         run: |
