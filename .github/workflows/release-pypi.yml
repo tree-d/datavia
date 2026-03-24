@@ -67,12 +67,13 @@ jobs:
           pixi-version: ${{ env.PIXI_VERSION }}
 
       - name: Install dependencies
-        run: pixi install
+        # Tests live in the dev environment (pytest is a dev feature).
+        run: pixi install -e dev
 
       # Run ALL tests including slower integration tests
       - name: Run comprehensive test suite
         run: |
-          pixi run python -m pytest \
+          pixi run -e dev python -m pytest \
             tests/ \
             -v \
             --cov=datavia \
@@ -112,20 +113,21 @@ jobs:
           pixi-version: ${{ env.PIXI_VERSION }}
 
       - name: Install dependencies
-        run: pixi install
+        # ruff, mypy and bandit are dev-feature tools; default env lacks them.
+        run: pixi install -e dev
 
       # All quality checks must pass for release
       - name: Check formatting and import sorting
-        run: pixi run format-check
+        run: pixi run -e dev format-check
 
       - name: Lint
-        run: pixi run lint
+        run: pixi run -e dev lint
 
       - name: Type checking
-        run: pixi run type-check
+        run: pixi run -e dev type-check
 
       - name: Security scan
-        run: pixi run security-scan
+        run: pixi run -e dev security-scan
   # Job 3: Version Management
   version:
     name: Manage Version
@@ -169,8 +171,13 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add pyproject.toml
-          git diff --cached --exit-code || \
-            git commit -m "Bump version to $VERSION"
+          # Commit and push so the version bump lands on the remote branch.
+          # On tag-triggered runs pyproject.toml is already at the right version
+          # so the diff will be empty and nothing is pushed.
+          git diff --cached --exit-code || (
+            git commit -m "Bump version to $VERSION" &&
+            git push origin HEAD:${GITHUB_REF_NAME}
+          )
 
   # Job 4: Build Release Packages
   build:
@@ -210,8 +217,9 @@ jobs:
           ./scripts/build_packages.sh
 
       - name: Verify packages
+        # twine is a dev-feature tool; must run in the dev environment.
         run: |
-          pixi run twine check dist/*.whl dist/*.tar.gz
+          pixi run -e dev twine check dist/*.whl dist/*.tar.gz
 
       # Test installation
       - name: Test package installation
