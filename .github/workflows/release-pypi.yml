@@ -189,6 +189,8 @@ jobs:
         run: |
           VERSION="${{ needs.version.outputs.version }}"
           sed -i "s/version = \".*\"/version = \"$VERSION\"/g" pyproject.toml
+          sed -i "s/version = \".*\"/version = \"$VERSION\"/g" packages/elevation/pyproject.toml
+          sed -i "s/version = \".*\"/version = \"$VERSION\"/g" packages/soil/pyproject.toml
 
       - name: Clean previous builds
         run: |
