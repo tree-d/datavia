@@ -88,6 +88,15 @@ def process_rst_files(docs_dir, project_root):
     if tests_dir.exists():
         shutil.copytree(tests_dir, temp_tests_dir)
 
+    # Copy project-root config files so Sphinx doctests find the same
+    # configuration and credentials as the live environment.
+    # Sphinx changes cwd to temp_docs_dir before running tests, and
+    # config.py resolves both datavia.conf and .env relative to cwd.
+    for config_file in ["datavia.conf", ".env"]:
+        src = project_root / config_file
+        if src.exists():
+            shutil.copy2(src, temp_docs_dir / config_file)
+
     # Process all RST files
     for rst_file in temp_docs_dir.rglob("*.rst"):
         content = rst_file.read_text()

@@ -10,14 +10,15 @@ Datavia uses namespace packages for modular installation:
 
 .. doctest::
 
-    >>> from datavia.core.datavia import Datavia
+    >>> from datavia import Datavia
     >>> from datavia.elevation import ElevationPipeline
     >>> 
     >>> # Create and initialize pipeline
     >>> elevation_pipeline = ElevationPipeline()
     >>> dv = Datavia(pipelines=[elevation_pipeline])
     >>> 
-    >>> # Initialize system (downloads data if needed)
+    >>> # dv() connects to the PostGIS database and instantiates each pipeline's
+    >>> # Downloader / Saver / Getter components. Does NOT download data.
     >>> _ = dv() # doctest: +SKIP
 
 
@@ -105,22 +106,25 @@ You can request a subset of properties with the ``properties`` keyword:
     >>> soil_data = pipeline.get_data(coords=coords, crs_coords="EPSG:4326")  # doctest: +SKIP
     >>>
     >>> # Access SoilGrids properties — keys are coverage IDs, e.g. "clay_0-5cm_mean"
-    >>> _ = print(f"Clay:  {soil_data['clay_0-5cm_mean'][0] / 10:.1f} %")   # doctest: +SKIP
-    Clay:  29.4 %
-    >>> _ = print(f"Sand:  {soil_data['sand_0-5cm_mean'][0] / 10:.1f} %")   # doctest: +SKIP
-    Sand:  56.3 %
-    >>> _ = print(f"Silt:  {soil_data['silt_0-5cm_mean'][0] / 10:.1f} %")   # doctest: +SKIP
-    Silt:  14.4 %
-    >>> _ = print(f"pH:    {soil_data['ph_0-5cm_mean'][0] / 10:.2f}")        # doctest: +SKIP
-    pH:    5.35
-    >>> _ = print(f"SOC:   {soil_data['carbon_0-5cm_mean'][0] / 10:.1f} g/kg")      # doctest: +SKIP
-    SOC:   78.2 g/kg
+    >>> _ = print(f"Clay:  {soil_data['clay_0-5cm_mean'][0] / 10:.1f} %")   # doctest: +SKIP +ELLIPSIS
+    Clay:  ...
+    >>> _ = print(f"Sand:  {soil_data['sand_0-5cm_mean'][0] / 10:.1f} %")   # doctest: +SKIP +ELLIPSIS
+    Sand:  ...
+    >>> _ = print(f"Silt:  {soil_data['silt_0-5cm_mean'][0] / 10:.1f} %")   # doctest: +SKIP +ELLIPSIS
+    Silt:  ...
+    >>> _ = print(f"pH:    {soil_data['ph_0-5cm_mean'][0] / 10:.2f}")        # doctest: +SKIP +ELLIPSIS
+    pH:    ...
+    >>> _ = print(f"SOC:   {soil_data['carbon_0-5cm_mean'][0] / 10:.1f} g/kg")      # doctest: +SKIP +ELLIPSIS
+    SOC:   ...
     >>>
     >>> # HiHydroSoil hydraulic properties are stored as integers ×10 000;
     >>> # multiply by 0.0001 to get physical units (cm³/cm³ or cm/day for Ksat).
-    >>> _ = print(f"Field capacity: {soil_data['field_capacity_0-5cm_mean'][0] * 0.0001:.4f} cm³/cm³")  # doctest: +SKIP
-    >>> _ = print(f"Wilting point:  {soil_data['wilting_point_0-5cm_mean'][0] * 0.0001:.4f} cm³/cm³")   # doctest: +SKIP
-    >>> _ = print(f"Porosity:       {soil_data['porosity_0-5cm_mean'][0] * 0.0001:.4f} cm³/cm³")        # doctest: +SKIP
+    >>> _ = print(f"Field capacity: {soil_data['field_capacity_0-5cm_mean'][0] * 0.0001:.4f} cm³/cm³")  # doctest: +SKIP +ELLIPSIS
+    Field capacity: ...
+    >>> _ = print(f"Wilting point:  {soil_data['wilting_point_0-5cm_mean'][0] * 0.0001:.4f} cm³/cm³")   # doctest: +SKIP +ELLIPSIS
+    Wilting point:  ...
+    >>> _ = print(f"Porosity:       {soil_data['porosity_0-5cm_mean'][0] * 0.0001:.4f} cm³/cm³")        # doctest: +SKIP +ELLIPSIS
+    Porosity:       ...
     >>>
     >>> # Single-property request — returns np.ndarray directly (not a dict)
     >>> soil_ph = pipeline.get_data(  # doctest: +SKIP
@@ -395,7 +399,7 @@ Create and visualize elevation data over a geographic grid:
     >>> coords = np.c_[X.ravel(), Y.ravel()]
     >>>
     >>> # Fetch elevation data for all grid points in a single batch call
-    >>> elevation_data = dv.pipelines[0].get_data(coords, crs_coords="EPSG:4326") # doctest: +SKIP
+    >>> elevation_data = dv.elevation.get_data(coords, crs_coords="EPSG:4326") # doctest: +SKIP
     >>>
     >>> # Reshape elevation data back to grid for visualization
     >>> elevation_grid = elevation_data.reshape(X.shape) # doctest: +SKIP

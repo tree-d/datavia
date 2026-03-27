@@ -48,7 +48,7 @@ Basic Usage
 
 .. doctest::
 
-    >>> from datavia.core.datavia import Datavia
+    >>> from datavia import Datavia
     >>> from datavia.elevation import ElevationPipeline
     >>> import numpy as np
     >>> 
@@ -56,13 +56,19 @@ Basic Usage
     >>> elevation_pipeline = ElevationPipeline()
     >>> dv = Datavia(pipelines=[elevation_pipeline])
 
-**Step 2: Initialize system**
+**Step 2: Initialize system and download data**
 
 .. doctest::
 
-    >>> # This downloads data if needed (first run)
+    >>> # dv() connects to the PostGIS database and instantiates each pipeline's
+    >>> # Downloader / Saver / Getter components. It does NOT download data.
     >>> _ = dv() # doctest: +SKIP
-    >>> _ = dv.elevation.update_data() # doctest: +SKIP
+    >>>
+    >>> # update_data() fetches data from the external source and caches it locally.
+    >>> # Only needs to run once; subsequent calls skip already-downloaded data.
+    >>> # First download: ~500 MB for the elevation pipeline.
+    >>> # Returns True on success, False if the download failed.
+    >>> success = dv.elevation.update_data() # doctest: +SKIP
 
 **Step 3: Get data**
 

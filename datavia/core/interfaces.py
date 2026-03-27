@@ -166,7 +166,7 @@ class Getter(ABC):
         interpolation_order: int = 3,
         band: int = 1,
         **kwargs: Any,
-    ) -> np.ndarray:
+    ) -> "np.ndarray | dict[str, np.ndarray]":
         """Get data values at specified coordinates.
 
         Parameters
@@ -187,7 +187,12 @@ class Getter(ABC):
         Returns
         -------
         np.ndarray
-            Data values at the specified coordinates
+            For single-property pipelines (e.g. elevation): shape ``(N,)``.
+        dict[str, np.ndarray]
+            For multi-property pipelines (e.g. soil): keys are coverage IDs
+            such as ``"clay_0-5cm_mean"``, values are arrays of shape ``(N,)``.
+            A single-property request on a multi-property pipeline also returns
+            a plain ``np.ndarray``.
 
         Raises
         ------
@@ -345,17 +350,33 @@ class Pipeline:
         interpolation_order: int = 3,
         band: int = 1,
         **kwargs: Any,
-    ) -> np.ndarray:
+    ) -> "np.ndarray | dict[str, np.ndarray]":
         """Get data values at specified coordinates.
 
-        Args:
-            coords (np.ndarray): Array of coordinates in specified CRS.
-                            - EPSG:4326: (lon, lat) pairs
-                            - EPSG:25832: (x, y) pairs
-                            - Shape: (n_points, 2)
-            crs_coords (str): CRS of input coordinates. Defaults to "EPSG:4326".
-            interpolation_order (int): Interpolation order for raster sampling.
-            band (int): Band number to extract (1-indexed). Defaults to 1.
+        Parameters
+        ----------
+        coords : np.ndarray
+            Array of coordinates in the specified CRS, shape ``(N, 2)``.
+            For EPSG:4326: ``[longitude, latitude]`` pairs.
+            For EPSG:25832: ``[easting, northing]`` pairs.
+        crs_coords : str
+            CRS of the input coordinates. Defaults to ``"EPSG:4326"``.
+        interpolation_order : int
+            Interpolation order for raster sampling. Defaults to 3 (cubic).
+        band : int
+            Band number to extract (1-indexed). Defaults to 1.
+
+        Returns
+        -------
+        np.ndarray
+            For single-property pipelines (e.g. elevation): shape ``(N,)``.
+        dict[str, np.ndarray]
+            For multi-property pipelines (e.g. soil): coverage-ID keys, ``(N,)`` values.
+
+        Raises
+        ------
+        RuntimeError
+            If the pipeline has not been initialised (call ``pipeline()`` first).
         """
         if not self.getter:
             raise RuntimeError("Pipeline not initialized. Call pipeline() first.")
