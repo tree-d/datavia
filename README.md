@@ -99,6 +99,17 @@ pixi add --pypi datavia[vector]
 
    Datavia stores data and logs in `.datavia/` inside your project directory by default. A `.gitignore` is written there automatically so large GeoTIFF files are never accidentally committed.
 
+   **Project isolation** — each project directory gets its own Docker container and database port automatically, derived from a hash of the directory path. Two projects in different directories never share a container or clash on a port, without any configuration needed.
+
+   To pin a human-readable name or a specific port (e.g. to share a container with team members), add a `datavia.conf` to your project directory:
+   ```ini
+   [project]
+   name = my_project
+
+   [database]
+   port = 54321
+   ```
+
    To switch to **global storage** (one shared `~/.datavia/` for all projects — avoids re-downloading the same data in multiple projects):
    ```bash
    mkdir -p ~/.datavia

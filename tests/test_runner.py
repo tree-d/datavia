@@ -22,9 +22,11 @@ _cwd = str(compose_dir)
 class TestContainerManagement:
     """Test individual container management functions."""
 
+    @patch("datavia.runner._compose_env", return_value={})
+    @patch("datavia.runner._project_args", return_value=[])
     @patch("datavia.runner._env_file_args", return_value=[])
     @patch("subprocess.run")
-    def test_get_container_status_running(self, mock_run, _mock_env):
+    def test_get_container_status_running(self, mock_run, _mock_env, _mock_proj, _mock_cenv):
         """Test get_container_status when container is running."""
         mock_run.return_value.stdout = "abc123\ndef456\n"
         mock_run.return_value.returncode = 0
@@ -38,11 +40,14 @@ class TestContainerManagement:
             capture_output=True,
             text=True,
             check=True,
+            env={},
         )
 
+    @patch("datavia.runner._compose_env", return_value={})
+    @patch("datavia.runner._project_args", return_value=[])
     @patch("datavia.runner._env_file_args", return_value=[])
     @patch("subprocess.run")
-    def test_get_container_status_not_running(self, mock_run, _mock_env):
+    def test_get_container_status_not_running(self, mock_run, _mock_env, _mock_proj, _mock_cenv):
         """Test get_container_status when container is not running."""
         mock_run.return_value.stdout = ""
         mock_run.return_value.returncode = 0
@@ -56,6 +61,7 @@ class TestContainerManagement:
             capture_output=True,
             text=True,
             check=True,
+            env={},
         )
 
     @patch("datavia.runner._env_file_args", return_value=[])
@@ -77,9 +83,11 @@ class TestContainerManagement:
 
         assert result is False
 
+    @patch("datavia.runner._compose_env", return_value={})
+    @patch("datavia.runner._project_args", return_value=[])
     @patch("datavia.runner._env_file_args", return_value=[])
     @patch("subprocess.run")
-    def test_start_container_success(self, mock_run, _mock_env):
+    def test_start_container_success(self, mock_run, _mock_env, _mock_proj, _mock_cenv):
         """Test start_container successful startup.
 
         docker compose up -d is followed by a pg_isready probe that succeeds
@@ -94,16 +102,20 @@ class TestContainerManagement:
             ["docker", "compose", "up", "-d"],
             cwd=_cwd,
             check=True,
+            env={},
         )
         mock_run.assert_any_call(
             ["docker", "compose", "exec", "db", "pg_isready", "-U", "gis"],
             cwd=_cwd,
             capture_output=True,
+            env={},
         )
 
+    @patch("datavia.runner._compose_env", return_value={})
+    @patch("datavia.runner._project_args", return_value=[])
     @patch("datavia.runner._env_file_args", return_value=[])
     @patch("subprocess.run")
-    def test_start_container_docker_compose_fails(self, mock_run, _mock_env):
+    def test_start_container_docker_compose_fails(self, mock_run, _mock_env, _mock_proj, _mock_cenv):
         """Test start_container handles docker-compose failure."""
         mock_run.side_effect = subprocess.CalledProcessError(1, "docker-compose")
 
@@ -114,6 +126,7 @@ class TestContainerManagement:
             ["docker", "compose", "up", "-d"],
             cwd=_cwd,
             check=True,
+            env={},
         )
 
     @patch("datavia.runner._env_file_args", return_value=[])
@@ -164,10 +177,12 @@ class TestContainerManagement:
         with pytest.raises(TimeoutError, match="did not become ready"):
             runner_module._wait_for_postgres(timeout=5, poll_interval=1)
 
+    @patch("datavia.runner._compose_env", return_value={})
+    @patch("datavia.runner._project_args", return_value=[])
     @patch("datavia.runner._env_file_args", return_value=[])
     @patch("time.sleep")
     @patch("subprocess.run")
-    def test_stop_container_success(self, mock_run, mock_sleep, _mock_env):
+    def test_stop_container_success(self, mock_run, mock_sleep, _mock_env, _mock_proj, _mock_cenv):
         """Test stop_container successful shutdown."""
         mock_run.return_value.returncode = 0
 
@@ -178,16 +193,20 @@ class TestContainerManagement:
             ["docker", "compose", "stop", "-t", "10"],
             cwd=_cwd,
             check=True,
+            env={},
         )
         mock_run.assert_any_call(
             ["docker", "compose", "down"],
             cwd=_cwd,
             check=True,
+            env={},
         )
 
+    @patch("datavia.runner._compose_env", return_value={})
+    @patch("datavia.runner._project_args", return_value=[])
     @patch("datavia.runner._env_file_args", return_value=[])
     @patch("subprocess.run")
-    def test_stop_container_docker_compose_fails(self, mock_run, _mock_env):
+    def test_stop_container_docker_compose_fails(self, mock_run, _mock_env, _mock_proj, _mock_cenv):
         """Test stop_container handles docker-compose failure with cleanup."""
         mock_run.side_effect = [
             subprocess.CalledProcessError(1, "docker-compose"),  # stop fails
@@ -202,6 +221,7 @@ class TestContainerManagement:
             ["docker", "compose", "down", "--remove-orphans"],
             cwd=_cwd,
             check=False,
+            env={},
         )
 
     def test_env_file_args_present(self, tmp_path):

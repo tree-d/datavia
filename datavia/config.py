@@ -6,6 +6,7 @@ API settings, and other system parameters using config file approach.
 """
 
 import configparser
+import hashlib
 import logging
 import os
 import re
@@ -235,12 +236,53 @@ class DataviaConfig:
                 if env_value is not None:
                     self.config[section][key] = env_value
 
+    @staticmethod
+    def _derive_project_defaults(cwd: Path) -> tuple[str, int]:
+        """Derive a stable project name and host port from the working directory.
+
+        Uses an MD5 digest of the absolute CWD path so that every project
+        directory gets a unique, reproducible identity without any persistent
+        state or user configuration.
+
+        The port is chosen from the unprivileged range 49152–65535 so it
+        never requires elevated privileges and is very unlikely to conflict
+        with well-known services.
+
+        Parameters
+        ----------
+        cwd : Path
+            The working directory whose path is hashed.
+
+        Returns
+        -------
+        tuple[str, int]
+            ``(project_name, port)`` where *project_name* is
+            ``"datavia-" + 8-character hex suffix`` and *port* is in
+            49152–65535.
+        """
+        _port_min = 49152
+        _port_max = 65535
+        digest = hashlib.md5(str(cwd).encode()).hexdigest()  # nosec B324
+        name = "datavia-" + digest[:8]
+        port = _port_min + int(digest[:4], 16) % (_port_max - _port_min)
+        return name, port
+
     def _set_defaults(self) -> None:
         """Set default configuration values."""
+        project_name, project_port = self._derive_project_defaults(Path.cwd())
+
+        # Project identity.
+        # Both values are derived from the CWD hash so each project directory
+        # gets its own isolated Docker Compose project and database port
+        # automatically.  Override in datavia.conf to pin explicit values.
+        self.config["project"] = {
+            "name": project_name,
+        }
+
         # Database configuration
         self.config["database"] = {
             "host": "localhost",
-            "port": "5432",
+            "port": str(project_port),
             "database": "gis",
             "user": "gis",
             "password": os.getenv("POSTGRES_PASSWORD", "datavia_dev"),
@@ -286,6 +328,22 @@ class DataviaConfig:
             "error_policy": "user_notification",
             "error_notifications": "raise",
         }
+
+    # Project properties
+    @property
+    def project_name(self) -> str:
+        """Return the Docker Compose project name for this project.
+
+        The value is derived from the CWD hash by default, ensuring that
+        every project directory owns its own isolated container.  Override
+        with ``[project] name = my_project`` in ``datavia.conf``.
+
+        Returns
+        -------
+        str
+            Project name such as ``"datavia-a1b2c3d4"``.
+        """
+        return self.config["project"]["name"]
 
     # Database properties
     @property
