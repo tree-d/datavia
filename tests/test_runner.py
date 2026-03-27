@@ -1,6 +1,7 @@
 """Tests for container management functions in datavia.runner."""
 
 import subprocess
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -157,20 +158,30 @@ class TestContainerManagement:
         )
 
     def test_env_file_args_present(self, tmp_path):
-        """Test _env_file_args returns --env-file flag when .env exists in base dir."""
+        """Test _env_file_args returns --env-file flag when .env exists in cwd."""
         env_file = tmp_path / ".env"
         env_file.write_text("POSTGRES_PASSWORD=test\n")
+        # Provide a home dir that has no .datavia/.env so cwd candidate wins.
+        no_home = tmp_path / "home_no_env"
+        no_home.mkdir()
 
-        with patch("datavia.runner.get_config") as mock_cfg:
-            mock_cfg.return_value.base_directory = tmp_path
+        with (
+            patch.object(Path, "cwd", return_value=tmp_path),
+            patch.object(Path, "home", return_value=no_home),
+        ):
             result = runner_module._env_file_args()
 
         assert result == ["--env-file", str(env_file)]
 
     def test_env_file_args_absent(self, tmp_path):
         """Test _env_file_args returns empty list when no .env file exists."""
-        with patch("datavia.runner.get_config") as mock_cfg:
-            mock_cfg.return_value.base_directory = tmp_path
+        no_home = tmp_path / "home_no_env"
+        no_home.mkdir()
+
+        with (
+            patch.object(Path, "cwd", return_value=tmp_path),
+            patch.object(Path, "home", return_value=no_home),
+        ):
             result = runner_module._env_file_args()
 
         assert result == []
