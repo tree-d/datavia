@@ -15,4 +15,4 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - ./datavia/library/database:/docker-entrypoint-initdb.d
+      - ./library/database:/docker-entrypoint-initdb.d

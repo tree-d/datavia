@@ -123,14 +123,14 @@ include = [
     "datavia/__init__.py",
     "datavia/core/**/*.py", 
     "datavia/library/**/*.py",
+    "datavia/library/**/*.sql",
     "datavia/cli.py",
     "datavia/cli_config.py",
     "datavia/cli_utils.py",
     "datavia/config.py",
     "datavia/runner.py",
     "datavia.conf",
-    "docker-compose.yml",
-    "db-init/**/*",
+    "datavia/docker-compose.yml",
     "README.md",
 ]
 exclude = [
