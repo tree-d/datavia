@@ -83,24 +83,40 @@ pixi add --pypi datavia[vector]
 
 1. **Configure the database password** (optional — default is `datavia_dev`):
 
-   The easiest way is a `.env` file in your **working directory** (the directory you run `datavia` from). Datavia will pick it up automatically:
+   The recommended place is `~/.datavia/.env` — a single file that works from any directory:
    ```bash
-   # Copy the template and edit it
-   cp .env.example .env          # only needed in the git repo; otherwise create manually
-   echo 'POSTGRES_PASSWORD=my_secret' > .env
+   mkdir -p ~/.datavia
+   echo 'POSTGRES_PASSWORD=my_secret' > ~/.datavia/.env
    ```
+   A `<cwd>/.env` in the current working directory is also picked up and takes priority (useful for per-project overrides).
    Alternatively, export it as a shell variable before running any `datavia` command:
    ```bash
    export POSTGRES_PASSWORD=my_secret
    ```
    If neither is set, the insecure development default `datavia_dev` is used.
 
-2. **Start the PostGIS database** (required for metadata storage):
+2. **Advanced configuration** (optional — most users can skip this):
+
+   Datavia stores data and logs in `.datavia/` inside your project directory by default. A `.gitignore` is written there automatically so large GeoTIFF files are never accidentally committed.
+
+   To switch to **global storage** (one shared `~/.datavia/` for all projects — avoids re-downloading the same data in multiple projects):
+   ```bash
+   mkdir -p ~/.datavia
+   cat > ~/.datavia/datavia.conf << 'EOF'
+   [paths]
+   storage = global
+   EOF
+   ```
+   An annotated template with all available settings is in `datavia.conf` at the repository root.
+
+   A project-local `<cwd>/datavia.conf` is also supported and takes precedence over `~/.datavia/datavia.conf` when present.
+
+3. **Start the PostGIS database** (required for metadata storage):
    ```bash
    datavia start
    ```
 
-2. **Use in Python code**:
+4. **Use in Python code**:
    ```python
    from datavia import Datavia
    
@@ -118,7 +134,7 @@ pixi add --pypi datavia[vector]
    elevation_data = dv.elevation.get_data(coords, crs_coords="EPSG:4326")
    ```
 
-3. **Shut down database**
+5. **Shut down database**
    ```bash
    datavia stop
    ```
@@ -142,7 +158,6 @@ Pipeline = Downloader + Saver + Getter
 datavia/                          # Repository root
 ├── pyproject.toml               # Main core package configuration
 ├── docker-compose.yml           # Database container setup
-├── datavia.conf                 # Runtime configuration
 ├── .env.example                 # Environment variables template
 ├── datavia/                     # Core Python package
 │   ├── __init__.py              # Main namespace package
