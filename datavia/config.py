@@ -108,38 +108,73 @@ class DataviaConfig:
         self._config_file = config_file
         self._load_config()
 
+    @staticmethod
+    def _user_dir() -> Path:
+        """Return the datavia user home directory (``~/.datavia/``).
+
+        This is the single canonical location for all user-specific datavia
+        state: data files, logs, the optional ``datavia.conf``, and the
+        optional ``.env`` for secrets.  It is created on demand by
+        :meth:`ensure_directories` — callers must not assume it exists yet.
+
+        Returns
+        -------
+        Path
+            ``Path.home() / ".datavia"``
+        """
+        return Path.home() / ".datavia"
+
     def _find_config_file(self) -> str | None:
-        """Find configuration file in standard locations."""
-        # If a specific config file is provided, try that first
+        """Find the datavia configuration file.
+
+        Search order:
+
+        1. Explicit path passed to the constructor (``config_file`` argument).
+        2. ``~/.datavia/datavia.conf`` — the primary user configuration.
+        3. ``<cwd>/datavia.conf`` — a project-local override (useful when
+           running datavia from a project directory with custom settings).
+        4. ``/etc/datavia/datavia.conf`` — system-wide default.
+
+        Before searching, ``~/.datavia/.env`` is loaded via *python-dotenv*
+        so that environment variables (e.g. ``POSTGRES_PASSWORD``) are
+        available for ``${VAR:-default}`` expansion inside the config file.
+
+        Returns
+        -------
+        str | None
+            Absolute path to the first found configuration file, or ``None``
+            when none of the locations exist (defaults are used instead).
+        """
+        # Always load .env from the user directory first so that env-var
+        # expansion inside datavia.conf works regardless of which config
+        # file is ultimately selected.
+        user_dotenv = self._user_dir() / ".env"
+        if user_dotenv.exists():
+            dotenv.load_dotenv(dotenv_path=user_dotenv)
+            logger.info(f"Loaded environment variables from {user_dotenv}")
+
+        # 1. Explicit path from constructor
         if self._config_file and os.path.exists(self._config_file):
             logger.info(f"Found config file: {self._config_file}")
             return self._config_file
 
-        # Auto-detect project root and look for datavia.conf there
-        project_root = self._auto_detect_base_directory()
+        # 2. User home
+        user_config = self._user_dir() / "datavia.conf"
+        if user_config.exists():
+            logger.info(f"Found config file: {user_config}")
+            return str(user_config)
 
-        # Load .env file from project root if it exists
-        dotenv_path = Path(project_root) / ".env"
-        if dotenv_path.exists():
-            dotenv.load_dotenv(dotenv_path=dotenv_path)
-            logger.info(f"Loaded environment variables from {dotenv_path}")
+        # 3. Project-local override (cwd)
+        cwd_config = Path.cwd() / "datavia.conf"
+        if cwd_config.exists():
+            logger.info(f"Found project-local config file: {cwd_config}")
+            return str(cwd_config)
 
-        project_config = os.path.join(project_root, "datavia.conf")
-        if os.path.exists(project_config):
-            logger.info(f"Found config file at project root: {project_config}")
-            return project_config
-
-        # Fallback to other locations
-        possible_locations = [
-            "datavia.conf",  # Current directory
-            os.path.expanduser("~/.datavia/config.conf"),  # User home
-            "/etc/datavia/config.conf",  # System-wide
-        ]
-
-        for location in possible_locations:
-            if location and os.path.exists(location):
-                logger.info(f"Found config file: {location}")
-                return location
+        # 4. System-wide
+        system_config = Path("/etc/datavia/datavia.conf")
+        if system_config.exists():
+            logger.info(f"Found system config file: {system_config}")
+            return str(system_config)
 
         logger.warning("No config file found, using defaults")
         return None
@@ -210,13 +245,19 @@ class DataviaConfig:
             "ssl_mode": "prefer",
         }
 
-        # File path configuration - auto-detect base directory
-        base_dir = self._auto_detect_base_directory()
+        # File path configuration.
+        # base_directory is intentionally left empty here so that the
+        # base_directory property derives it from the storage setting at
+        # runtime.  Users who want a fully custom path can set
+        # base_directory explicitly in datavia.conf.
         self.config["paths"] = {
-            "base_directory": base_dir,
+            "base_directory": "",
+            # storage = project (default) →  <cwd>/.datavia/  (per-project, self-contained)
+            # storage = global            →  ~/.datavia/      (shared across all projects)
+            "storage": "project",
             "data_directory": "data/",
             "log_directory": "logs/",
-            "path_validation": "true",
+            "path_validation": "false",  # directory is created on first use
             "create_missing": "true",
         }
 
@@ -243,24 +284,6 @@ class DataviaConfig:
             "error_notifications": "raise",
         }
 
-    def _auto_detect_base_directory(self) -> str:
-        """Auto-detect the base directory for the project."""
-        # Start from current file location and work up
-        current_path = Path(__file__).parent
-
-        # Look for project markers
-        project_markers = ["pixi.toml", "pyproject.toml", ".git", "datavia"]
-
-        for parent in [current_path, *list(current_path.parents)]:
-            for marker in project_markers:
-                if (parent / marker).exists():
-                    logger.info(f"Auto-detected base directory: {parent}")
-                    return str(parent)
-
-        # Fallback to current directory
-        logger.warning("Could not auto-detect base directory, using current directory")
-        return str(Path.cwd())
-
     # Database properties
     @property
     def database_url(self) -> str:
@@ -276,8 +299,30 @@ class DataviaConfig:
     # Path properties
     @property
     def base_directory(self) -> Path:
-        """Get base directory as Path object."""
-        return Path(self.config["paths"]["base_directory"])
+        """Return the datavia base directory.
+
+        Resolution order:
+
+        1. ``base_directory`` key in ``datavia.conf`` if non-empty — full
+           explicit override for power users.
+        2. ``storage = project`` → ``<cwd>/.datavia/`` — per-project,
+           self-contained; set this in a project-local ``datavia.conf``.
+        3. ``storage = global`` (default) → ``~/.datavia/`` — shared across
+           all projects; avoids re-downloading large data files.
+
+        Returns
+        -------
+        Path
+            Resolved base directory; the directory may not exist yet
+            (``ensure_directories`` creates it on first use).
+        """
+        explicit = self.config["paths"].get("base_directory", "").strip()
+        if explicit:
+            return Path(explicit)
+        storage = self.config["paths"].get("storage", "global")
+        if storage == "project":
+            return Path.cwd() / ".datavia"
+        return self._user_dir()
 
     @property
     def data_directory(self) -> Path:
@@ -319,8 +364,20 @@ class DataviaConfig:
         """Get maximum number of API retries."""
         return int(self.config["api"]["max_retries"])
 
+    _GITIGNORE_CONTENT = (
+        "# datavia managed directories — large files, not tracked by git\n"
+        "data/\n"
+        "logs/\n"
+    )
+
     def ensure_directories(self) -> None:
-        """Create directories if they don't exist."""
+        """Create data and log directories and write a .gitignore into the base directory.
+
+        The ``.gitignore`` is written once when the base directory is first
+        created, preventing accidental commits of large GeoTIFF files and logs.
+        An existing ``.gitignore`` is never overwritten so users can customise
+        it freely after the first run.
+        """
         if self.config["paths"].getboolean("create_missing"):
             directories = [self.data_directory, self.log_directory]
 
@@ -330,6 +387,14 @@ class DataviaConfig:
                     logger.debug(f"Ensured directory exists: {directory}")
                 except Exception as e:
                     logger.error(f"Failed to create directory {directory}: {e}")
+
+            gitignore_path = self.base_directory / ".gitignore"
+            if not gitignore_path.exists():
+                try:
+                    gitignore_path.write_text(self._GITIGNORE_CONTENT)
+                    logger.debug(f"Wrote .gitignore to {gitignore_path}")
+                except Exception as e:
+                    logger.error(f"Failed to write .gitignore: {e}")
 
     def validate_paths(self) -> None:
         """Validate that required paths exist."""

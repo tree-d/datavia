@@ -18,8 +18,6 @@ import subprocess  # nosec B404 - subprocess required for docker-compose managem
 import time
 from pathlib import Path
 
-from .config import get_config
-
 logger = logging.getLogger(__name__)
 # Compose directory is always the package directory itself, where docker-compose.yml
 # is bundled. Using __file__ ensures this works both in development and when the
@@ -28,20 +26,31 @@ compose_dir = Path(__file__).parent
 
 
 def _env_file_args() -> list[str]:
-    """Return --env-file arguments if a .env file exists in the user's base directory.
+    """Return --env-file arguments for the first .env file found.
 
-    Looks for a .env file in the configured base directory (e.g. the user's
-    project folder). If found, passes it to docker compose so that variables
-    like POSTGRES_PASSWORD can be set without touching the installed package.
+    Search order:
+
+    1. ``<cwd>/.env`` — project-local secrets (highest priority, allows
+       per-project database password overrides).
+    2. ``~/.datavia/.env`` — user-global secrets (the recommended place for
+       a single shared ``POSTGRES_PASSWORD``).
+
+    Only the first file found is passed to docker compose.  Using explicit
+    path lookups instead of calling ``get_config()`` avoids initialising the
+    config singleton as a side-effect of container management calls.
 
     Returns:
         A list ``["--env-file", "<path>"]`` when a .env file is found,
         otherwise an empty list so the caller can splat it unconditionally.
     """
-    env_file = get_config().base_directory / ".env"
-    if env_file.is_file():
-        logger.debug("Using .env file: %s", env_file)
-        return ["--env-file", str(env_file)]
+    candidates = [
+        Path.cwd() / ".env",
+        Path.home() / ".datavia" / ".env",
+    ]
+    for env_file in candidates:
+        if env_file.is_file():
+            logger.debug("Using .env file: %s", env_file)
+            return ["--env-file", str(env_file)]
     return []
 
 
