@@ -78,20 +78,28 @@ class TestContainerManagement:
         assert result is False
 
     @patch("datavia.runner._env_file_args", return_value=[])
-    @patch("time.sleep")
     @patch("subprocess.run")
-    def test_start_container_success(self, mock_run, mock_sleep, _mock_env):
-        """Test start_container successful startup."""
+    def test_start_container_success(self, mock_run, _mock_env):
+        """Test start_container successful startup.
+
+        docker compose up -d is followed by a pg_isready probe that succeeds
+        immediately (returncode=0), so time.sleep is never called.
+        """
         mock_run.return_value.returncode = 0
 
         start_container()
 
-        mock_run.assert_called_once_with(
+        assert mock_run.call_count == 2
+        mock_run.assert_any_call(
             ["docker", "compose", "up", "-d"],
             cwd=_cwd,
             check=True,
         )
-        mock_sleep.assert_called_once_with(2)
+        mock_run.assert_any_call(
+            ["docker", "compose", "exec", "db", "pg_isready", "-U", "gis"],
+            cwd=_cwd,
+            capture_output=True,
+        )
 
     @patch("datavia.runner._env_file_args", return_value=[])
     @patch("subprocess.run")
@@ -116,6 +124,45 @@ class TestContainerManagement:
 
         with pytest.raises(FileNotFoundError):
             start_container()
+
+    @patch("datavia.runner._env_file_args", return_value=[])
+    @patch("time.sleep")
+    @patch("subprocess.run")
+    def test_wait_for_postgres_succeeds_on_retry(self, mock_run, mock_sleep, _mock_env):
+        """Test _wait_for_postgres retries until pg_isready returns 0.
+
+        The first two probes return exit code 1 (not yet ready); the third
+        returns 0 (ready). Exactly two sleeps must be issued between probes.
+        """
+        not_ready = MagicMock()
+        not_ready.returncode = 1
+        ready = MagicMock()
+        ready.returncode = 0
+        mock_run.side_effect = [not_ready, not_ready, ready]
+
+        runner_module._wait_for_postgres(timeout=10, poll_interval=1)
+
+        assert mock_run.call_count == 3
+        assert mock_sleep.call_count == 2
+
+    @patch("datavia.runner._env_file_args", return_value=[])
+    @patch("time.monotonic")
+    @patch("time.sleep")
+    @patch("subprocess.run")
+    def test_wait_for_postgres_timeout(self, mock_run, mock_sleep, mock_monotonic, _mock_env):
+        """Test _wait_for_postgres raises TimeoutError when deadline passes.
+
+        Simulates monotonic time advancing past the deadline on the second
+        call so that exactly one probe is attempted.
+        """
+        not_ready = MagicMock()
+        not_ready.returncode = 1
+        mock_run.return_value = not_ready
+        # First call: deadline = 0 + 5 = 5.  Second call: time = 6 > deadline.
+        mock_monotonic.side_effect = [0, 5, 6]
+
+        with pytest.raises(TimeoutError, match="did not become ready"):
+            runner_module._wait_for_postgres(timeout=5, poll_interval=1)
 
     @patch("datavia.runner._env_file_args", return_value=[])
     @patch("time.sleep")

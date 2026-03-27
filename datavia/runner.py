@@ -18,6 +18,9 @@ import subprocess  # nosec B404 - subprocess required for docker-compose managem
 import time
 from pathlib import Path
 
+_POSTGRES_READY_TIMEOUT_S = 30
+_POSTGRES_POLL_INTERVAL_S = 1
+
 logger = logging.getLogger(__name__)
 # Compose directory is always the package directory itself, where docker-compose.yml
 # is bundled. Using __file__ ensures this works both in development and when the
@@ -55,18 +58,71 @@ def _env_file_args() -> list[str]:
 
 
 def start_container() -> None:
-    """Start the datavia container with proper error handling."""
+    """Start the datavia container and wait until PostgreSQL is ready.
+
+    Runs ``docker compose up -d``, then polls ``pg_isready`` inside the
+    container until the database accepts connections.
+
+    Raises
+    ------
+    subprocess.CalledProcessError
+        If ``docker compose up`` fails.
+    TimeoutError
+        If PostgreSQL does not become ready within
+        ``_POSTGRES_READY_TIMEOUT_S`` seconds.
+    """
     try:
         subprocess.run(
             ["docker", "compose", *_env_file_args(), "up", "-d"],
             cwd=str(compose_dir),
             check=True,  # nosec B603 B607
         )
-        # Wait a moment for containers to fully initialize
-        time.sleep(2)
+        _wait_for_postgres()
     except subprocess.CalledProcessError as e:
         logger.error(f"Failed to start containers: {e}")
         raise
+
+
+def _wait_for_postgres(
+    timeout: int = _POSTGRES_READY_TIMEOUT_S,
+    poll_interval: float = _POSTGRES_POLL_INTERVAL_S,
+) -> None:
+    """Poll the database container until PostgreSQL accepts connections.
+
+    Runs ``pg_isready`` inside the container via ``docker compose exec``.
+    Returns as soon as the exit code is 0 (PostgreSQL ready).
+
+    Parameters
+    ----------
+    timeout:
+        Maximum number of seconds to wait before raising ``TimeoutError``.
+        Defaults to ``_POSTGRES_READY_TIMEOUT_S``.
+    poll_interval:
+        Seconds to sleep between readiness probes.
+        Defaults to ``_POSTGRES_POLL_INTERVAL_S``.
+
+    Raises
+    ------
+    TimeoutError
+        If PostgreSQL is not ready within *timeout* seconds.
+    """
+    logger.info("Waiting for PostgreSQL to be ready (timeout=%ds)…", timeout)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        result = subprocess.run(  # nosec B603 B607
+            ["docker", "compose", *_env_file_args(), "exec", "db", "pg_isready", "-U", "gis"],
+            cwd=str(compose_dir),
+            capture_output=True,
+        )
+        if result.returncode == 0:
+            logger.info("PostgreSQL is ready.")
+            return
+        time.sleep(poll_interval)
+
+    raise TimeoutError(
+        f"PostgreSQL did not become ready within {timeout} seconds. "
+        "Check container logs: docker compose logs db"
+    )
 
 
 def stop_container() -> None:

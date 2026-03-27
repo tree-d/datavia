@@ -119,19 +119,29 @@ pixi add --pypi datavia[vector]
 4. **Use in Python code**:
    ```python
    from datavia import Datavia
-   
-   # Import available pipelines
    from datavia.elevation import ElevationPipeline
-   
-   # Initialize system
-   dv = Datavia(pipelines=[ElevationPipeline()])
-   dv()
-   dv.elevation.update_data()
-   
-   # Access data
    import numpy as np
-   coords = np.array([[10.0, 50.0]])
+
+   # 1. Build the controller and register pipelines
+   dv = Datavia(pipelines=[ElevationPipeline()])
+
+   # 2. dv() initialises the PostGIS connection and instantiates each
+   #    pipeline's internal Downloader / Saver / Getter components.
+   #    It does NOT download any data.
+   dv()
+
+   # 3. Download data from the external source (BKG for elevation).
+   #    Only needed once; data is cached locally after the first run.
+   #    Returns True on success, False if the download failed.
+   #    First download: ~500 MB, may take several minutes.
+   success = dv.elevation.update_data()
+
+   # 4. Query values at coordinates [longitude, latitude] in WGS84.
+   #    Returns a numpy array of shape (N,) — one value per coordinate.
+   #    Other CRS are supported via crs_coords, e.g. "EPSG:25832".
+   coords = np.array([[10.0, 50.0]])          # [lon, lat]
    elevation_data = dv.elevation.get_data(coords, crs_coords="EPSG:4326")
+   print(elevation_data)                      # e.g. [471.3]
    ```
 
 5. **Shut down database**

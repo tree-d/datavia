@@ -10,60 +10,55 @@ Get elevation data for major German cities using the elevation pipeline:
 
 .. doctest::
 
-    #!/usr/bin/env python3
-    """
-    Analyze elevation data for major German cities.
-    """
-    >>> import numpy as np  # doctest: +SKIP
+    >>> import numpy as np
     >>> import matplotlib.pyplot as plt
     >>> from datavia.elevation import ElevationPipeline
 
     >>> def city_elevation_analysis():
     ...     """Create elevation profile for German cities."""
-    ...     # Initialize elevation pipeline
+    ...     # Initialise and download data
     ...     pipeline = ElevationPipeline()
-    ...     pipeline.update_data()
-    ...     
+    ...     pipeline()  # Creates Downloader / Saver / Getter components
+    ...     pipeline.update_data()  # Downloads data on first run; skips if cached
+    ...
     ...     # Define major German cities (longitude, latitude)
     ...     cities = {
-    ...         "Hamburg": [9.9937, 53.5511],
-    ...         "Berlin": [13.4050, 52.5200],
-    ...         "Cologne": [6.9603, 50.9375],
-    ...         "Frankfurt": [8.6821, 50.1109],
-    ...         "Stuttgart": [9.1829, 48.7758],
-    ...         "Munich": [11.5820, 48.1351],
+    ...         "Hamburg":   [9.9937,  53.5511],
+    ...         "Berlin":    [13.4050, 52.5200],
+    ...         "Cologne":   [6.9603,  50.9375],
+    ...         "Frankfurt": [8.6821,  50.1109],
+    ...         "Stuttgart": [9.1829,  48.7758],
+    ...         "Munich":    [11.5820, 48.1351],
     ...     }
-    ...     
-    ...     # Convert to coordinate array
     ...     coords = np.array(list(cities.values()))
     ...     city_names = list(cities.keys())
-    ...     
-    ...     # Get elevation data
+    ...
+    ...     # get_data() returns np.ndarray of shape (N,) — one value per coordinate
     ...     elevations = pipeline.get_data(coords=coords, crs_coords="EPSG:4326")
-    ...     
-    ...     # Create visualization
+    ...
     ...     plt.figure(figsize=(12, 6))
     ...     bars = plt.bar(city_names, elevations, color='lightblue', edgecolor='navy')
     ...     plt.ylabel('Elevation (m)')
     ...     plt.title('Elevation Profile of Major German Cities')
     ...     plt.xticks(rotation=45)
-    ...     
-    ...     # Add value labels on bars
     ...     for bar, elevation in zip(bars, elevations):
-    ...         plt.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 5,
-    ...                 f'{elevation:.0f}m', ha='center', va='bottom')
-    ...     
+    ...         plt.text(
+    ...             bar.get_x() + bar.get_width() / 2,
+    ...             bar.get_height() + 5,
+    ...             f'{elevation:.0f}m',
+    ...             ha='center', va='bottom',
+    ...         )
     ...     plt.tight_layout()
     ...     plt.show()
-    ...     
-    ...     # Print summary
+    ...
     ...     print("German Cities Elevation Summary:")
     ...     print("-" * 40)
-    ...     for city, coord, elevation in zip(city_names, coords, elevations):
+    ...     for city, elevation in zip(city_names, elevations):
     ...         print(f"{city:>10}: {elevation:>6.1f}m")
 
-    >>> if __name__ == "__main__":
-    ...     city_elevation_analysis()
+    >>> city_elevation_analysis()  # doctest: +SKIP +ELLIPSIS
+    German Cities Elevation Summary:
+    ...
 
 
 Example 2: Multi-Pipeline Environmental Data
@@ -73,69 +68,56 @@ Combine elevation and soil data for environmental analysis:
 
 .. doctest::
 
-    #!/usr/bin/env python3
-    """
-    Environmental analysis using multiple pipelines.
-    """
-    >>> import numpy as np  # doctest: +SKIP
+    >>> import numpy as np
     >>> import pandas as pd
-    >>> from datavia.core.datavia import Datavia
+    >>> from datavia import Datavia
     >>> from datavia.elevation import ElevationPipeline
     >>> from datavia.soil import SoilPipeline
 
     >>> def environmental_analysis():
     ...     """Analyze environmental conditions across sample locations."""
-    ...     
-    ...     # Initialize pipelines
     ...     elevation = ElevationPipeline()
     ...     soil = SoilPipeline()
-    ...     
-    ...     # Create Datavia system with multiple pipelines
     ...     dv = Datavia(pipelines=[elevation, soil])
-    ...     dv()  # Initialize all pipelines
-    ...     
-    ...     # Define sample locations across Germany
+    ...     dv()  # Connects to DB; instantiates components
+    ...     dv.elevation.update_data()
+    ...     dv.soil.update_data()
+    ...
+    ...     # Sample locations across Germany (longitude, latitude)
     ...     locations = {
-    ...         "North Coast": [8.6821, 54.9200],     # Northern lowlands
-    ...         "Central Plains": [10.5000, 52.0000], # Central Germany
-    ...         "Black Forest": [8.2000, 48.0000],    # Southwestern highlands
-    ...         "Bavarian Alps": [11.0000, 47.5000],  # Southern mountains
+    ...         "North Coast":    [8.6821,  54.9200],
+    ...         "Central Plains": [10.5000, 52.0000],
+    ...         "Black Forest":   [8.2000,  48.0000],
+    ...         "Bavarian Alps":  [11.0000, 47.5000],
     ...     }
-    ...     
-    ...     # Convert to coordinate array
     ...     coords = np.array(list(locations.values()))
     ...     location_names = list(locations.keys())
-    ...     
-    ...     # Get environmental data
+    ...
+    ...     # Elevation returns np.ndarray shape (N,)
     ...     elevations = dv.elevation.get_data(coords=coords, crs_coords="EPSG:4326")
-    ...     # get_data() returns dict[str, np.ndarray] keyed by coverage ID,
-    ...     # e.g. {"clay_0-5cm_mean": array([...]), "ph_0-5cm_mean": array([...]), ...}
+    ...
+    ...     # Soil returns dict[str, np.ndarray] keyed by coverage ID
     ...     soil_data = dv.soil.get_data(coords=coords, crs_coords="EPSG:4326")
-    ...     
-    ...     # Create analysis dataframe
+    ...
     ...     df = pd.DataFrame({
-    ...         'Location': location_names,
-    ...         'Longitude': coords[:, 0],
-    ...         'Latitude': coords[:, 1],
-    ...         'Elevation_m': elevations,
-    ...         'Clay_pct': soil_data['clay_0-5cm_mean'] / 10,    # SoilGrids g/kg → %
-    ...         'Soil_pH': soil_data['ph_0-5cm_mean'] / 10,       # SoilGrids pH×10 → pH
-    ...         'SOC_g_per_kg': soil_data['carbon_0-5cm_mean'] / 10,  # dg/kg → g/kg
+    ...         'Location':     location_names,
+    ...         'Longitude':    coords[:, 0],
+    ...         'Latitude':     coords[:, 1],
+    ...         'Elevation_m':  elevations,
+    ...         'Clay_pct':     soil_data['clay_0-5cm_mean'] / 10,
+    ...         'Soil_pH':      soil_data['ph_0-5cm_mean'] / 10,
+    ...         'SOC_g_per_kg': soil_data['carbon_0-5cm_mean'] / 10,
     ...     })
-    ...     
-    ...     # Display results
     ...     print("Environmental Analysis Results:")
     ...     print("=" * 50)
     ...     print(df.to_string(index=False, float_format='%.2f'))
-    ...     
-    ...     # Calculate correlations
     ...     correlation = df['Elevation_m'].corr(df['Soil_pH'])
     ...     print(f"\nElevation-Soil pH Correlation: {correlation:.3f}")
-    ...     
     ...     return df
 
-    >>> if __name__ == "__main__":
-    ...     environmental_analysis()
+    >>> environmental_analysis()  # doctest: +SKIP +ELLIPSIS
+    Environmental Analysis Results:
+    ...
 
 Example 3: Spatial Grid Analysis
 ================================
@@ -144,74 +126,53 @@ Analyze elevation patterns across a spatial grid:
 
 .. doctest::
 
-    #!/usr/bin/env python3
-    """
-    Spatial grid analysis using elevation data.
-    """
-    >>> import numpy as np  # doctest: +SKIP
+    >>> import numpy as np
     >>> import matplotlib.pyplot as plt
     >>> from datavia.elevation import ElevationPipeline
 
     >>> def spatial_grid_analysis():
     ...     """Create elevation surface analysis over a spatial grid."""
-    ...     
-    ...     # Initialize elevation pipeline
+    ...     # Initialise and download data
     ...     pipeline = ElevationPipeline()
-    ...     pipeline.update_data()
-    ...     
-    ...     # Define study area (Baden-Württemberg region)
-    ...     lon_min, lon_max = 7.5, 10.5   # Longitude range
-    ...     lat_min, lat_max = 47.5, 49.5  # Latitude range
-    ...     
-    ...     # Create coordinate grid (coarse for demonstration)
+    ...     pipeline()  # Creates Downloader / Saver / Getter components
+    ...     pipeline.update_data()  # Downloads data on first run; skips if cached
+    ...
+    ...     # Study area: Baden-Württemberg
+    ...     lon_min, lon_max = 7.5, 10.5
+    ...     lat_min, lat_max = 47.5, 49.5
     ...     lon_grid = np.linspace(lon_min, lon_max, 20)
     ...     lat_grid = np.linspace(lat_min, lat_max, 15)
-    ...     
-    ...     # Create meshgrid
     ...     lon_mesh, lat_mesh = np.meshgrid(lon_grid, lat_grid)
-    ...     
-    ...     # Flatten coordinates for pipeline input
+    ...
+    ...     # Flatten: pipeline expects shape (N, 2) as [longitude, latitude]
     ...     coords = np.column_stack([lon_mesh.flatten(), lat_mesh.flatten()])
-    ...     
-    ...     # Get elevation data
+    ...
+    ...     # get_data() returns np.ndarray of shape (N,)
     ...     elevations = pipeline.get_data(coords=coords, crs_coords="EPSG:4326")
-    ...     
-    ...     # Reshape back to grid
     ...     elevation_grid = elevations.reshape(lon_mesh.shape)
-    ...     
-    ...     # Create visualization
+    ...
     ...     plt.figure(figsize=(12, 8))
-    ...     
-    ...     # Main contour plot
     ...     contour = plt.contourf(lon_mesh, lat_mesh, elevation_grid,
-    ...                           levels=20, cmap='terrain', alpha=0.8)
+    ...                            levels=20, cmap='terrain', alpha=0.8)
     ...     plt.colorbar(contour, label='Elevation (m)')
-    ...     
-    ...     # Add contour lines
     ...     contour_lines = plt.contour(lon_mesh, lat_mesh, elevation_grid,
-    ...                                levels=10, colors='black', alpha=0.4, linewidths=0.5)
+    ...                                 levels=10, colors='black', alpha=0.4, linewidths=0.5)
     ...     plt.clabel(contour_lines, inline=True, fontsize=8, fmt='%dm')
-    ...     
-    ...     # Add major cities
     ...     cities = {
-    ...         "Stuttgart": [9.1829, 48.7758],
-    ...         "Karlsruhe": [8.4037, 49.0069],
-    ...         "Freiburg": [7.8521, 47.9990],
+    ...         "Stuttgart": (9.1829, 48.7758),
+    ...         "Karlsruhe": (8.4037, 49.0069),
+    ...         "Freiburg":  (7.8521, 47.9990),
     ...     }
-    ...     
     ...     for city, (lon, lat) in cities.items():
     ...         plt.plot(lon, lat, 'ro', markersize=8, markeredgecolor='black')
-    ...         plt.text(lon+0.1, lat, city, fontsize=10, fontweight='bold')
-    ...     
+    ...         plt.text(lon + 0.1, lat, city, fontsize=10, fontweight='bold')
     ...     plt.xlabel('Longitude (°E)')
     ...     plt.ylabel('Latitude (°N)')
     ...     plt.title('Elevation Analysis - Baden-Württemberg Region')
     ...     plt.grid(True, alpha=0.3)
-    ...     
     ...     plt.tight_layout()
     ...     plt.show()
-    ...     
-    ...     # Calculate statistics
+    ...
     ...     print("Spatial Grid Statistics:")
     ...     print("-" * 30)
     ...     print(f"Grid size: {elevation_grid.shape}")
@@ -220,8 +181,9 @@ Analyze elevation patterns across a spatial grid:
     ...     print(f"Mean elevation: {np.mean(elevations):.1f}m")
     ...     print(f"Std elevation: {np.std(elevations):.1f}m")
 
-    >>> if __name__ == "__main__":
-    ...     spatial_grid_analysis()
+    >>> spatial_grid_analysis()  # doctest: +SKIP +ELLIPSIS
+    Spatial Grid Statistics:
+    ...
 
 Installation and Setup
 ======================

@@ -145,13 +145,16 @@ class DataviaConfig:
             Absolute path to the first found configuration file, or ``None``
             when none of the locations exist (defaults are used instead).
         """
-        # Always load .env from the user directory first so that env-var
-        # expansion inside datavia.conf works regardless of which config
-        # file is ultimately selected.
-        user_dotenv = self._user_dir() / ".env"
-        if user_dotenv.exists():
-            dotenv.load_dotenv(dotenv_path=user_dotenv)
-            logger.info(f"Loaded environment variables from {user_dotenv}")
+        # Always load .env so that env-var expansion inside datavia.conf works
+        # and the database password is available to _set_defaults().
+        # Search order mirrors runner._env_file_args():
+        #   1. <cwd>/.env   — project-local secrets (highest priority)
+        #   2. ~/.datavia/.env — user-global secrets
+        for candidate in [Path.cwd() / ".env", self._user_dir() / ".env"]:
+            if candidate.exists():
+                dotenv.load_dotenv(dotenv_path=candidate)
+                logger.info("Loaded environment variables from %s", candidate)
+                break
 
         # 1. Explicit path from constructor
         if self._config_file and os.path.exists(self._config_file):

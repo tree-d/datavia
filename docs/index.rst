@@ -49,7 +49,7 @@ Basic usage with elevation data:
 
 .. doctest::
 
-    >>> from datavia.core.datavia import Datavia
+    >>> from datavia import Datavia
     >>> from datavia.elevation import ElevationPipeline
     >>> import numpy as np
     >>> elevation_pipeline = ElevationPipeline()
@@ -57,7 +57,7 @@ Basic usage with elevation data:
     >>> coords = np.array([[13.4050, 52.5200]])  # Berlin
     >>> _ = dv() # doctest: +SKIP
     >>> _ = dv.elevation.update_data() # doctest: +SKIP
-    >>> elevations = dv.pipelines[0].get_data(coords=coords, crs_coords="EPSG:4326") # doctest: +SKIP
+    >>> elevations = dv.elevation.get_data(coords=coords, crs_coords="EPSG:4326") # doctest: +SKIP
     >>> print(f"Berlin elevation: {elevations[0]:.1f}m") # doctest: +SKIP
     Berlin elevation: 35.7m
 

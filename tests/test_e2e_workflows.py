@@ -114,26 +114,31 @@ class TestContainerIntegration:
 
     @patch("subprocess.run")
     def test_container_startup_workflow(self, mock_run):
-        """Test complete container startup workflow."""
-        # Mock container status progression
+        """Test complete container startup workflow.
+
+        subprocess.run call sequence after _wait_for_postgres was added:
+        1. get_container_status  → ps -q           (not running)
+        2. start_container       → docker compose up -d
+        3. _wait_for_postgres    → pg_isready (returncode=0 → ready immediately)
+        4. get_container_status  → ps -q           (running)
+        """
         status_responses = [
-            # Initial check: not running
+            # 1. Initial status check: not running
             MagicMock(stdout="", returncode=0),
-            # Start containers
+            # 2. docker compose up -d
             MagicMock(returncode=0),
-            # Verify running
+            # 3. pg_isready probe: ready on first attempt
+            MagicMock(returncode=0),
+            # 4. Status check after start: running
             MagicMock(stdout="container123", returncode=0),
         ]
         mock_run.side_effect = status_responses
 
-        # Check initial status
         assert get_container_status() is False
 
-        # Start containers
-        with patch("time.sleep"):  # Speed up test
+        with patch("time.sleep"):
             start_container()
 
-        # Verify now running
         assert get_container_status() is True
 
     @patch("subprocess.run")
