@@ -244,7 +244,7 @@ class DataviaConfig:
         directory gets a unique, reproducible identity without any persistent
         state or user configuration.
 
-        The port is chosen from the unprivileged range 49152–65535 so it
+        The port is chosen from the unprivileged range 49152-65535 so it
         never requires elevated privileges and is very unlikely to conflict
         with well-known services.
 
@@ -258,7 +258,7 @@ class DataviaConfig:
         tuple[str, int]
             ``(project_name, port)`` where *project_name* is
             ``"datavia-" + 8-character hex suffix`` and *port* is in
-            49152–65535.
+            49152-65535.
         """
         _port_min = 49152
         _port_max = 65535

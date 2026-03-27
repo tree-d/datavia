@@ -8,6 +8,8 @@ Separated from main CLI for better maintainability.
 
 import logging
 
+from .config import get_config
+
 logger = logging.getLogger(__name__)
 
 ELEVATION_EXAMPLE = """
@@ -99,7 +101,7 @@ def create_config_file(selected_pipelines: list[str], config_file: str) -> None:
     """Create Python configuration file with selected pipelines."""
 
     # Generate imports based on selected pipelines
-    imports = ["from datavia import Datavia"]
+    imports = ["from datavia import Datavia", "from datavia.config import get_config"]
     pipeline_instances = []
 
     if "elevation" in selected_pipelines:
@@ -176,10 +178,10 @@ datavia = datavia_raw()
 
 # Note: The CLI automatically detects which approach you're using!
 
-# Database connection URL — for reference only.
-# The actual URL is built from datavia.conf (or derived defaults).
-# Port is project-specific; run `datavia status` to see the active port.
-DATABASE_URL = "postgresql://gis:datavia_dev@localhost:<project-port>/gis"
+# Database connection URL for this project.
+# Port is derived from the project directory; re-run `datavia init` if you move
+# the project to a different directory.
+DATABASE_URL = get_config().database_url
 DATA_DIRECTORY = "/var/lib/datavia/data"
 DEFAULT_CRS = "EPSG:25832"
 
