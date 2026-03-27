@@ -386,13 +386,28 @@ jobs:
             -m "Merge release ${{ needs.version.outputs.version }} to main"
           git push origin main
 
-      # Update version to next development version
+      # Update version to next development version.
+      # After the merge step above we are on the main branch, so the commit
+      # lands on main and keeps it pointing at the next development cycle.
       - name: Bump to next development version
         if: github.ref == 'refs/heads/release'
         run: |
-          # This would increment version and add -dev suffix
-          # You might want to create a script for this
-          echo "Next development version bump would happen here"
+          VERSION="${{ needs.version.outputs.version }}"
+          # Split released version into components (e.g. 1.2.3 → 1 2 3)
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+          NEXT_DEV="${MAJOR}.${MINOR}.$((PATCH + 1))-dev"
+
+          # Apply next dev version to all packages
+          sed -i "s/version = \".*\"/version = \"$NEXT_DEV\"/g" pyproject.toml
+          sed -i "s/version = \".*\"/version = \"$NEXT_DEV\"/g" packages/elevation/pyproject.toml
+          sed -i "s/version = \".*\"/version = \"$NEXT_DEV\"/g" packages/soil/pyproject.toml
+
+          git add pyproject.toml \
+                  packages/elevation/pyproject.toml \
+                  packages/soil/pyproject.toml
+          git commit -m "chore: bump version to ${NEXT_DEV} [skip ci]"
+          git push origin HEAD:${{ github.ref_name }}
+          echo "Bumped to next development version: $NEXT_DEV"
 
       - name: Notify team
         run: |
