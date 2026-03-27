@@ -1,3 +1,19 @@
+-- DESIGN DRAFT — NOT USED IN PRODUCTION
+-- ======================================
+-- This file is a design reference for a future schema migration intended to
+-- support temporal pipelines (weather, radiation). It is NOT executed by Docker
+-- and MUST NOT be placed in datavia/library/database/ (docker-entrypoint-initdb.d).
+--
+-- Key differences from the active schema (init.sql):
+--   - Uses 'data_source' instead of 'source_name' (incompatible with all Python queries)
+--   - Adds temporal columns: temporal_type, valid_from, valid_until
+--   - Adds audit columns: file_size_mb, checksum, created_at, updated_at
+--   - Missing: raster_band_metadata table (required by the soil pipeline)
+--
+-- Before implementing, this draft must be converted into a proper migration script
+-- that renames 'data_source' -> 'source_name' and adds raster_band_metadata.
+-- See datavia/library/database/init.sql for the active production schema.
+--
 -- Enhanced database schema for multiple TIFF strategy
 -- Supports both static and temporal data sources
 
