@@ -176,8 +176,10 @@ datavia = datavia_raw()
 
 # Note: The CLI automatically detects which approach you're using!
 
-# Database configuration (can be customized)
-DATABASE_URL = "postgresql://datavia:datavia@localhost:5432/datavia"
+# Database connection URL — for reference only.
+# The actual URL is built from datavia.conf (or derived defaults).
+# Port is project-specific; run `datavia status` to see the active port.
+DATABASE_URL = "postgresql://gis:datavia_dev@localhost:<project-port>/gis"
 DATA_DIRECTORY = "/var/lib/datavia/data"
 DEFAULT_CRS = "EPSG:25832"
 

@@ -3,6 +3,13 @@
 Provides utilities for starting, stopping, and checking the status of
 the PostGIS database container used by Datavia for metadata storage.
 
+Each project directory is automatically assigned a unique Docker Compose
+project name and host port derived from a hash of the working directory
+path.  This means two projects in different directories can run their
+containers simultaneously without clashing, with no user configuration
+required.  To override, set ``[project] name`` and ``[database] port``
+in the project-local ``datavia.conf``.
+
 The container is managed via docker-compose.yml located in the same
 directory as this module.
 
@@ -13,13 +20,18 @@ stop_container : Stop and clean up the database container
 get_container_status : Check if container is running
 """
 
+import configparser
+import hashlib
 import logging
+import os
 import subprocess  # nosec B404 - subprocess required for docker-compose management
 import time
 from pathlib import Path
 
 _POSTGRES_READY_TIMEOUT_S = 30
 _POSTGRES_POLL_INTERVAL_S = 1
+_PORT_RANGE_MIN = 49152
+_PORT_RANGE_MAX = 65535
 
 logger = logging.getLogger(__name__)
 # Compose directory is always the package directory itself, where docker-compose.yml
@@ -57,6 +69,100 @@ def _env_file_args() -> list[str]:
     return []
 
 
+def _cwd_hash() -> str:
+    """Return the MD5 hex digest of the current working directory path.
+
+    Returns
+    -------
+    str
+        MD5 hexdigest of ``str(Path.cwd())``.
+    """
+    return hashlib.md5(str(Path.cwd()).encode()).hexdigest()  # nosec B324
+
+
+def _project_name() -> str:
+    """Return the Docker Compose project name for the current project.
+
+    Reads ``[project] name`` from the first ``datavia.conf`` found (CWD,
+    then ``~/.datavia/``).  Falls back to a hash-derived slug so each project
+    directory owns its own isolated container without requiring any user
+    configuration.
+
+    Returns
+    -------
+    str
+        Project name such as ``"datavia-a1b2c3d4"``.
+    """
+    for candidate in [
+        Path.cwd() / "datavia.conf",
+        Path.home() / ".datavia" / "datavia.conf",
+    ]:
+        if candidate.is_file():
+            cfg = configparser.ConfigParser()
+            cfg.read(candidate)
+            name = cfg.get("project", "name", fallback=None)
+            if name:
+                return name
+    digest = _cwd_hash()
+    return "datavia-" + digest[:8]
+
+
+def _project_port() -> int:
+    """Return the host port bound by the Docker Compose database service.
+
+    Reads ``[database] port`` from the first ``datavia.conf`` found.
+    Falls back to a hash-derived port in the unprivileged range
+    49152–65535 so that parallel projects on the same machine cannot
+    collide on the default port.
+
+    Returns
+    -------
+    int
+        Host port for the PostGIS container.
+    """
+    for candidate in [
+        Path.cwd() / "datavia.conf",
+        Path.home() / ".datavia" / "datavia.conf",
+    ]:
+        if candidate.is_file():
+            cfg = configparser.ConfigParser()
+            cfg.read(candidate)
+            port = cfg.get("database", "port", fallback=None)
+            if port and port.isdigit():
+                return int(port)
+    digest = _cwd_hash()
+    return _PORT_RANGE_MIN + int(digest[:4], 16) % (_PORT_RANGE_MAX - _PORT_RANGE_MIN)
+
+
+def _project_args() -> list[str]:
+    """Return ``--project-name`` arguments for docker compose.
+
+    Ensures each project directory maps to a distinct Docker Compose
+    project, preventing container name and network collisions between
+    projects that use datavia simultaneously.
+
+    Returns
+    -------
+    list[str]
+        ``["--project-name", "<name>"]``
+    """
+    return ["--project-name", _project_name()]
+
+
+def _compose_env() -> dict[str, str]:
+    """Return the environment dict for docker compose subprocess calls.
+
+    Injects ``DATAVIA_PORT`` so the ``docker-compose.yml`` port mapping
+    uses the project-specific host port instead of the hard-wired 5432.
+
+    Returns
+    -------
+    dict[str, str]
+        Copy of the current process environment with ``DATAVIA_PORT`` set.
+    """
+    return {**os.environ, "DATAVIA_PORT": str(_project_port())}
+
+
 def start_container() -> None:
     """Start the datavia container and wait until PostgreSQL is ready.
 
@@ -73,9 +179,10 @@ def start_container() -> None:
     """
     try:
         subprocess.run(
-            ["docker", "compose", *_env_file_args(), "up", "-d"],
+            ["docker", "compose", *_env_file_args(), *_project_args(), "up", "-d"],
             cwd=str(compose_dir),
             check=True,  # nosec B603 B607
+            env=_compose_env(),
         )
         _wait_for_postgres()
     except subprocess.CalledProcessError as e:
@@ -110,9 +217,10 @@ def _wait_for_postgres(
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         result = subprocess.run(  # nosec B603 B607
-            ["docker", "compose", *_env_file_args(), "exec", "db", "pg_isready", "-U", "gis"],
+            ["docker", "compose", *_env_file_args(), *_project_args(), "exec", "db", "pg_isready", "-U", "gis"],
             cwd=str(compose_dir),
             capture_output=True,
+            env=_compose_env(),
         )
         if result.returncode == 0:
             logger.info("PostgreSQL is ready.")
@@ -121,7 +229,7 @@ def _wait_for_postgres(
 
     raise TimeoutError(
         f"PostgreSQL did not become ready within {timeout} seconds. "
-        "Check container logs: docker compose logs db"
+        f"Check container logs: docker compose --project-name {_project_name()} logs db"
     )
 
 
@@ -130,9 +238,10 @@ def stop_container() -> None:
     try:
         # Stop containers gracefully with timeout
         subprocess.run(
-            ["docker", "compose", *_env_file_args(), "stop", "-t", "10"],
+            ["docker", "compose", *_env_file_args(), *_project_args(), "stop", "-t", "10"],
             cwd=str(compose_dir),
             check=True,  # nosec B603 B607
+            env=_compose_env(),
         )
 
         # Wait for containers to fully stop
@@ -140,9 +249,10 @@ def stop_container() -> None:
 
         # Remove containers and networks
         subprocess.run(
-            ["docker", "compose", *_env_file_args(), "down"],
+            ["docker", "compose", *_env_file_args(), *_project_args(), "down"],
             cwd=str(compose_dir),
             check=True,  # nosec B603 B607
+            env=_compose_env(),
         )
 
         # Additional wait to ensure cleanup is complete
@@ -153,9 +263,10 @@ def stop_container() -> None:
         logger.error(f"Error during container shutdown: {e}")
         # Force cleanup even if graceful stop failed
         subprocess.run(
-            ["docker", "compose", *_env_file_args(), "down", "--remove-orphans"],
+            ["docker", "compose", *_env_file_args(), *_project_args(), "down", "--remove-orphans"],
             cwd=str(compose_dir),
             check=False,  # nosec B603 B607
+            env=_compose_env(),
         )
         raise
 
@@ -164,11 +275,12 @@ def get_container_status() -> bool:
     """Check if containers are running."""
     try:
         result = subprocess.run(
-            ["docker", "compose", *_env_file_args(), "ps", "-q"],
+            ["docker", "compose", *_env_file_args(), *_project_args(), "ps", "-q"],
             cwd=str(compose_dir),
             capture_output=True,
             text=True,
             check=True,  # nosec B603 B607
+            env=_compose_env(),
         )
         return bool(result.stdout.strip())
     except subprocess.CalledProcessError:
