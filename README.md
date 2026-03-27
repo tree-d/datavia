@@ -81,7 +81,21 @@ pixi add --pypi datavia[vector]
 
 ### Basic Setup
 
-1. **Start the PostGIS database** (required for metadata storage):
+1. **Configure the database password** (optional — default is `datavia_dev`):
+
+   The easiest way is a `.env` file in your **working directory** (the directory you run `datavia` from). Datavia will pick it up automatically:
+   ```bash
+   # Copy the template and edit it
+   cp .env.example .env          # only needed in the git repo; otherwise create manually
+   echo 'POSTGRES_PASSWORD=my_secret' > .env
+   ```
+   Alternatively, export it as a shell variable before running any `datavia` command:
+   ```bash
+   export POSTGRES_PASSWORD=my_secret
+   ```
+   If neither is set, the insecure development default `datavia_dev` is used.
+
+2. **Start the PostGIS database** (required for metadata storage):
    ```bash
    datavia start
    ```
