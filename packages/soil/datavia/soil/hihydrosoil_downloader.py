@@ -386,38 +386,40 @@ class HiHydroSoilDownloader(Downloader):
         output_path = os.path.join(output_dir, f"{coverage_id}.tif")
 
         try:
-            with rasterio.Env(
-                # Prevent GDAL from probing for sidecar files (.aux, .msk, …)
-                # on the remote server, which would trigger 502 responses for
-                # files that do not exist there.
-                GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR",
-                CPL_VSIL_CURL_ALLOWED_EXTENSIONS=".tif",
+            with (
+                rasterio.Env(
+                    # Prevent GDAL from probing for sidecar files (.aux, .msk, …)
+                    # on the remote server, which would trigger 502 responses for
+                    # files that do not exist there.
+                    GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR",
+                    CPL_VSIL_CURL_ALLOWED_EXTENSIONS=".tif",
+                ),
+                rasterio.open(vsicurl_path) as src,
             ):
-                with rasterio.open(vsicurl_path) as src:
-                    bbox = self.germany_bbox
-                    window = from_bounds(
-                        left=bbox["west"],
-                        bottom=bbox["south"],
-                        right=bbox["east"],
-                        top=bbox["north"],
-                        transform=src.transform,
-                    )
-                    data = src.read(1, window=window)
-                    germany_transform = src.window_transform(window)
+                bbox = self.germany_bbox
+                window = from_bounds(
+                    left=bbox["west"],
+                    bottom=bbox["south"],
+                    right=bbox["east"],
+                    top=bbox["north"],
+                    transform=src.transform,
+                )
+                data = src.read(1, window=window)
+                germany_transform = src.window_transform(window)
 
-                    profile = src.profile.copy()
-                    profile.update(
-                        driver="GTiff",
-                        height=data.shape[0],
-                        width=data.shape[1],
-                        transform=germany_transform,
-                        count=1,
-                        crs=src.crs,
-                        compress="lzw",
-                        tiled=True,
-                        blockxsize=256,
-                        blockysize=256,
-                    )
+                profile = src.profile.copy()
+                profile.update(
+                    driver="GTiff",
+                    height=data.shape[0],
+                    width=data.shape[1],
+                    transform=germany_transform,
+                    count=1,
+                    crs=src.crs,
+                    compress="lzw",
+                    tiled=True,
+                    blockxsize=256,
+                    blockysize=256,
+                )
 
             with rasterio.open(output_path, "w", **profile) as dst:
                 dst.write(data, 1)

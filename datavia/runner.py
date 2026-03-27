@@ -112,7 +112,7 @@ def _project_port() -> int:
 
     Reads ``[database] port`` from the first ``datavia.conf`` found.
     Falls back to a hash-derived port in the unprivileged range
-    49152–65535 so that parallel projects on the same machine cannot
+    49152-65535 so that parallel projects on the same machine cannot
     collide on the default port.
 
     Returns
@@ -217,10 +217,21 @@ def _wait_for_postgres(
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         result = subprocess.run(  # nosec B603 B607
-            ["docker", "compose", *_env_file_args(), *_project_args(), "exec", "db", "pg_isready", "-U", "gis"],
+            [
+                "docker",
+                "compose",
+                *_env_file_args(),
+                *_project_args(),
+                "exec",
+                "db",
+                "pg_isready",
+                "-U",
+                "gis",
+            ],
             cwd=str(compose_dir),
             capture_output=True,
             env=_compose_env(),
+            check=False,
         )
         if result.returncode == 0:
             logger.info("PostgreSQL is ready.")
@@ -238,7 +249,15 @@ def stop_container() -> None:
     try:
         # Stop containers gracefully with timeout
         subprocess.run(
-            ["docker", "compose", *_env_file_args(), *_project_args(), "stop", "-t", "10"],
+            [
+                "docker",
+                "compose",
+                *_env_file_args(),
+                *_project_args(),
+                "stop",
+                "-t",
+                "10",
+            ],
             cwd=str(compose_dir),
             check=True,  # nosec B603 B607
             env=_compose_env(),
@@ -263,7 +282,14 @@ def stop_container() -> None:
         logger.error(f"Error during container shutdown: {e}")
         # Force cleanup even if graceful stop failed
         subprocess.run(
-            ["docker", "compose", *_env_file_args(), *_project_args(), "down", "--remove-orphans"],
+            [
+                "docker",
+                "compose",
+                *_env_file_args(),
+                *_project_args(),
+                "down",
+                "--remove-orphans",
+            ],
             cwd=str(compose_dir),
             check=False,  # nosec B603 B607
             env=_compose_env(),
