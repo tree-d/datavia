@@ -26,7 +26,9 @@ class TestContainerManagement:
     @patch("datavia.runner._project_args", return_value=[])
     @patch("datavia.runner._env_file_args", return_value=[])
     @patch("subprocess.run")
-    def test_get_container_status_running(self, mock_run, _mock_env, _mock_proj, _mock_cenv):
+    def test_get_container_status_running(
+        self, mock_run, _mock_env, _mock_proj, _mock_cenv
+    ):
         """Test get_container_status when container is running."""
         mock_run.return_value.stdout = "abc123\ndef456\n"
         mock_run.return_value.returncode = 0
@@ -47,7 +49,9 @@ class TestContainerManagement:
     @patch("datavia.runner._project_args", return_value=[])
     @patch("datavia.runner._env_file_args", return_value=[])
     @patch("subprocess.run")
-    def test_get_container_status_not_running(self, mock_run, _mock_env, _mock_proj, _mock_cenv):
+    def test_get_container_status_not_running(
+        self, mock_run, _mock_env, _mock_proj, _mock_cenv
+    ):
         """Test get_container_status when container is not running."""
         mock_run.return_value.stdout = ""
         mock_run.return_value.returncode = 0
@@ -109,13 +113,16 @@ class TestContainerManagement:
             cwd=_cwd,
             capture_output=True,
             env={},
+            check=False,
         )
 
     @patch("datavia.runner._compose_env", return_value={})
     @patch("datavia.runner._project_args", return_value=[])
     @patch("datavia.runner._env_file_args", return_value=[])
     @patch("subprocess.run")
-    def test_start_container_docker_compose_fails(self, mock_run, _mock_env, _mock_proj, _mock_cenv):
+    def test_start_container_docker_compose_fails(
+        self, mock_run, _mock_env, _mock_proj, _mock_cenv
+    ):
         """Test start_container handles docker-compose failure."""
         mock_run.side_effect = subprocess.CalledProcessError(1, "docker-compose")
 
@@ -162,7 +169,9 @@ class TestContainerManagement:
     @patch("time.monotonic")
     @patch("time.sleep")
     @patch("subprocess.run")
-    def test_wait_for_postgres_timeout(self, mock_run, mock_sleep, mock_monotonic, _mock_env):
+    def test_wait_for_postgres_timeout(
+        self, mock_run, mock_sleep, mock_monotonic, _mock_env
+    ):
         """Test _wait_for_postgres raises TimeoutError when deadline passes.
 
         Simulates monotonic time advancing past the deadline on the second
@@ -182,7 +191,9 @@ class TestContainerManagement:
     @patch("datavia.runner._env_file_args", return_value=[])
     @patch("time.sleep")
     @patch("subprocess.run")
-    def test_stop_container_success(self, mock_run, mock_sleep, _mock_env, _mock_proj, _mock_cenv):
+    def test_stop_container_success(
+        self, mock_run, mock_sleep, _mock_env, _mock_proj, _mock_cenv
+    ):
         """Test stop_container successful shutdown."""
         mock_run.return_value.returncode = 0
 
@@ -206,7 +217,9 @@ class TestContainerManagement:
     @patch("datavia.runner._project_args", return_value=[])
     @patch("datavia.runner._env_file_args", return_value=[])
     @patch("subprocess.run")
-    def test_stop_container_docker_compose_fails(self, mock_run, _mock_env, _mock_proj, _mock_cenv):
+    def test_stop_container_docker_compose_fails(
+        self, mock_run, _mock_env, _mock_proj, _mock_cenv
+    ):
         """Test stop_container handles docker-compose failure with cleanup."""
         mock_run.side_effect = [
             subprocess.CalledProcessError(1, "docker-compose"),  # stop fails

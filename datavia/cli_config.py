@@ -8,8 +8,6 @@ Separated from main CLI for better maintainability.
 
 import logging
 
-from .config import get_config
-
 logger = logging.getLogger(__name__)
 
 ELEVATION_EXAMPLE = """

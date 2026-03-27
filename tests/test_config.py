@@ -70,7 +70,7 @@ name = test_db
         assert config.data_directory.is_absolute()
         assert config.log_directory.is_absolute()
         assert config.config["database"]["host"] == "localhost"
-        # Port is derived from the CWD hash (range 49152–65535) when no config file
+        # Port is derived from the CWD hash (range 49152-65535) when no config file
         # is present; assert it is a valid integer rather than a specific value.
         port = int(config.config["database"]["port"])
         assert 49152 <= port <= 65535
