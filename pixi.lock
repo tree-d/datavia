@@ -1323,7 +1323,7 @@ packages:
 - pypi: ./packages/elevation
   name: datavia-elevation
   version: 1.0.0.dev0
-  sha256: 775ee7ece98e901e33b1c1a3b549af6ba16f527e60a3870ac7b75e826613e761
+  sha256: 997394af9900abf37e360ec3344a54204a831e60240ec4f8dd1af12f5d49e540
   requires_dist:
   - datavia>=1.0.0.dev0,<2.0
   - rasterio>=1.4.3,<2
@@ -1333,7 +1333,7 @@ packages:
 - pypi: ./packages/soil
   name: datavia-soil
   version: 1.0.0.dev0
-  sha256: d4e7bee176e2b33c3d8a9ca9704fb225e9fdc22ebbf66cb8650e0cb6e54fecda
+  sha256: 531f73b4083c82b2ea464e66026a94a01f0e00e08ed8f7ff3d70d4af965492e0
   requires_dist:
   - datavia>=1.0.0.dev0,<2.0
   - soilgrids>=0.1.0,<1.0

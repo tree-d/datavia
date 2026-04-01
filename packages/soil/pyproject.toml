@@ -34,14 +34,19 @@ Repository = "https://github.com/tree-d/datavia.git"
 Issues = "https://github.com/tree-d/datavia/issues"
 
 # Package configuration
+# datavia/ is a namespace package (PEP 420 implicit): no __init__.py is
+# included here. Python merges namespace contributions from all sys.path
+# entries automatically without any stub file.
 [tool.hatch.build]
 include = [
     "datavia/soil/**/*.py",
-    "datavia/__init__.py",
 ]
 
 [tool.hatch.build.targets.wheel]
 packages = ["datavia"]
+
+[tool.hatch.build.targets.editable]
+mode = "strict"
 
 # Allow direct file references for local packages
 [tool.hatch.metadata]

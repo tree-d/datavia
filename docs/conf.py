@@ -3,6 +3,16 @@
 # For the full list of built-in configuration values, see the documentation:
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
 
+import sys
+from pathlib import Path
+
+# Ensure the workspace root is resolved before site-packages so that the
+# editable install of datavia (the real __init__.py with Datavia) takes
+# priority over any namespace-only stub that sub-packages might have placed
+# in site-packages.
+_workspace_root = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(_workspace_root))
+
 
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
