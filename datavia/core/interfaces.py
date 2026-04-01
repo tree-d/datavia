@@ -135,7 +135,7 @@ class Getter(ABC):
         self.source_name = source_name
 
     @abstractmethod
-    def check_existing_layers(self) -> set[str]:
+    def get_existing_layers(self) -> set[str]:
         """Return layer names already registered in the database for this source.
 
         This is the authoritative way to query what data is currently stored.
@@ -155,7 +155,7 @@ class Getter(ABC):
             If subclass does not implement this method
         """
         raise NotImplementedError(
-            "check_existing_layers method must be implemented by subclasses."
+            "get_existing_layers method must be implemented by subclasses."
         )
 
     @abstractmethod
@@ -326,7 +326,7 @@ class Pipeline:
         """
         if not self.getter:
             raise RuntimeError("Pipeline not initialized. Call pipeline() first.")
-        return self.getter.check_existing_layers()
+        return self.getter.get_existing_layers()
 
     def sync_files_and_database(self) -> None:
         """Sync files with database records."""
