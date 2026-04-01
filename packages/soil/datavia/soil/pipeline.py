@@ -658,6 +658,8 @@ class SoilPipeline(Pipeline):
         properties: list[str] | None = None,
         depths: list[str] | None = None,
         value: str | None = None,
+        reproject: bool = False,
+        resolution_m: int | None = None,
     ) -> bool:
         """Download missing soil coverages and register each as its own layer.
 
@@ -681,6 +683,15 @@ class SoilPipeline(Pipeline):
         value : str, optional
             Override the statistic for this call only. Defaults to
             ``self.statistic``.
+        reproject : bool, optional
+            When ``True`` each saved coverage is reprojected in-place to the
+            application-wide default CRS (``get_config().default_crs``).
+            Defaults to ``False``.
+        resolution_m : int, optional
+            Target pixel resolution in metres applied during reprojection.
+            Only meaningful for projected (metric) CRSs. When ``None``
+            rasterio derives the resolution automatically.
+            Defaults to ``None``.
 
         Returns
         -------
@@ -752,7 +763,13 @@ class SoilPipeline(Pipeline):
                     return False
 
                 # --- Save each coverage as its own layer -----------------------
-                saved = sum(1 for path, _ in new_files if self.saver.save(path))
+                saved = sum(
+                    1
+                    for path, _ in new_files
+                    if self.saver.save(
+                        path, reproject=reproject, resolution_m=resolution_m
+                    )
+                )
         except Exception as exc:
             logger.error("Error during update_data: %s", exc)
             return False

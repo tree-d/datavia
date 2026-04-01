@@ -81,13 +81,27 @@ class Saver(ABC):
         raise NotImplementedError("Sync method must be implemented by subclasses.")
 
     @abstractmethod
-    def save(self, data_path: str) -> bool:
+    def save(
+        self,
+        data_path: str,
+        reproject: bool = False,
+        resolution_m: int | None = None,
+    ) -> bool:
         """Save data from the given path to storage.
 
         Parameters
         ----------
         data_path : str
-            Path to the data file to save
+            Path to the data file to save.
+        reproject : bool, optional
+            When ``True`` the saved file is reprojected in-place to the
+            application-wide default CRS (``get_config().default_crs``).
+            Defaults to ``False``.
+        resolution_m : int, optional
+            Target pixel resolution in metres applied during reprojection.
+            Only meaningful for projected (metric) CRSs; ignored for
+            geographic CRSs. When ``None`` rasterio derives the resolution
+            automatically. Defaults to ``None``.
 
         Returns
         -------
@@ -260,8 +274,24 @@ class Pipeline:
         self.getter = self.getter_class(self.name)
         return self
 
-    def update_data(self) -> bool:
+    def update_data(
+        self,
+        reproject: bool = False,
+        resolution_m: int | None = None,
+    ) -> bool:
         """Update data by downloading and saving new data.
+
+        Parameters
+        ----------
+        reproject : bool, optional
+            When ``True`` each saved file is reprojected in-place to the
+            application-wide default CRS (``get_config().default_crs``).
+            Defaults to ``False``.
+        resolution_m : int, optional
+            Target pixel resolution in metres used during reprojection.
+            Only meaningful for projected (metric) CRSs. When ``None``
+            rasterio derives the resolution automatically.
+            Defaults to ``None``.
 
         Returns
         -------
@@ -278,7 +308,9 @@ class Pipeline:
         data_path = self.downloader.download()
         if data_path == "failed":
             return False
-        success = self.saver.save(data_path)
+        success = self.saver.save(
+            data_path, reproject=reproject, resolution_m=resolution_m
+        )
         return success
 
     def find_files(self) -> set[str]:

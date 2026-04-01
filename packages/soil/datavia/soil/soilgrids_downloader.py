@@ -8,12 +8,15 @@ saver and the pipeline orchestration layer.
 """
 
 import logging
+import math
 import os
 import tempfile
 from typing import Any
 
+from pyproj import Transformer
 from soilgrids import SoilGrids
 
+from datavia.config import get_config
 from datavia.core.interfaces import Downloader
 
 logger = logging.getLogger(__name__)
@@ -26,7 +29,23 @@ class SoilGridsDownloader(Downloader):
     for Germany. Each coverage is written as an individual single-band
     GeoTIFF so that the caller can inspect spatial alignment before deciding
     how to combine or store the files.
+
+    **CRS split**: the SoilGrids WCS endpoint only advertises a limited set
+    of CRSs that can change between service versions. The downloader probes
+    the API at initialisation time via :meth:`_fetch_supported_crs_urns` and
+    picks the best match for the project-configured CRS, falling back to
+    EPSG:4326 when no match is found. Reprojection to the project CRS is the
+    responsibility of the saver / pipeline layer.
     """
+
+    # Fallback CRS URNs used when the live API probe fails (network issues,
+    # service outage). Kept intentionally minimal — only EPSG:4326 is
+    # universally safe as a WCS download CRS.
+    _FALLBACK_API_CRS: frozenset[str] = frozenset({"urn:ogc:def:crs:EPSG::4326"})
+
+    # Service ID used to probe the API for supported CRSs. Clay is one of the
+    # most stable SoilGrids properties and is very unlikely to be removed.
+    _PROBE_SERVICE_ID: str = "clay"
 
     def __init__(self, config: dict[str, Any]):
         """Initialize the SoilGrids downloader.
@@ -42,6 +61,12 @@ class SoilGridsDownloader(Downloader):
               Defaults to ``["0-5cm", "5-15cm"]``.
             - ``statistic`` (str): Statistical summary to retrieve.
               Defaults to ``"mean"``.
+
+            The CRS used for all WCS requests is derived from
+            ``get_config().default_crs`` (e.g. ``"EPSG:25832"``). The
+            canonical Germany bounding box is always stored in EPSG:4326 and
+            reprojected on the fly so the downloader works correctly with any
+            CRS supported by the SoilGrids service.
         """
         self.sg = SoilGrids()
         logger.info("SoilGrids package initialized successfully")
@@ -51,9 +76,23 @@ class SoilGridsDownloader(Downloader):
         )
         self.priority_depths = config.get("depths", ["0-5cm", "5-15cm"])
         self.priority_statistic = config.get("statistic", "mean")
-        self.resolution = 250  # metres
 
-        # Germany bounding box (EPSG:4326)
+        # Desired ground resolution in metres.
+        # For projected CRS this becomes resx/resy directly.
+        # For geographic CRS (e.g. EPSG:4326) the correct pixel count is
+        # derived from the bbox span so we still achieve ~250 m pixels.
+        self.resolution_m = 250
+
+        # The SoilGrids WCS API supports only a limited set of CRSs that can
+        # change between service versions. We store the configured CRS here
+        # and resolve the actual download CRS lazily in download_coverages()
+        # via _resolve_crs_urn(), so no network request is made at init time.
+        self._config_crs = get_config().default_crs
+        self.crs_urn: str | None = None  # set on first download_coverages() call
+
+        # Germany bounding box — always kept in EPSG:4326 as the canonical
+        # geographic reference. Reprojected via _bbox_in_crs() at download
+        # time so adapting the region or CRS requires no structural changes.
         self.germany_bbox = {
             "west": 5.866,
             "south": 47.270,
@@ -153,6 +192,7 @@ class SoilGridsDownloader(Downloader):
         """
         results: list[tuple[str, str]] = []
         total = len(coverage_ids)
+        crs_urn = self._resolve_crs_urn()
 
         for i, coverage_id in enumerate(coverage_ids, 1):
             path = self._download_single_coverage(coverage_id, output_dir)
@@ -206,16 +246,18 @@ class SoilGridsDownloader(Downloader):
             else:
                 coverage_id_api = coverage_id
 
+            bbox = self._bbox_in_crs(self.crs_urn)
+            width, height = self._pixel_dims_for_geographic_bbox(bbox, self.crs_urn)
             self._get_coverage_data(
                 service_id=service_id,
                 coverage_id=coverage_id_api,
-                west=self.germany_bbox["west"],
-                south=self.germany_bbox["south"],
-                east=self.germany_bbox["east"],
-                north=self.germany_bbox["north"],
-                height=self.resolution,
-                width=self.resolution,
-                crs="urn:ogc:def:crs:EPSG::4326",
+                west=bbox["west"],
+                south=bbox["south"],
+                east=bbox["east"],
+                north=bbox["north"],
+                height=height,
+                width=width,
+                crs=self.crs_urn,
                 output=temp_filepath,
             )
 
@@ -231,6 +273,199 @@ class SoilGridsDownloader(Downloader):
         except Exception as exc:
             logger.error("Failed to download coverage %s: %s", coverage_id, exc)
             return "failed"
+
+    def _resolve_crs_urn(self) -> str:
+        """Return the OGC URN to use for WCS requests, probing the API if needed.
+
+        The result is cached in ``self.crs_urn`` after the first call so the
+        network probe only happens once per downloader instance, and only when
+        an actual download is triggered.
+
+        Returns
+        -------
+        str
+            OGC URN of the CRS to use for WCS requests, e.g.
+            ``"urn:ogc:def:crs:EPSG::4326"``.
+        """
+        if self.crs_urn is not None:
+            return self.crs_urn
+
+        config_urn = self._epsg_to_urn(self._config_crs)
+        supported = self._fetch_supported_crs_urns()
+        if config_urn in supported:
+            self.crs_urn = config_urn
+        else:
+            self.crs_urn = "urn:ogc:def:crs:EPSG::4326"
+            logger.warning(
+                "Configured CRS %s is not supported by the SoilGrids WCS API. "
+                "Downloading in EPSG:4326 instead. "
+                "Reprojection to %s should be handled by the saver layer.",
+                self._config_crs,
+                self._config_crs,
+            )
+        logger.info("SoilGrids downloader will request coverages in %s", self.crs_urn)
+        return self.crs_urn
+
+    def _fetch_supported_crs_urns(self) -> frozenset[str]:
+        """Query the SoilGrids WCS service for the CRSs it currently supports.
+
+        Probes :attr:`_PROBE_SERVICE_ID` to retrieve the live
+        ``supportedCRS`` list from the service's capabilities document.
+        Falls back to :attr:`_FALLBACK_API_CRS` if the request fails so that
+        a network outage during initialisation does not abort the process.
+
+        Returns
+        -------
+        frozenset[str]
+            OGC URN strings for every CRS advertised by the service, e.g.
+            ``frozenset({"urn:ogc:def:crs:EPSG::4326", ...})``. Returns
+            :attr:`_FALLBACK_API_CRS` on any error.
+        """
+        try:
+            wcs, coverage_list = self.sg._get_service_and_coverage_list(
+                self._PROBE_SERVICE_ID
+            )
+            # Any coverage from the service shares the same supported CRS list.
+            probe_id = coverage_list[0] if coverage_list else None
+            if probe_id is None:
+                logger.warning(
+                    "SoilGrids CRS probe: empty coverage list for '%s', "
+                    "using fallback CRS set.",
+                    self._PROBE_SERVICE_ID,
+                )
+                return self._FALLBACK_API_CRS
+
+            coverage_obj = self.sg._get_coverage_obj(wcs, coverage_list, probe_id)
+            supported = frozenset(
+                crs_obj.getcodeurn() for crs_obj in coverage_obj.supportedCRS
+            )
+            logger.info(
+                "SoilGrids WCS advertises %d supported CRS(s): %s",
+                len(supported),
+                sorted(supported),
+            )
+            return supported
+        except Exception as exc:
+            logger.warning(
+                "Could not probe SoilGrids WCS for supported CRSs (%s). "
+                "Using fallback: %s.",
+                exc,
+                sorted(self._FALLBACK_API_CRS),
+            )
+            return self._FALLBACK_API_CRS
+
+    @staticmethod
+    def _epsg_to_urn(crs: str) -> str:
+        """Convert ``"EPSG:XXXXX"`` notation to the OGC URN used by WCS requests.
+
+        Parameters
+        ----------
+        crs : str
+            CRS string in ``"EPSG:XXXXX"`` format.
+
+        Returns
+        -------
+        str
+            OGC URN, e.g. ``"urn:ogc:def:crs:EPSG::25832"``.
+        """
+        code = crs.split(":")[-1]
+        return f"urn:ogc:def:crs:EPSG::{code}"
+
+    def _bbox_in_crs(self, crs_urn: str) -> dict[str, float]:
+        """Return the Germany bounding box expressed in *crs_urn*.
+
+        The canonical bbox (stored in EPSG:4326) is returned as-is for
+        geographic CRSs. For projected CRSs the corners are transformed via
+        :class:`~pyproj.Transformer` so the WCS request uses the correct
+        metric coordinates.
+
+        Parameters
+        ----------
+        crs_urn : str
+            Target CRS in OGC URN notation, e.g.
+            ``"urn:ogc:def:crs:EPSG::25832"``.
+
+        Returns
+        -------
+        dict[str, float]
+            Bounding box with keys ``west``, ``south``, ``east``, ``north``
+            in the coordinate system of *crs_urn*.
+        """
+        if "4326" in crs_urn:
+            return self.germany_bbox
+
+        epsg_code = crs_urn.split("::")[-1]
+        transformer = Transformer.from_crs(
+            "EPSG:4326", f"EPSG:{epsg_code}", always_xy=True
+        )
+        west, south = transformer.transform(
+            self.germany_bbox["west"], self.germany_bbox["south"]
+        )
+        east, north = transformer.transform(
+            self.germany_bbox["east"], self.germany_bbox["north"]
+        )
+        logger.debug(
+            "Reprojected Germany bbox to EPSG:%s: W=%.1f S=%.1f E=%.1f N=%.1f",
+            epsg_code,
+            west,
+            south,
+            east,
+            north,
+        )
+        return {"west": west, "south": south, "east": east, "north": north}
+
+    def _pixel_dims_for_geographic_bbox(
+        self,
+        bbox: dict[str, float],
+        crs_urn: str,
+    ) -> tuple[int | None, int | None]:
+        """Compute the pixel width and height needed for ``self.resolution_m`` per pixel.
+
+        For projected CRSs ``resx``/``resy`` are used instead of pixel counts,
+        so this method returns ``(None, None)`` — the caller must then set
+        ``resx = resy = self.resolution_m``.
+
+        For geographic CRSs (EPSG:4326) the pixel count is derived from the
+        bbox span and an approximate metres-per-degree conversion at the
+        centre latitude of the bbox, ensuring the downloaded raster
+        actually achieves the configured ground resolution.
+
+        Parameters
+        ----------
+        bbox : dict[str, float]
+            Bounding box in the CRS described by *crs_urn* with keys
+            ``west``, ``south``, ``east``, ``north``.
+        crs_urn : str
+            OGC URN of the CRS, e.g. ``"urn:ogc:def:crs:EPSG::4326"``.
+
+        Returns
+        -------
+        tuple[int | None, int | None]
+            ``(width, height)`` pixel counts for geographic CRS, or
+            ``(None, None)`` for projected CRS.
+        """
+        if "4326" not in crs_urn:
+            # Projected CRS: resolution supplied via resx/resy, not pixel count.
+            return None, None
+
+        lat_centre = (bbox["south"] + bbox["north"]) / 2.0
+        metres_per_deg_lon = 111_320.0 * math.cos(math.radians(lat_centre))
+        metres_per_deg_lat = 111_320.0
+
+        width = round(
+            (bbox["east"] - bbox["west"]) * metres_per_deg_lon / self.resolution_m
+        )
+        height = round(
+            (bbox["north"] - bbox["south"]) * metres_per_deg_lat / self.resolution_m
+        )
+
+        logger.debug(
+            "Geographic CRS pixel dims for ~%d m resolution: %d x %d",
+            self.resolution_m,
+            width,
+            height,
+        )
+        return width, height
 
     def _get_coverage_data(
         self,
@@ -302,7 +537,7 @@ class SoilGridsDownloader(Downloader):
                 resx = resy = None
             else:
                 width = height = None
-                resx = resy = 250
+                resx = resy = self.resolution_m
 
             if west > east or south > north:
                 raise ValueError(

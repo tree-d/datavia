@@ -28,13 +28,35 @@ class ElevationPipeline(Pipeline):
         getter = GetterTiff
         super().__init__(name, downloader, saver, getter, url=url)
 
-    def update_data(self):
+    def update_data(
+        self,
+        reproject: bool = False,
+        resolution_m: int | None = None,
+    ) -> bool:
         """Update elevation data by downloading and saving if not already stored.
 
         Follows the canonical pipeline flow:
         1. Synchronise the filesystem and database (maintenance, Saver).
         2. Ask the Getter which layers are already stored (DB read).
         3. Download and save only when no data exists yet.
+
+        Parameters
+        ----------
+        reproject : bool, optional
+            When ``True`` the saved file is reprojected in-place to the
+            application-wide default CRS (``get_config().default_crs``).
+            Defaults to ``False``.
+        resolution_m : int, optional
+            Target pixel resolution in metres applied during reprojection.
+            Only meaningful for projected (metric) CRSs. When ``None``
+            rasterio derives the resolution automatically.
+            Defaults to ``None``.
+
+        Returns
+        -------
+        bool
+            ``True`` if elevation data was downloaded and saved successfully,
+            or if data was already up to date.
         """
         if self.getter is None or self.downloader is None or self.saver is None:
             self()
@@ -46,4 +68,4 @@ class ElevationPipeline(Pipeline):
             logger.info("Elevation data already up to date.")
             return True
         logger.info("No elevation data found. Downloading new data...")
-        return super().update_data()
+        return super().update_data(reproject=reproject, resolution_m=resolution_m)

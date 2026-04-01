@@ -93,6 +93,11 @@ You can request a subset of properties with the ``properties`` keyword:
     >>> _ = pipeline()           # Initialize components # doctest: +SKIP
     >>> _ = pipeline.update_data()  # Download data if not yet available # doctest: +SKIP
     >>>
+    >>> # With reprojection: store the downloaded raster in the project CRS
+    >>> # (configured in datavia.conf as default_crs, e.g. EPSG:25832).
+    >>> # resolution_m controls the output pixel size in metres.
+    >>> _ = pipeline.update_data(reproject=True, resolution_m=250)  # doctest: +SKIP
+    >>>
     >>> # Define coordinates
     >>> coords = np.array([[13.4050, 52.5200]])  # Berlin
     >>>
@@ -130,6 +135,37 @@ You can request a subset of properties with the ``properties`` keyword:
     >>> # Verify the return type without a live pipeline
     >>> isinstance({"clay_0-5cm_mean": np.array([294.0])}, dict)
     True
+
+Downloading and Reprojecting Data
+----------------------------------
+
+By default ``update_data()`` stores rasters in the CRS returned by the
+remote service (EPSG:4326 for SoilGrids). Passing ``reproject=True``
+reprojects each raster in-place to the project-wide CRS configured in
+``datavia.conf`` (``default_crs``, e.g. ``EPSG:25832``) before registering
+it in the database. The optional ``resolution_m`` parameter controls the
+output pixel size in metres for projected CRSs.
+
+.. note::
+
+   The SoilGrids WCS API advertises a fixed set of supported CRSs.  When the
+   project CRS (e.g. EPSG:25832) is not among them, the downloader falls back
+   to EPSG:4326 with a warning and pixel counts computed to match the
+   configured ground resolution. Pass ``reproject=True`` so the saver
+   reprojects the result after download.
+
+.. doctest::
+
+    >>> from datavia.soil import SoilPipeline
+    >>>
+    >>> pipeline = SoilPipeline()
+    >>> _ = pipeline()  # Initialize components # doctest: +SKIP
+    >>>
+    >>> # Store data in the project CRS (e.g. EPSG:25832) at 250 m resolution
+    >>> _ = pipeline.update_data(reproject=True, resolution_m=250)  # doctest: +SKIP
+    >>>
+    >>> # Without reprojection: keeps the CRS used by the remote service
+    >>> _ = pipeline.update_data()  # doctest: +SKIP
 
 Getting Elevation Data
 ----------------------

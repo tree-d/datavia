@@ -96,9 +96,9 @@ class TestSoilGridsDownloaderInit:
         """Default statistic is 'mean'."""
         assert downloader.priority_statistic == "mean"
 
-    def test_fixed_resolution(self, downloader) -> None:
-        """Spatial resolution is always 250 metres."""
-        assert downloader.resolution == 250
+    def test_fixed_resolution_m(self, downloader) -> None:
+        """Ground resolution is stored in metres as resolution_m."""
+        assert downloader.resolution_m == 250
 
     def test_germany_bbox_has_four_keys(self, downloader) -> None:
         """Germany bounding box dictionary exposes west, south, east and north."""
@@ -184,7 +184,12 @@ class TestSoilGridsDownloaderSingleCoverage:
     """
 
     def _build_downloader_with_fake_wcs(self, tif_content: bytes = b"\x00" * 256):
-        """Return a downloader whose WCS call writes *tif_content* to disk."""
+        """Return a downloader whose WCS call writes *tif_content* to disk.
+
+        Sets ``crs_urn`` explicitly so tests that call ``_download_single_coverage``
+        directly (bypassing the lazy ``_resolve_crs_urn`` call in
+        ``download_coverages``) receive a valid CRS string.
+        """
         from datavia.soil.soilgrids_downloader import (  # noqa: PLC0415
             SoilGridsDownloader,
         )
@@ -196,6 +201,7 @@ class TestSoilGridsDownloaderSingleCoverage:
         with patch(_SOILGRIDS_CLASS_PATH):
             dl = SoilGridsDownloader({})
         dl._get_coverage_data = MagicMock(side_effect=_write_fake_tiff)
+        dl.crs_urn = "urn:ogc:def:crs:EPSG::4326"  # bypass lazy resolution
         return dl
 
     def test_successful_download_returns_tif_path(self) -> None:
@@ -504,3 +510,194 @@ class TestSoilGridsDownloaderDownloadFallback:
             return_value=[("/some/path/clay_0-5cm_mean.tif", "clay_0-5cm_mean")]
         )
         assert dl.download() == "/some/path/clay_0-5cm_mean.tif"
+
+
+# ---------------------------------------------------------------------------
+# CRS helper methods
+# ---------------------------------------------------------------------------
+
+
+class TestSoilGridsDownloaderCrsMethods:
+    """Tests for the CRS utility methods on SoilGridsDownloader."""
+
+    @pytest.fixture()
+    def dl(self):
+        """Return a SoilGridsDownloader with a mocked SoilGrids client."""
+        with patch(_SOILGRIDS_CLASS_PATH):
+            from datavia.soil.soilgrids_downloader import SoilGridsDownloader  # noqa: PLC0415
+
+            return SoilGridsDownloader({})
+
+    def test_epsg_to_urn_wgs84(self, dl) -> None:
+        """EPSG:4326 is converted to the canonical OGC URN."""
+        assert dl._epsg_to_urn("EPSG:4326") == "urn:ogc:def:crs:EPSG::4326"
+
+    def test_epsg_to_urn_utm32n(self, dl) -> None:
+        """EPSG:25832 is converted to the correct OGC URN."""
+        assert dl._epsg_to_urn("EPSG:25832") == "urn:ogc:def:crs:EPSG::25832"
+
+    def test_bbox_in_crs_geographic_returns_same_dict(self, dl) -> None:
+        """The Germany bbox is returned unchanged for EPSG:4326 URNs."""
+        result = dl._bbox_in_crs("urn:ogc:def:crs:EPSG::4326")
+        assert result == dl.germany_bbox
+
+    def test_bbox_in_crs_projected_reprojects_to_metric(self, dl) -> None:
+        """Bounding box coordinates are in metres for a projected CRS URN."""
+        result = dl._bbox_in_crs("urn:ogc:def:crs:EPSG::25832")
+        # UTM 32N coordinates for Germany are in the hundreds of thousands
+        assert result["west"] > 100_000
+        assert result["south"] > 5_000_000
+        assert result["east"] > result["west"]
+        assert result["north"] > result["south"]
+
+    def test_pixel_dims_geographic_crs_returns_plausible_counts(self, dl) -> None:
+        """Pixel dims for EPSG:4326 are plausible for a 250 m ground resolution."""
+        width, height = dl._pixel_dims_for_geographic_bbox(
+            dl.germany_bbox, "urn:ogc:def:crs:EPSG::4326"
+        )
+        # Germany spans roughly 850 km E-W and 850 km N-S → ~3400 px each at 250 m
+        assert width is not None and 1000 < width < 6000
+        assert height is not None and 1000 < height < 6000
+
+    def test_pixel_dims_projected_crs_returns_none_none(self, dl) -> None:
+        """Pixel dims for a projected CRS return (None, None)."""
+        width, height = dl._pixel_dims_for_geographic_bbox(
+            dl.germany_bbox, "urn:ogc:def:crs:EPSG::25832"
+        )
+        assert width is None
+        assert height is None
+
+
+# ---------------------------------------------------------------------------
+# _resolve_crs_urn lazy CRS probe
+# ---------------------------------------------------------------------------
+
+
+class TestSoilGridsDownloaderResolveCrsUrn:
+    """Tests for the lazy CRS resolution logic in _resolve_crs_urn."""
+
+    @pytest.fixture()
+    def dl(self):
+        """Return a downloader with SoilGrids mocked out."""
+        with patch(_SOILGRIDS_CLASS_PATH):
+            from datavia.soil.soilgrids_downloader import SoilGridsDownloader  # noqa: PLC0415
+
+            return SoilGridsDownloader({})
+
+    def test_uses_config_crs_urn_when_api_supports_it(self, dl) -> None:
+        """When the API advertises the config CRS, that URN is selected."""
+        config_urn = dl._epsg_to_urn(dl._config_crs)
+        dl._fetch_supported_crs_urns = MagicMock(return_value=frozenset({config_urn}))
+
+        result = dl._resolve_crs_urn()
+
+        assert result == config_urn
+
+    def test_falls_back_to_4326_when_config_crs_not_supported(self, dl) -> None:
+        """When the API does not advertise the config CRS, EPSG:4326 is used."""
+        dl._fetch_supported_crs_urns = MagicMock(
+            return_value=frozenset({"urn:ogc:def:crs:EPSG::4326"})
+        )
+        dl._config_crs = "EPSG:25832"  # not in the advertised set
+
+        result = dl._resolve_crs_urn()
+
+        assert result == "urn:ogc:def:crs:EPSG::4326"
+
+    def test_caches_urn_after_first_call(self, dl) -> None:
+        """The API probe runs only once; subsequent calls return the cached URN."""
+        dl._fetch_supported_crs_urns = MagicMock(
+            return_value=frozenset({"urn:ogc:def:crs:EPSG::4326"})
+        )
+
+        first = dl._resolve_crs_urn()
+        second = dl._resolve_crs_urn()
+
+        assert first == second
+        dl._fetch_supported_crs_urns.assert_called_once()
+
+    def test_urn_sentinel_skips_probe(self, dl) -> None:
+        """When crs_urn is pre-set the probe is never triggered."""
+        dl.crs_urn = "urn:ogc:def:crs:EPSG::4326"
+        dl._fetch_supported_crs_urns = MagicMock()
+
+        dl._resolve_crs_urn()
+
+        dl._fetch_supported_crs_urns.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# _fetch_supported_crs_urns live API probe
+# ---------------------------------------------------------------------------
+
+
+class TestSoilGridsDownloaderFetchSupportedCrs:
+    """Tests for the WCS capability probe in _fetch_supported_crs_urns."""
+
+    def _build_downloader_with_coverage(self, crs_urns: list[str]):
+        """Return a downloader whose mocked SoilGrids service advertises *crs_urns*."""
+        mock_crs_objects = []
+        for urn in crs_urns:
+            obj = MagicMock()
+            obj.getcodeurn.return_value = urn
+            mock_crs_objects.append(obj)
+
+        mock_coverage_obj = MagicMock()
+        mock_coverage_obj.supportedCRS = mock_crs_objects
+
+        fake_coverage_list = ["clay_0-5cm_mean"]
+        mock_sg = MagicMock()
+        mock_sg._get_service_and_coverage_list.return_value = (
+            MagicMock(),
+            fake_coverage_list,
+        )
+        mock_sg._get_coverage_obj.return_value = mock_coverage_obj
+
+        with patch(_SOILGRIDS_CLASS_PATH, return_value=mock_sg):
+            from datavia.soil.soilgrids_downloader import SoilGridsDownloader  # noqa: PLC0415
+
+            dl = SoilGridsDownloader({})
+        dl.sg = mock_sg
+        return dl
+
+    def test_returns_frozenset_of_advertised_urns(self) -> None:
+        """All URNs advertised by the service appear in the returned frozenset."""
+        urns = [
+            "urn:ogc:def:crs:EPSG::4326",
+            "urn:ogc:def:crs:EPSG::3857",
+        ]
+        dl = self._build_downloader_with_coverage(urns)
+
+        result = dl._fetch_supported_crs_urns()
+
+        assert isinstance(result, frozenset)
+        assert "urn:ogc:def:crs:EPSG::4326" in result
+        assert "urn:ogc:def:crs:EPSG::3857" in result
+
+    def test_falls_back_to_fallback_crs_on_exception(self) -> None:
+        """A network error returns _FALLBACK_API_CRS without raising."""
+        with patch(_SOILGRIDS_CLASS_PATH):
+            from datavia.soil.soilgrids_downloader import SoilGridsDownloader  # noqa: PLC0415
+
+            dl = SoilGridsDownloader({})
+
+        dl.sg._get_service_and_coverage_list.side_effect = ConnectionError("timeout")
+
+        result = dl._fetch_supported_crs_urns()
+
+        assert result == dl._FALLBACK_API_CRS
+
+    def test_falls_back_when_coverage_list_is_empty(self) -> None:
+        """An empty coverage list from the probe service returns the fallback set."""
+        mock_sg = MagicMock()
+        mock_sg._get_service_and_coverage_list.return_value = (MagicMock(), [])
+
+        with patch(_SOILGRIDS_CLASS_PATH, return_value=mock_sg):
+            from datavia.soil.soilgrids_downloader import SoilGridsDownloader  # noqa: PLC0415
+
+            dl = SoilGridsDownloader({})
+        dl.sg = mock_sg
+
+        result = dl._fetch_supported_crs_urns()
+
+        assert result == dl._FALLBACK_API_CRS

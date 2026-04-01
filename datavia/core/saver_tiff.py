@@ -12,11 +12,12 @@ import shutil
 from typing import Any
 
 import rasterio
-from rasterio.warp import transform_bounds
 from sqlalchemy import text
 
 from ..config import get_config
+from ..library.coordinate_transforms import transform_bbox
 from ..library.database.connection import session_local
+from ..library.spatial_ops import reproject_tiff
 from .interfaces import Saver
 
 logger = logging.getLogger(__name__)
@@ -26,21 +27,53 @@ class TiffSaver(Saver):
     """Saver implementation for TIFF files with PostGIS metadata management and multi-band support."""
 
     def __init__(self, source_name: str):
-        """Initialize TiffSaver with data directory from config."""
-        self.data_dir = str(get_config().data_directory)
-        self.target_crs = "EPSG:4326"  # Default CRS for metadata storage
+        """Initialize TiffSaver with data directory and CRS from config.
+
+        Parameters
+        ----------
+        source_name : str
+            Unique identifier for this data source, used as a filename and
+            database layer prefix.
+        """
+        cfg = get_config()
+        self.data_dir = str(cfg.data_directory)
+        # target_crs is used both for metadata bbox storage and as the
+        # destination CRS when reproject=True is passed to save().
+        self.target_crs = cfg.default_crs
         self.source_name = source_name
 
-    def save(self, data_path: str) -> bool:
-        """
-        Save TIFF file to data directory and import metadata to PostGIS.
-        Handles both single-band and multi-band TIFF files.
+    def save(
+        self,
+        data_path: str,
+        reproject: bool = False,
+        resolution_m: int | None = None,
+    ) -> bool:
+        """Save a TIFF file to the data directory and register it in PostGIS.
 
-        Args:
-            data_path: Path to the source TIFF file
+        Handles both single-band and multi-band TIFF files. When *reproject*
+        is ``True`` the file is reprojected in-place to ``self.target_crs``
+        (derived from ``get_config().default_crs``) after being copied to the
+        data directory but before metadata is registered in the database.
 
-        Returns:
-            bool: True if save operation was successful
+        Parameters
+        ----------
+        data_path : str
+            Path to the source TIFF file to save.
+        reproject : bool, optional
+            Reproject the saved file to ``self.target_crs`` before registering
+            metadata. Skipped silently when the file is already in the target
+            CRS. Defaults to ``False``.
+        resolution_m : int, optional
+            Target pixel resolution in metres for reprojection. Only applied
+            for projected (metric) CRSs; unused for geographic CRSs where
+            rasterio derives the resolution automatically. Defaults to
+            ``None``.
+
+        Returns
+        -------
+        bool
+            ``True`` if the file was saved (and optionally reprojected)
+            and its metadata was registered successfully.
         """
         try:
             # Derive the layer name from the full file stem so that any filename
@@ -55,16 +88,21 @@ class TiffSaver(Saver):
 
             # Copy file to data directory
             shutil.copy2(data_path, dest_path)
-            logger.info(f"Copied TIFF file to {dest_path}")
+            logger.info("Copied TIFF file to %s", dest_path)
+
+            # Optionally reproject in-place before registering metadata so
+            # the database always records the reprojected extent and CRS.
+            if reproject:
+                reproject_tiff(dest_path, self.target_crs, resolution_m=resolution_m)
 
             # Import metadata to PostGIS with multi-band support
             self._import_raster_metadata_with_bands(dest_path, layer_name)
-            logger.info(f"Imported metadata for layer {layer_name}")
+            logger.info("Imported metadata for layer %s", layer_name)
 
             return True
 
         except Exception as e:
-            logger.error(f"Failed to save TIFF file {data_path}: {e}")
+            logger.error("Failed to save TIFF file %s: %s", data_path, e)
             return False
 
     def check_data_exists(self) -> tuple[set[Any], set[Any], set[Any]]:
@@ -151,7 +189,14 @@ class TiffSaver(Saver):
     def _import_raster_metadata(
         self, filepath: str, layer_name: str, session: Any = None
     ) -> None:
-        """Import raster metadata into PostGIS raster_layers table."""
+        """Import raster metadata into PostGIS raster_layers table.
+
+        The ``bbox`` geometry is always stored in EPSG:4326 to satisfy the
+        fixed SRID constraint on the ``raster_layers`` table. Bounds are
+        reprojected via :func:`~datavia.library.coordinate_transforms.transform_bbox`
+        when the file's native CRS differs from EPSG:4326. The file's actual
+        CRS is recorded separately in the ``crs`` column.
+        """
         should_close_session = session is None
         if session is None:
             session = session_local()
@@ -162,18 +207,16 @@ class TiffSaver(Saver):
                 resolution = src.res
                 src_crs = src.crs
 
-                # Handle CRS conversion
-                src_crs_str = src_crs.to_string() if src_crs else self.target_crs
+                # Always record the file's native CRS in the crs column.
+                src_crs_str = src_crs.to_string() if src_crs else "EPSG:4326"
 
-                # Transform bounds to target CRS if needed
-                if src_crs_str != self.target_crs and src_crs:
-                    bounds_target = transform_bounds(
-                        src_crs,
-                        self.target_crs,
-                        bounds.left,
-                        bounds.bottom,
-                        bounds.right,
-                        bounds.top,
+                # The bbox column is fixed to EPSG:4326 by the DB schema.
+                # Always transform bounds to that CRS for metadata storage.
+                if src_crs_str != "EPSG:4326" and src_crs:
+                    bounds_target = transform_bbox(
+                        (bounds.left, bounds.bottom, bounds.right, bounds.top),
+                        src_crs_str,
+                        "EPSG:4326",
                     )
                 else:
                     bounds_target = (
@@ -190,16 +233,8 @@ class TiffSaver(Saver):
                     f"{right} {top}, {right} {bottom}, {left} {bottom}))"
                 )
 
-                # Get SRID
-                try:
-                    srid = int(self.target_crs.split(":")[1])
-                except (IndexError, ValueError, AttributeError) as e:
-                    logger.warning(
-                        "Could not parse SRID from target CRS '%s': %s. Using default 4326.",
-                        self.target_crs,
-                        e,
-                    )
-                    srid = 4326
+                # SRID is always 4326 — derived from _BBOX_STORAGE_CRS.
+                srid = 4326
 
             existing = session.execute(
                 text(
