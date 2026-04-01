@@ -67,7 +67,7 @@ class TestSoilGetterTiffGetStoredCoverageIds:
 
     def test_strips_source_prefix_correctly(self, getter: SoilGetterTiff) -> None:
         """Layer names with the correct prefix are returned without it."""
-        getter.check_existing_layers = MagicMock(
+        getter.get_existing_layers = MagicMock(
             return_value={"soil_clay_0-5cm_mean", "soil_sand_5-15cm_mean"}
         )
         result = getter.get_stored_coverage_ids()
@@ -75,7 +75,7 @@ class TestSoilGetterTiffGetStoredCoverageIds:
 
     def test_layers_from_other_sources_excluded(self, getter: SoilGetterTiff) -> None:
         """Layer names belonging to unrelated sources are filtered out."""
-        getter.check_existing_layers = MagicMock(
+        getter.get_existing_layers = MagicMock(
             return_value={"soil_clay_0-5cm_mean", "elevation_dgm200"}
         )
         result = getter.get_stored_coverage_ids()
@@ -84,12 +84,12 @@ class TestSoilGetterTiffGetStoredCoverageIds:
 
     def test_empty_database_returns_empty_set(self, getter: SoilGetterTiff) -> None:
         """No registered layers results in an empty set."""
-        getter.check_existing_layers = MagicMock(return_value=set())
+        getter.get_existing_layers = MagicMock(return_value=set())
         assert getter.get_stored_coverage_ids() == set()
 
     def test_compound_property_names_preserved(self, getter: SoilGetterTiff) -> None:
         """Compound property names like 'field_capacity' survive prefix stripping."""
-        getter.check_existing_layers = MagicMock(
+        getter.get_existing_layers = MagicMock(
             return_value={"soil_field_capacity_0-5cm_mean"}
         )
         result = getter.get_stored_coverage_ids()

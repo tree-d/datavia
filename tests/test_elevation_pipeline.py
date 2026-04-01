@@ -37,7 +37,7 @@ def test_elevation_pipeline_e2e():
         meinehoehe.update_data()
 
         # Verify layers are registered — the Getter is the authorised DB reader.
-        existing_layers = meinehoehe.getter.check_existing_layers()
+        existing_layers = meinehoehe.getter.get_existing_layers()
         assert existing_layers, "No elevation data layers were found after update."
 
         # Test data retrieval

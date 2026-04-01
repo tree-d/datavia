@@ -4,6 +4,8 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
+import rasterio
+from rasterio.transform import from_bounds
 
 from datavia.library.spatial_ops import (
     extract_values_at_coords,
@@ -11,6 +13,7 @@ from datavia.library.spatial_ops import (
     process_multiband_tiff,
     raster_sample,
     read_geotiff_metadata,
+    reproject_tiff,
     validate_coordinates_in_bounds,
 )
 
@@ -349,9 +352,6 @@ class TestReprojectTiff:
 
     def _create_test_tiff(self, path: str, crs: str = "EPSG:4326") -> None:
         """Write a tiny valid GeoTIFF at *path* in *crs*."""
-        import numpy as np
-        import rasterio
-        from rasterio.transform import from_bounds
 
         data = np.ones((10, 10), dtype=np.int16) * 100
         if crs == "EPSG:4326":
@@ -373,8 +373,6 @@ class TestReprojectTiff:
 
     def test_skips_when_file_already_in_target_crs(self, tmp_path) -> None:
         """reproject_tiff does nothing when the file is already in target_crs."""
-        import rasterio
-        from datavia.library.spatial_ops import reproject_tiff
 
         tif = str(tmp_path / "test.tif")
         self._create_test_tiff(tif, crs="EPSG:4326")
@@ -389,8 +387,6 @@ class TestReprojectTiff:
 
     def test_reprojects_tiff_in_place(self, tmp_path) -> None:
         """reproject_tiff replaces the file with the reprojected version."""
-        import rasterio
-        from datavia.library.spatial_ops import reproject_tiff
 
         tif = str(tmp_path / "test.tif")
         self._create_test_tiff(tif, crs="EPSG:4326")
@@ -403,9 +399,6 @@ class TestReprojectTiff:
 
     def test_preserves_pixel_values_after_reprojection(self, tmp_path) -> None:
         """The majority of pixel values are preserved across a round-trip reproject."""
-        import numpy as np
-        import rasterio
-        from datavia.library.spatial_ops import reproject_tiff
 
         tif = str(tmp_path / "values.tif")
         self._create_test_tiff(tif, crs="EPSG:4326")
@@ -420,9 +413,6 @@ class TestReprojectTiff:
 
     def test_original_preserved_on_error(self, tmp_path) -> None:
         """The original file is not corrupted when an error occurs during warp."""
-        from unittest.mock import patch
-        import rasterio
-        from datavia.library.spatial_ops import reproject_tiff
 
         tif = str(tmp_path / "test.tif")
         self._create_test_tiff(tif, crs="EPSG:4326")
@@ -442,8 +432,6 @@ class TestReprojectTiff:
 
     def test_raises_when_rasterio_not_available(self, tmp_path) -> None:
         """RuntimeError is raised immediately when rasterio is not available."""
-        from unittest.mock import patch
-        from datavia.library.spatial_ops import reproject_tiff
 
         tif = str(tmp_path / "test.tif")
         self._create_test_tiff(tif)

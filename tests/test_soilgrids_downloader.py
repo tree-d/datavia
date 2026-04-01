@@ -22,6 +22,9 @@ import tempfile
 from unittest.mock import MagicMock, patch
 
 import pytest
+from datavia.soil.soilgrids_downloader import (
+    SoilGridsDownloader,
+)
 
 # The module imports `from soilgrids import SoilGrids` at the top level.
 # We patch that class every time we instantiate SoilGridsDownloader in
@@ -524,8 +527,6 @@ class TestSoilGridsDownloaderCrsMethods:
     def dl(self):
         """Return a SoilGridsDownloader with a mocked SoilGrids client."""
         with patch(_SOILGRIDS_CLASS_PATH):
-            from datavia.soil.soilgrids_downloader import SoilGridsDownloader  # noqa: PLC0415
-
             return SoilGridsDownloader({})
 
     def test_epsg_to_urn_wgs84(self, dl) -> None:
@@ -580,8 +581,6 @@ class TestSoilGridsDownloaderResolveCrsUrn:
     def dl(self):
         """Return a downloader with SoilGrids mocked out."""
         with patch(_SOILGRIDS_CLASS_PATH):
-            from datavia.soil.soilgrids_downloader import SoilGridsDownloader  # noqa: PLC0415
-
             return SoilGridsDownloader({})
 
     def test_uses_config_crs_urn_when_api_supports_it(self, dl) -> None:
@@ -654,8 +653,6 @@ class TestSoilGridsDownloaderFetchSupportedCrs:
         mock_sg._get_coverage_obj.return_value = mock_coverage_obj
 
         with patch(_SOILGRIDS_CLASS_PATH, return_value=mock_sg):
-            from datavia.soil.soilgrids_downloader import SoilGridsDownloader  # noqa: PLC0415
-
             dl = SoilGridsDownloader({})
         dl.sg = mock_sg
         return dl
@@ -677,8 +674,6 @@ class TestSoilGridsDownloaderFetchSupportedCrs:
     def test_falls_back_to_fallback_crs_on_exception(self) -> None:
         """A network error returns _FALLBACK_API_CRS without raising."""
         with patch(_SOILGRIDS_CLASS_PATH):
-            from datavia.soil.soilgrids_downloader import SoilGridsDownloader  # noqa: PLC0415
-
             dl = SoilGridsDownloader({})
 
         dl.sg._get_service_and_coverage_list.side_effect = ConnectionError("timeout")
@@ -693,8 +688,6 @@ class TestSoilGridsDownloaderFetchSupportedCrs:
         mock_sg._get_service_and_coverage_list.return_value = (MagicMock(), [])
 
         with patch(_SOILGRIDS_CLASS_PATH, return_value=mock_sg):
-            from datavia.soil.soilgrids_downloader import SoilGridsDownloader  # noqa: PLC0415
-
             dl = SoilGridsDownloader({})
         dl.sg = mock_sg
 

@@ -72,7 +72,7 @@ class GetterTiff(Getter):
         )
 
         try:
-            # Use Library database query functions
+            # Use library database query functions
             tiff_paths = get_raster_paths(self.source_name)
             logger.debug(
                 f"Found {len(tiff_paths)} TIFF files for source: {self.source_name}"
@@ -118,7 +118,7 @@ class GetterTiff(Getter):
             f"Failed to retrieve data from TIFF for source: {self.source_name}"
         )
 
-    def check_existing_layers(self) -> set[str]:
+    def get_existing_layers(self) -> set[str]:
         """Return layer names already registered in the database for this source.
 
         Queries the ``raster_layers`` table via

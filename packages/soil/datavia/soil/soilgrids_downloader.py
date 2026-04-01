@@ -192,7 +192,7 @@ class SoilGridsDownloader(Downloader):
         """
         results: list[tuple[str, str]] = []
         total = len(coverage_ids)
-        crs_urn = self._resolve_crs_urn()
+        self._resolve_crs_urn()
 
         for i, coverage_id in enumerate(coverage_ids, 1):
             path = self._download_single_coverage(coverage_id, output_dir)

@@ -6,6 +6,7 @@ used by multiple pipelines for coordinate conversions.
 """
 
 import logging
+from typing import Any
 
 import numpy as np
 
@@ -106,7 +107,7 @@ def transform_bbox(
     bounds: tuple[float, float, float, float],
     source_crs: str,
     target_crs: str,
-) -> tuple[float, float, float, float]:
+) -> Any:
     """Reproject a bounding box from *source_crs* to *target_crs*.
 
     Uses ``rasterio.warp.transform_bounds`` internally, which densifies the

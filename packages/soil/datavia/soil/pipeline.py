@@ -54,7 +54,7 @@ class SoilGetterTiff(GetterTiff):
         """Return coverage IDs registered in the database for this source.
 
         Strips the ``{source_name}_`` prefix from each layer name returned by
-        :meth:`check_existing_layers` so callers receive plain coverage IDs
+        :meth:`get_existing_layers` so callers receive plain coverage IDs
         (e.g. ``"clay_0-5cm_mean"``) instead of full layer names.
 
         Returns
@@ -67,7 +67,7 @@ class SoilGetterTiff(GetterTiff):
         prefix = f"{self.source_name}_"
         return {
             layer[len(prefix) :]
-            for layer in self.check_existing_layers()
+            for layer in self.get_existing_layers()
             if layer.startswith(prefix)
         }
 

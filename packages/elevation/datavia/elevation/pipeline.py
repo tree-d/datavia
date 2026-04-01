@@ -63,7 +63,7 @@ class ElevationPipeline(Pipeline):
         logger.info("Checking elevation data...")
         # Maintenance step: reconcile filesystem with DB metadata.
         self.saver.sync_files_and_database()
-        existing_layers = self.getter.check_existing_layers()
+        existing_layers = self.getter.get_existing_layers()
         if existing_layers:
             logger.info("Elevation data already up to date.")
             return True

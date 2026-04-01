@@ -5,11 +5,18 @@ Unit tests for datavia.library.coordinate_transforms module.
 Tests coordinate transformations between different CRS systems.
 """
 
+from unittest.mock import patch
+
 import numpy as np
 import pytest
 from pyproj.exceptions import CRSError
 
-from datavia.library.coordinate_transforms import get_transformer, transform_coordinates
+from datavia.library.coordinate_transforms import (
+    get_transformer,
+    is_geographic_crs,
+    transform_bbox,
+    transform_coordinates,
+)
 
 
 class TestCoordinateTransforms:
@@ -204,38 +211,26 @@ class TestIsGeographicCrs:
 
     def test_wgs84_is_geographic(self) -> None:
         """EPSG:4326 (WGS 84) is a geographic CRS."""
-        from datavia.library.coordinate_transforms import is_geographic_crs
-
         assert is_geographic_crs("EPSG:4326") is True
 
     def test_nad83_is_geographic(self) -> None:
         """EPSG:4269 (NAD83) is a geographic CRS."""
-        from datavia.library.coordinate_transforms import is_geographic_crs
-
         assert is_geographic_crs("EPSG:4269") is True
 
     def test_utm32n_is_projected(self) -> None:
         """EPSG:25832 (UTM Zone 32N) is a projected CRS."""
-        from datavia.library.coordinate_transforms import is_geographic_crs
-
         assert is_geographic_crs("EPSG:25832") is False
 
     def test_web_mercator_is_projected(self) -> None:
         """EPSG:3857 (Web Mercator) is a projected CRS."""
-        from datavia.library.coordinate_transforms import is_geographic_crs
-
         assert is_geographic_crs("EPSG:3857") is False
 
     def test_invalid_crs_string_returns_false(self) -> None:
         """An unrecognised CRS string is caught and returns False."""
-        from datavia.library.coordinate_transforms import is_geographic_crs
-
         assert is_geographic_crs("NOT:ACRS") is False
 
     def test_ogc_urn_geographic_crs(self) -> None:
         """OGC URN notation for EPSG:4326 is also recognised as geographic."""
-        from datavia.library.coordinate_transforms import is_geographic_crs
-
         assert is_geographic_crs("urn:ogc:def:crs:EPSG::4326") is True
 
 
@@ -244,18 +239,14 @@ class TestTransformBbox:
 
     def test_identity_same_crs_returns_unchanged_bounds(self) -> None:
         """Transforming to the same CRS returns approximately equal bounds."""
-        from datavia.library.coordinate_transforms import transform_bbox
-
         bounds = (5.8, 47.2, 15.0, 55.0)
         result = transform_bbox(bounds, "EPSG:4326", "EPSG:4326")
         assert len(result) == 4
-        for orig, res in zip(bounds, result):
+        for orig, res in zip(bounds, result, strict=False):
             assert abs(orig - res) < 1e-4
 
     def test_forward_transform_to_utm_produces_metric_values(self) -> None:
         """Reprojecting a geographic bbox to UTM yields large metric coordinates."""
-        from datavia.library.coordinate_transforms import transform_bbox
-
         bounds = (5.8, 47.2, 15.0, 55.0)  # Germany in WGS84
         left, bottom, right, top = transform_bbox(bounds, "EPSG:4326", "EPSG:25832")
         # UTM coordinates for Germany are in the hundreds of thousands of metres
@@ -266,25 +257,22 @@ class TestTransformBbox:
 
     def test_round_trip_4326_to_3857_and_back(self) -> None:
         """A full round-trip (4326 → 3857 → 4326) restores the original bounds."""
-        from datavia.library.coordinate_transforms import transform_bbox
-
         original = (5.8, 47.2, 15.0, 55.0)
         intermediate = transform_bbox(original, "EPSG:4326", "EPSG:3857")
         restored = transform_bbox(intermediate, "EPSG:3857", "EPSG:4326")
-        for orig, res in zip(original, restored):
+        for orig, res in zip(original, restored, strict=False):
             assert abs(orig - res) < 1e-5
 
     def test_unavailable_rasterio_raises_runtime_error(self) -> None:
         """RuntimeError is raised when rasterio.warp cannot be imported."""
-        from unittest.mock import patch
-
-        from datavia.library.coordinate_transforms import transform_bbox
-
-        with patch(
-            "datavia.library.coordinate_transforms.RASTERIO_WARP_AVAILABLE", False
+        with (
+            patch(
+                "datavia.library.coordinate_transforms.RASTERIO_WARP_AVAILABLE",
+                False,
+            ),
+            pytest.raises(RuntimeError, match=r"rasterio\.warp"),
         ):
-            with pytest.raises(RuntimeError, match="rasterio.warp"):
-                transform_bbox((0.0, 0.0, 1.0, 1.0), "EPSG:4326", "EPSG:3857")
+            transform_bbox((0.0, 0.0, 1.0, 1.0), "EPSG:4326", "EPSG:3857")
 
 
 if __name__ == "__main__":
