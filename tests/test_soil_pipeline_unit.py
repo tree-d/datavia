@@ -656,3 +656,79 @@ class TestSoilPipelineUpdateData:
             mock_tmpdir.return_value.__exit__ = MagicMock(return_value=False)
             pipeline.update_data()
         pipeline.saver.sync_files_and_database.assert_called_once()
+
+
+class TestSoilPipelineUpdateDataReprojectParams:
+    """Tests that reproject and resolution_m kwargs are forwarded to saver.save."""
+
+    def _setup_pipeline_for_download(
+        self,
+        pipeline: SoilPipeline,
+        coverage_id: str = "clay_0-5cm_mean",
+    ) -> None:
+        """Wire a pipeline so exactly one coverage is missing and will be saved."""
+        mock_downloader = MagicMock()
+        mock_downloader.get_coverage_ids.return_value = [coverage_id]
+        mock_downloader.download_coverages.return_value = [
+            (f"/work/{coverage_id}.tif", coverage_id)
+        ]
+
+        mock_saver = MagicMock()
+        mock_saver.sync_files_and_database.return_value = True
+        mock_saver.save.return_value = True
+
+        mock_getter = MagicMock()
+        mock_getter.get_stored_coverage_ids.return_value = set()
+
+        pipeline.downloader = mock_downloader
+        pipeline.saver = mock_saver
+        pipeline.getter = mock_getter
+
+    def test_reproject_true_forwarded_to_saver_save(
+        self, pipeline: SoilPipeline
+    ) -> None:
+        """saver.save is called with reproject=True when the flag is set."""
+        self._setup_pipeline_for_download(pipeline)
+        with (
+            patch("datavia.soil.pipeline.get_config") as mock_cfg,
+            patch("datavia.soil.pipeline.tempfile.TemporaryDirectory") as mock_tmpdir,
+        ):
+            mock_cfg.return_value.data_directory = tempfile.gettempdir()
+            mock_tmpdir.return_value.__enter__ = lambda s: tempfile.gettempdir()
+            mock_tmpdir.return_value.__exit__ = MagicMock(return_value=False)
+            pipeline.update_data(reproject=True)
+
+        pipeline.saver.save.assert_called_once()
+        _, call_kwargs = pipeline.saver.save.call_args
+        assert call_kwargs.get("reproject") is True
+
+    def test_resolution_m_forwarded_to_saver_save(self, pipeline: SoilPipeline) -> None:
+        """saver.save receives the resolution_m value passed to update_data."""
+        self._setup_pipeline_for_download(pipeline)
+        with (
+            patch("datavia.soil.pipeline.get_config") as mock_cfg,
+            patch("datavia.soil.pipeline.tempfile.TemporaryDirectory") as mock_tmpdir,
+        ):
+            mock_cfg.return_value.data_directory = tempfile.gettempdir()
+            mock_tmpdir.return_value.__enter__ = lambda s: tempfile.gettempdir()
+            mock_tmpdir.return_value.__exit__ = MagicMock(return_value=False)
+            pipeline.update_data(reproject=True, resolution_m=250)
+
+        _, call_kwargs = pipeline.saver.save.call_args
+        assert call_kwargs.get("resolution_m") == 250
+
+    def test_default_call_passes_reproject_false(self, pipeline: SoilPipeline) -> None:
+        """By default saver.save is called with reproject=False and resolution_m=None."""
+        self._setup_pipeline_for_download(pipeline)
+        with (
+            patch("datavia.soil.pipeline.get_config") as mock_cfg,
+            patch("datavia.soil.pipeline.tempfile.TemporaryDirectory") as mock_tmpdir,
+        ):
+            mock_cfg.return_value.data_directory = tempfile.gettempdir()
+            mock_tmpdir.return_value.__enter__ = lambda s: tempfile.gettempdir()
+            mock_tmpdir.return_value.__exit__ = MagicMock(return_value=False)
+            pipeline.update_data()
+
+        _, call_kwargs = pipeline.saver.save.call_args
+        assert call_kwargs.get("reproject") is False
+        assert call_kwargs.get("resolution_m") is None
