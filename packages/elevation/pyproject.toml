@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "datavia-elevation"
-version = "1.0.0-dev"
+version = "1.0.1-dev"
 description = "Elevation data pipeline for Datavia"
 authors = [
     {name = "Michael Berg", email = "michael.berg@ufz.de"},

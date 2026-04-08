@@ -680,8 +680,9 @@ class SoilPipeline(Pipeline):
         -------
         bool
             ``True`` if all missing coverages were downloaded and stored, or
-            if nothing was missing. ``False`` if any download or save step
-            failed.
+            if nothing was missing. ``False`` if any coverage ID in *delta*
+            was not returned by the downloader (download failure), or if any
+            returned file could not be saved.
         """
         if not self.downloader or not self.saver or not self.getter:
             self()
@@ -741,6 +742,17 @@ class SoilPipeline(Pipeline):
             with tempfile.TemporaryDirectory(dir=temp_dir) as work_dir:
                 new_files = self.downloader.download_coverages(sorted(delta), work_dir)
 
+                # --- Detect download failures ----------------------------------
+                # download_coverages silently omits failed IDs, so compare the
+                # set of returned coverage IDs against the full requested delta.
+                downloaded_ids = {cid for _, cid in new_files}
+                failed_downloads = delta - downloaded_ids
+                for failed_id in sorted(failed_downloads):
+                    logger.error(
+                        "Coverage '%s' failed to download and will not be stored.",
+                        failed_id,
+                    )
+
                 if not new_files:
                     logger.error("No coverages downloaded successfully")
                     return False
@@ -763,7 +775,7 @@ class SoilPipeline(Pipeline):
             len(new_files),
             self.name,
         )
-        return saved == len(new_files)
+        return saved == len(new_files) and not failed_downloads
 
     def get_available_properties(self) -> list[str]:
         """Return canonical property names present in the database.
