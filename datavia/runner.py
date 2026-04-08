@@ -24,6 +24,7 @@ import configparser
 import hashlib
 import logging
 import os
+import socket
 import subprocess  # nosec B404 - subprocess required for docker-compose management
 import time
 from pathlib import Path
@@ -149,6 +150,25 @@ def _project_args() -> list[str]:
     return ["--project-name", _project_name()]
 
 
+def _is_port_in_use(port: int, host: str = "localhost") -> bool:
+    """Check whether a TCP port is already bound on the given host.
+
+    Used as a pre-flight check before starting the Docker container so
+    the user receives a clear error message instead of a raw Docker
+    bind failure.
+
+    Args:
+        port: The TCP port number to probe.
+        host: Hostname or IP address to check. Defaults to ``"localhost"``.
+
+    Returns:
+        ``True`` if the port is already in use, ``False`` otherwise.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(1)
+        return sock.connect_ex((host, port)) == 0
+
+
 def _compose_env() -> dict[str, str]:
     """Return the environment dict for docker compose subprocess calls.
 
@@ -171,12 +191,21 @@ def start_container() -> None:
 
     Raises
     ------
+    OSError
+        If the configured host port is already in use by another process.
     subprocess.CalledProcessError
         If ``docker compose up`` fails.
     TimeoutError
         If PostgreSQL does not become ready within
         ``_POSTGRES_READY_TIMEOUT_S`` seconds.
     """
+    port = _project_port()
+    if _is_port_in_use(port):
+        raise OSError(
+            f"Port {port} is already in use. "
+            f"Stop the conflicting process or set a different port via "
+            f"[database] port in datavia.conf."
+        )
     try:
         subprocess.run(
             ["docker", "compose", *_env_file_args(), *_project_args(), "up", "-d"],

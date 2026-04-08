@@ -90,8 +90,11 @@ class TestContainerManagement:
     @patch("datavia.runner._compose_env", return_value={})
     @patch("datavia.runner._project_args", return_value=[])
     @patch("datavia.runner._env_file_args", return_value=[])
+    @patch("datavia.runner._is_port_in_use", return_value=False)
     @patch("subprocess.run")
-    def test_start_container_success(self, mock_run, _mock_env, _mock_proj, _mock_cenv):
+    def test_start_container_success(
+        self, mock_run, _mock_no_port, _mock_env, _mock_proj, _mock_cenv
+    ):
         """Test start_container successful startup.
 
         docker compose up -d is followed by a pg_isready probe that succeeds
@@ -116,12 +119,24 @@ class TestContainerManagement:
             check=False,
         )
 
+    @patch("datavia.runner._project_port", return_value=54321)
+    @patch("datavia.runner._is_port_in_use", return_value=True)
+    def test_start_container_port_in_use(self, _mock_port_check, _mock_port):
+        """Test start_container raises OSError when the host port is already bound.
+
+        No Docker subprocess must be called; the check must short-circuit before
+        attempting to start the container.
+        """
+        with pytest.raises(OSError, match="54321"):
+            start_container()
+
     @patch("datavia.runner._compose_env", return_value={})
     @patch("datavia.runner._project_args", return_value=[])
     @patch("datavia.runner._env_file_args", return_value=[])
+    @patch("datavia.runner._is_port_in_use", return_value=False)
     @patch("subprocess.run")
     def test_start_container_docker_compose_fails(
-        self, mock_run, _mock_env, _mock_proj, _mock_cenv
+        self, mock_run, _mock_no_port, _mock_env, _mock_proj, _mock_cenv
     ):
         """Test start_container handles docker-compose failure."""
         mock_run.side_effect = subprocess.CalledProcessError(1, "docker-compose")
@@ -137,8 +152,11 @@ class TestContainerManagement:
         )
 
     @patch("datavia.runner._env_file_args", return_value=[])
+    @patch("datavia.runner._is_port_in_use", return_value=False)
     @patch("subprocess.run")
-    def test_start_container_no_docker_compose(self, mock_run, _mock_env):
+    def test_start_container_no_docker_compose(
+        self, mock_run, _mock_no_port, _mock_env
+    ):
         """Test start_container when docker-compose not available."""
         mock_run.side_effect = FileNotFoundError("docker-compose command not found")
 
@@ -270,10 +288,11 @@ class TestContainerManagement:
 class TestContainerIntegration:
     """Test integrated container lifecycle scenarios."""
 
+    @patch("datavia.runner._is_port_in_use", return_value=False)
     @patch("datavia.runner._env_file_args", return_value=[])
     @patch("time.sleep")
     @patch("subprocess.run")
-    def test_container_lifecycle(self, mock_run, mock_sleep, _mock_env):
+    def test_container_lifecycle(self, mock_run, mock_sleep, _mock_env, _mock_no_port):
         """Test complete container start/stop lifecycle."""
 
         def mock_run_side_effect(*args, **kwargs):
