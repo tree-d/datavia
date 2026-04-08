@@ -109,8 +109,6 @@ def spatial_interpolate(
         coord_array = np.vstack([rows, cols])
 
         # Perform interpolation for all points simultaneously
-        # band_data is already float64 (cast above); just pass it directly
-        input_array = band_data
         coordinates = np.asarray(coord_array, dtype=np.float64)
 
         # Ensure order is one of the accepted literal values
@@ -129,7 +127,7 @@ def spatial_interpolate(
             order_literal = 5
 
         interpolated_values = map_coordinates(
-            input_array,
+            band_data,
             coordinates,
             order=order_literal,
             cval=np.nan,
