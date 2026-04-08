@@ -211,7 +211,6 @@ class SoilPipeline(Pipeline):
         name: str = "soil",
         properties: list[str] | None = None,
         depths: list[str] | None = None,
-        hihydrosoil_depths: list[str] | None = None,
         value: str = "mean",
     ) -> None:
         """Initialize the soil pipeline with a configurable set of properties and depth layers.
@@ -225,23 +224,19 @@ class SoilPipeline(Pipeline):
             Soil properties to download and expose. Accepts canonical names
             from both SoilGrids (``"clay"``, ``"sand"``, ``"silt"``,
             ``"ph"``, ``"carbon"``, ``"bdod"``, ``"cec"``, ``"cfvo"``,
-            ``"nitrogen"``, ``"ocd"``, ``"ocs"``, ``"wv0010"``,
-            ``"wv0033"``, ``"wv1500"``) and HiHydroSoil
+            ``"nitrogen"``, ``"ocd"``, ``"ocs"``) and HiHydroSoil
             (``"field_capacity"``, ``"wilting_point"``, ``"porosity"``,
             ``"hydraulic_conductivity"``).
             Defaults to ``["clay", "sand", "silt", "ph", "carbon",
             "field_capacity", "wilting_point", "porosity",
             "hydraulic_conductivity"]``.
         depths : list[str], optional
-            Depth layers for SoilGrids properties. Available options:
-            ``"0-5cm"``, ``"0-30cm"``, ``"5-15cm"``, ``"15-30cm"``,
+            Depth layers applied to all properties across both sources.
+            Both SoilGrids and HiHydroSoil share the same six standard
+            layers: ``"0-5cm"``, ``"5-15cm"``, ``"15-30cm"``,
             ``"30-60cm"``, ``"60-100cm"``, ``"100-200cm"``.
+            SoilGrids also offers ``"0-30cm"`` for the ``ocs`` property.
             Defaults to ``["0-5cm", "5-15cm"]``.
-        hihydrosoil_depths : list[str], optional
-            Depth layers specifically for HiHydroSoil properties. Available
-            options: ``"0-5cm"``, ``"5-15cm"``, ``"15-30cm"``,
-            ``"30-60cm"``, ``"60-100cm"``, ``"100-200cm"``.
-            Defaults to all six layers when ``None``.
         value : str, optional
             Statistical summary to retrieve for each property/depth combination.
             SoilGrids supports ``"Q0.05"``, ``"Q0.5"``, ``"Q0.95"``,
@@ -270,15 +265,13 @@ class SoilPipeline(Pipeline):
         )
         self.data_source = "SoilGrids+HiHydroSoil"
         self.depths = depths if depths is not None else ["0-5cm", "5-15cm"]
-        self.hihydrosoil_depths = hihydrosoil_depths  # None → backend default (all 6)
         self.properties = properties
         self.statistic = value
         logger.info(
-            "SoilPipeline initialized — properties: %s, SoilGrids depths: %s, "
-            "HiHydroSoil depths: %s",
+            "SoilPipeline initialized — properties: %s, depths: %s, statistic: %s",
             self.properties,
             self.depths,
-            self.hihydrosoil_depths or "(all 6 default)",
+            self.statistic,
         )
 
     def __call__(self, *args, **kwds):
@@ -305,15 +298,12 @@ class SoilPipeline(Pipeline):
             "depths": self.depths,
             "statistic": self.statistic,
         }
-        if self.hihydrosoil_depths is not None:
-            config["hihydrosoil_depths"] = self.hihydrosoil_depths
         return super().__call__(config, *args, **kwds)
 
     def configure(
         self,
         properties: list[str] | None = None,
         depths: list[str] | None = None,
-        hihydrosoil_depths: list[str] | None = None,
         value: str | None = None,
     ) -> None:
         """Update the pipeline-level configuration attributes in place.
@@ -329,11 +319,8 @@ class SoilPipeline(Pipeline):
             Replacement list of soil properties (any source). When ``None``
             the current value is kept unchanged.
         depths : list[str], optional
-            Replacement SoilGrids depth layers. When ``None`` the current
-            value is kept unchanged.
-        hihydrosoil_depths : list[str], optional
-            Replacement HiHydroSoil depth layers. When ``None`` the current
-            value is kept unchanged.
+            Replacement depth layers applied to all sources. When ``None``
+            the current value is kept unchanged.
         value : str, optional
             Replacement statistic identifier (e.g. ``"Q0.05"``, ``"mean"``).
             When ``None`` the current value is kept unchanged.
@@ -342,25 +329,21 @@ class SoilPipeline(Pipeline):
             self.properties = properties
         if depths is not None:
             self.depths = depths
-        if hihydrosoil_depths is not None:
-            self.hihydrosoil_depths = hihydrosoil_depths
         if value is not None:
             self.statistic = value
 
         logger.info(
-            "SoilPipeline reconfigured — properties=%s, SoilGrids depths=%s, "
-            "HiHydroSoil depths=%s, statistic=%s",
+            "SoilPipeline reconfigured — properties=%s, depths=%s, statistic=%s",
             self.properties,
             self.depths,
-            self.hihydrosoil_depths or "(all 6 default)",
             self.statistic,
         )
 
     def get_data(
         self,
         coords: np.ndarray,
-        properties: list[str] | None = None,
-        depths: list[str] | None = None,
+        properties: list[str] | str | None = None,
+        depths: list[str] | str | None = None,
         value: str | None = None,
         crs_coords: str = "EPSG:4326",
         interpolation_order: int = 3,
@@ -811,40 +794,29 @@ class SoilPipeline(Pipeline):
         logger.debug("No stored layers found — returning configured properties.")
         return self.properties.copy()
 
-    def get_remote_available_properties(self) -> list[str]:
-        """Return soil properties confirmed as available on the SoilGrids API.
+    def get_remote_available_properties(self) -> dict[str, list[str]]:
+        """Discover all properties and depth layers available across all remote sources.
 
-        Queries the SoilGrids WCS service for each configured property to
-        verify it is actually offered upstream. Translates user-facing alias
-        names (``"ph"``, ``"carbon"``) to their API service IDs before
-        querying, and maps results back to canonical pipeline names. Useful
-        for validating ``properties`` before starting a download or for
-        discovering the full set of properties the service offers.
+        Delegates to
+        :meth:`~datavia.soil.composite_downloader.CompositeDownloader.get_remote_available_properties`,
+        which queries both the SoilGrids WCS service (live network probe
+        against every service in ``SoilGrids.MAP_SERVICES``) and the
+        HiHydroSoil HTTP catalogue (directory listing parse). The pipeline
+        is initialised lazily if it has not been called yet.
+
+        Unlike :meth:`get_available_properties`, which reflects what is
+        stored locally, this method reflects what is currently offered by
+        the upstream remote services — including any new properties or depth
+        layers added since the last download.
 
         Returns
         -------
-        list[str]
-            Canonical property names confirmed as available on SoilGrids, e.g.
-            ``["clay", "sand", "silt", "ph", "carbon"]``. Returns an empty
-            list if the API cannot be reached.
+        dict[str, list[str]]
+            Mapping of canonical property name → sorted list of available
+            depth strings across all remote sources, e.g.
+            ``{"clay": ["0-5cm", "5-15cm", ...], "field_capacity": [...]}``.
+            Returns an empty dict if no remote source can be reached.
         """
-        _api_to_pipeline = self._API_TO_PIPELINE
-        _pipeline_to_api = self._PIPELINE_TO_API
-
-        available_remote: list[str] = []
-        for prop in self.downloader.priority_properties:
-            api_service_id = _pipeline_to_api.get(prop, prop)
-            try:
-                self.downloader.sg._get_service_and_coverage_list(api_service_id)
-                # No exception means the service exists upstream
-                canonical = _api_to_pipeline.get(api_service_id, api_service_id)
-                if canonical not in available_remote:
-                    available_remote.append(canonical)
-            except Exception as exc:
-                logger.debug(
-                    "Property '%s' (API: '%s') not available on SoilGrids: %s",
-                    prop,
-                    api_service_id,
-                    exc,
-                )
-        return available_remote
+        if not self.downloader:
+            self()
+        return self.downloader.get_remote_available_properties()

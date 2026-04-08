@@ -11,7 +11,7 @@ import logging
 import math
 import os
 import tempfile
-from typing import Any
+from typing import Any, ClassVar
 
 from pyproj import Transformer
 from soilgrids import SoilGrids
@@ -46,6 +46,14 @@ class SoilGridsDownloader(Downloader):
     # Service ID used to probe the API for supported CRSs. Clay is one of the
     # most stable SoilGrids properties and is very unlikely to be removed.
     _PROBE_SERVICE_ID: str = "clay"
+
+    #: Maps canonical pipeline property names to SoilGrids API service IDs.
+    #: Entries are only needed for properties whose pipeline name differs from
+    #: the upstream service identifier.
+    _CANONICAL_TO_API: ClassVar[dict[str, str]] = {
+        "ph": "phh2o",  # pH measured in water
+        "carbon": "soc",  # soil organic carbon
+    }
 
     def __init__(self, config: dict[str, Any]):
         """Initialize the SoilGrids downloader.
@@ -207,6 +215,62 @@ class SoilGridsDownloader(Downloader):
         )
         return results
 
+    def get_remote_available_properties(self) -> dict[str, list[str]]:
+        """Discover all properties and depth layers available on the live SoilGrids WCS API.
+
+        Iterates every service registered in :attr:`SoilGrids.MAP_SERVICES` —
+        not just the locally configured properties — so previously unknown
+        services added upstream are discovered automatically. For each service
+        the full WCS ``contents`` list is queried and each coverage identifier
+        is parsed to extract the depth and statistic tokens.
+
+        Returns
+        -------
+        dict[str, list[str]]
+            Mapping of canonical property name → sorted list of available depth
+            strings, e.g.
+            ``{"clay": ["0-5cm", "5-15cm", ...], "ph": ["0-5cm", ...]}``.
+            Returns an empty dict if the WCS service cannot be reached.
+        """
+        api_to_canonical = {v: k for k, v in self._CANONICAL_TO_API.items()}
+        catalogue: dict[str, set[str]] = {}
+
+        for service_id in SoilGrids.MAP_SERVICES:
+            try:
+                _wcs, coverage_list = self.sg._get_service_and_coverage_list(service_id)
+                if not coverage_list:
+                    logger.debug(
+                        "SoilGrids service '%s' returned empty coverage list — skipping",
+                        service_id,
+                    )
+                    continue
+                canonical = api_to_canonical.get(service_id, service_id)
+                for coverage_id in coverage_list:
+                    # Coverage IDs follow the pattern {service_id}_{depth}_{statistic}
+                    # e.g. "clay_0-5cm_mean". Service IDs never contain underscores.
+                    parts = coverage_id.split("_")
+                    if len(parts) >= 3 and parts[0] == service_id:
+                        depth = parts[1]
+                        catalogue.setdefault(canonical, set()).add(depth)
+                    else:
+                        logger.debug(
+                            "SoilGrids: unexpected coverage ID format '%s' for service '%s' — skipping",
+                            coverage_id,
+                            service_id,
+                        )
+            except Exception as exc:
+                logger.debug(
+                    "SoilGrids service '%s' not reachable: %s", service_id, exc
+                )
+
+        result = {prop: sorted(depths) for prop, depths in sorted(catalogue.items())}
+        logger.info(
+            "SoilGrids remote catalogue: %d properties, depths per property: %s",
+            len(result),
+            {p: len(d) for p, d in result.items()},
+        )
+        return result
+
     def _download_single_coverage(self, coverage_id: str, temp_dir: str) -> str:
         """Download a single WCS coverage and write it to a temporary GeoTIFF.
 
@@ -229,16 +293,14 @@ class SoilGridsDownloader(Downloader):
             download or file validation did not succeed.
         """
         try:
-            service_id = coverage_id.split("_")[0]  # e.g. 'clay' from 'clay_0-5cm_mean'
+            service_id = coverage_id.partition("_")[
+                0
+            ]  # e.g. 'clay' from 'clay_0-5cm_mean'
             temp_filepath = os.path.join(temp_dir, f"{coverage_id}.tif")
 
             # Map user-friendly property names to SoilGrids API service IDs
-            _service_id_aliases: dict[str, str] = {
-                "carbon": "soc",  # soil organic carbon
-                "ph": "phh2o",  # pH measured in water
-            }
-            if service_id in _service_id_aliases:
-                api_service_id = _service_id_aliases[service_id]
+            if service_id in self._CANONICAL_TO_API:
+                api_service_id = self._CANONICAL_TO_API[service_id]
                 coverage_id_api = coverage_id.replace(
                     service_id + "_", api_service_id + "_", 1
                 )

@@ -219,6 +219,78 @@ class HiHydroSoilDownloader(Downloader):
         )
         return results
 
+    def get_remote_available_properties(self) -> dict[str, list[str]]:
+        """Discover all properties and depth layers available in the HiHydroSoil catalogue.
+
+        Fetches the HTTP directory listing at :attr:`_BASE_URL` and parses the
+        HTML ``href`` links to extract every ``*_250m.tif`` filename. Each
+        filename follows the pattern ``{prefix}_{depth}_{suffix}_250m.tif``;
+        the prefix is reverse-mapped to a canonical property name via
+        :attr:`_CANONICAL_TO_PREFIX`. Properties and depths not present in
+        the directory listing are omitted, so genuinely new files uploaded to
+        the server are discovered automatically.
+
+        Falls back to an empty dict if the directory listing cannot be fetched
+        or parsed.
+
+        Returns
+        -------
+        dict[str, list[str]]
+            Mapping of canonical property name → sorted list of available depth
+            strings, e.g.
+            ``{"field_capacity": ["0-5cm", "5-15cm", ...], ...}``.
+        """
+        import re  # noqa: PLC0415 — deferred: avoid cost at module import
+        import urllib.request  # noqa: PLC0415 — deferred: avoid cost at module import
+
+        prefix_to_canonical = {v: k for k, v in self._CANONICAL_TO_PREFIX.items()}
+        catalogue: dict[str, set[str]] = {}
+
+        listing_url = self._BASE_URL + "/"
+        try:
+            with urllib.request.urlopen(listing_url, timeout=15) as response:
+                html = response.read().decode("utf-8", errors="replace")
+        except Exception as exc:
+            logger.warning(
+                "HiHydroSoil: could not fetch directory listing from '%s': %s",
+                listing_url,
+                exc,
+            )
+            return {}
+
+        # Extract all .tif filenames from href attributes in the listing.
+        # Expected filename format: {prefix}_{depth}_{suffix}_250m.tif
+        # Example: WCpF2_0-5cm_M_250m.tif
+        for filename in re.findall(r'href="([^"]+_250m\.tif)"', html):
+            # Strip path components — keep only the basename.
+            basename = filename.rsplit("/", 1)[-1]
+            # Remove the fixed trailing token to get "{prefix}_{depth}_{suffix}".
+            core = basename.removesuffix("_250m.tif")
+            parts = core.split("_")
+            if len(parts) != 3:
+                logger.debug(
+                    "HiHydroSoil: skipping unexpected filename format '%s'", basename
+                )
+                continue
+            file_prefix, depth, _suffix = parts
+            canonical = prefix_to_canonical.get(file_prefix)
+            if canonical is None:
+                logger.debug(
+                    "HiHydroSoil: unknown file prefix '%s' in '%s' — not in _CANONICAL_TO_PREFIX",
+                    file_prefix,
+                    basename,
+                )
+                continue
+            catalogue.setdefault(canonical, set()).add(depth)
+
+        result = {prop: sorted(depths) for prop, depths in sorted(catalogue.items())}
+        logger.info(
+            "HiHydroSoil remote catalogue: %d properties, depths per property: %s",
+            len(result),
+            {p: len(d) for p, d in result.items()},
+        )
+        return result
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
