@@ -264,12 +264,16 @@ class Pipeline:
         Raises
         ------
         ValueError
-            If URL was not provided during __init__ or __call__
+            If neither URL nor arguments are provided for downloader initialization
         """
         if self.url:
             self.downloader = self.downloader_class(self.url)
-        else:
+        elif args is not None and kwds != {}:
             self.downloader = self.downloader_class(*args, **kwds)
+        else:
+            raise ValueError(
+                "No URL and no arguments provided for downloader initialization."
+            )
         self.saver = self.saver_class(self.name)
         self.getter = self.getter_class(self.name)
         return self
