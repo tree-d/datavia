@@ -46,12 +46,8 @@ class CompositeDownloader(Downloader):
 
             - ``properties`` (list[str]): All properties (SoilGrids and/or
               HiHydroSoil canonical names). Each backend filters its own.
-            - ``depths`` (list[str]): Depth layers passed to both backends.
+            - ``depths`` (list[str]): Depth layers passed to all backends.
             - ``statistic`` (str): Statistic token forwarded to both backends.
-            - ``hihydrosoil_depths`` (list[str], optional): Override depth
-              list specifically for HiHydroSoil. Defaults to ``depths`` when
-              absent. Useful because HiHydroSoil supports depths that
-              SoilGrids does not (e.g. ``"15-30cm"``).
         """
         # Build per-backend configs, splitting the shared property list so
         # each backends only receives components it recognises.
@@ -61,18 +57,11 @@ class CompositeDownloader(Downloader):
         soilgrids_props = [p for p in all_properties if p not in hihydro_known]
         hihydro_props = [p for p in all_properties if p in hihydro_known]
 
-        # HiHydroSoil may have its own depth list (all 6 depths by default).
-        hihydro_depths = config.get(
-            "hihydrosoil_depths",
-            config.get(
-                "depths",
-                HiHydroSoilDownloader({"properties": [], "depths": []}).priority_depths,
-            ),
-        )
-
+        # Both backends use the same depth list: SoilGrids and HiHydroSoil
+        # share identical depth layers for all common properties.
         self.soilgrids = SoilGridsDownloader({**config, "properties": soilgrids_props})
         self.hihydrosoil = HiHydroSoilDownloader(
-            {**config, "properties": hihydro_props, "depths": hihydro_depths}
+            {**config, "properties": hihydro_props}
         )
 
         logger.info(
@@ -198,6 +187,42 @@ class CompositeDownloader(Downloader):
             results = self.download_coverages(self.get_coverage_ids(), temp_dir)
         return results[0][0] if results else "failed"
 
+    def get_remote_available_properties(self) -> dict[str, list[str]]:
+        """Discover all properties and depth layers available across both remote backends.
+
+        Delegates to
+        :meth:`~datavia.soil.soilgrids_downloader.SoilGridsDownloader.get_remote_available_properties`
+        and
+        :meth:`~datavia.soil.hihydrosoil_downloader.HiHydroSoilDownloader.get_remote_available_properties`
+        and merges their results. Properties present in both backends have
+        their depth lists unioned and re-sorted.
+
+        Returns
+        -------
+        dict[str, list[str]]
+            Mapping of canonical property name → sorted list of available
+            depths across both sources, e.g.
+            ``{"clay": ["0-5cm", "5-15cm"], "field_capacity": ["0-5cm", ...]}``.
+        """
+        sg_catalogue = self.soilgrids.get_remote_available_properties()
+        hh_catalogue = self.hihydrosoil.get_remote_available_properties()
+
+        merged: dict[str, set[str]] = {}
+        for prop, depths in sg_catalogue.items():
+            merged.setdefault(prop, set()).update(depths)
+        for prop, depths in hh_catalogue.items():
+            merged.setdefault(prop, set()).update(depths)
+
+        result = {prop: sorted(depths) for prop, depths in sorted(merged.items())}
+        logger.info(
+            "CompositeDownloader remote catalogue: %d SoilGrids + %d HiHydroSoil properties, "
+            "%d total unique properties",
+            len(sg_catalogue),
+            len(hh_catalogue),
+            len(result),
+        )
+        return result
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -227,4 +252,4 @@ class CompositeDownloader(Downloader):
             if coverage_id.startswith(prop + "_"):
                 return prop
         # Single-word SoilGrids property — safe to use first token.
-        return coverage_id.split("_")[0]
+        return coverage_id.partition("_")[0]
