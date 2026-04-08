@@ -1322,8 +1322,8 @@ packages:
   editable: true
 - pypi: ./packages/elevation
   name: datavia-elevation
-  version: 1.0.0.dev0
-  sha256: 997394af9900abf37e360ec3344a54204a831e60240ec4f8dd1af12f5d49e540
+  version: 1.0.1.dev0
+  sha256: d99671515e7157bf943ea00b5d16ddd8f65c83a0d3bde766d4253121628b3047
   requires_dist:
   - datavia>=1.0.0.dev0,<2.0
   - rasterio>=1.4.3,<2

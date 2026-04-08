@@ -605,6 +605,34 @@ class TestSoilPipelineUpdateData:
             result = pipeline.update_data()
         assert result is False
 
+    def test_returns_false_on_partial_download_failure(
+        self, pipeline: SoilPipeline
+    ) -> None:
+        """update_data returns False when download_coverages omits some requested IDs.
+
+        download_coverages silently drops coverage IDs that failed to download.
+        The pipeline must detect the gap and propagate False even though the
+        returned files were all saved successfully.
+        """
+        needed = ["clay_0-5cm_mean", "sand_0-5cm_mean"]
+        # Only clay was downloaded; sand silently dropped by the downloader.
+        self._setup_update(
+            pipeline,
+            needed_ids=needed,
+            stored_ids=set(),
+            download_results=[("/work/dir/clay_0-5cm_mean.tif", "clay_0-5cm_mean")],
+            save_returns=True,
+        )
+        with (
+            patch("datavia.soil.pipeline.get_config") as mock_cfg,
+            patch("datavia.soil.pipeline.tempfile.TemporaryDirectory") as mock_tmpdir,
+        ):
+            mock_cfg.return_value.data_directory = tempfile.gettempdir()
+            mock_tmpdir.return_value.__enter__ = lambda s: tempfile.gettempdir()
+            mock_tmpdir.return_value.__exit__ = MagicMock(return_value=False)
+            result = pipeline.update_data()
+        assert result is False
+
     def test_api_aliases_in_stored_ids_prevent_redundant_download(
         self, pipeline: SoilPipeline
     ) -> None:
