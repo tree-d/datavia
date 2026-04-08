@@ -148,7 +148,6 @@ def test_hihydrosoil_coverage_downloaded_and_retrievable(live_database) -> None:
     pipeline = SoilPipeline(
         properties=["field_capacity"],
         depths=["0-5cm"],
-        hihydrosoil_depths=["0-5cm"],
         value="mean",
     )
     pipeline()
@@ -202,7 +201,6 @@ def test_multi_source_pipeline_returns_dict_keyed_by_coverage_id(
     pipeline = SoilPipeline(
         properties=["clay", "field_capacity"],
         depths=["0-5cm"],
-        hihydrosoil_depths=["0-5cm"],
         value="mean",
     )
     pipeline()

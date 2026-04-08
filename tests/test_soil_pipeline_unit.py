@@ -235,15 +235,6 @@ class TestSoilPipelineInit:
         custom = SoilPipeline(value="Q0.05")
         assert custom.statistic == "Q0.05"
 
-    def test_hihydrosoil_depths_none_by_default(self, pipeline: SoilPipeline) -> None:
-        """hihydrosoil_depths defaults to None (backend uses its own default)."""
-        assert pipeline.hihydrosoil_depths is None
-
-    def test_custom_hihydrosoil_depths_stored(self) -> None:
-        """A custom hihydrosoil_depths list is stored as provided."""
-        custom = SoilPipeline(hihydrosoil_depths=["0-5cm", "5-15cm"])
-        assert custom.hihydrosoil_depths == ["0-5cm", "5-15cm"]
-
 
 # ---------------------------------------------------------------------------
 # SoilPipeline.configure
@@ -262,11 +253,6 @@ class TestSoilPipelineConfigure:
         """configure() replaces the SoilGrids depth list."""
         pipeline.configure(depths=["15-30cm"])
         assert pipeline.depths == ["15-30cm"]
-
-    def test_updates_hihydrosoil_depths(self, pipeline: SoilPipeline) -> None:
-        """configure() replaces hihydrosoil_depths."""
-        pipeline.configure(hihydrosoil_depths=["0-5cm"])
-        assert pipeline.hihydrosoil_depths == ["0-5cm"]
 
     def test_updates_statistic(self, pipeline: SoilPipeline) -> None:
         """configure() replaces the statistic token."""

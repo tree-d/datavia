@@ -332,37 +332,46 @@ class TiffSaver(Saver):
         try:
             with rasterio.open(filepath) as src:
                 band_count = src.count
+                # src_descriptions holds the rasterio per-band description
+                # strings (may be None); descriptions is the accumulator of
+                # (band_index, description_str) tuples built below.
+                src_descriptions = getattr(src, "descriptions", None)
                 descriptions: list[tuple[int, str]] = []
-                descs = getattr(src, "descriptions", None)
 
                 for i in range(1, band_count + 1):
-                    desc = None
+                    src_description: str | None = None
 
-                    # Try descriptions array first
+                    # Try rasterio descriptions array first
                     try:
-                        if descs and len(descs) >= i and descs[i - 1]:
-                            desc = descs[i - 1]
+                        if (
+                            src_descriptions
+                            and len(src_descriptions) >= i
+                            and src_descriptions[i - 1]
+                        ):
+                            src_description = src_descriptions[i - 1]
                     except Exception:  # nosec B110
                         pass
 
                     # Fallback to get_band_description
-                    if not desc:
+                    if not src_description:
                         with contextlib.suppress(Exception):
-                            desc = src.get_band_description(i)
+                            src_description = src.get_band_description(i)
 
                     # Final fallback: tags or generated name
-                    if not desc:
+                    if not src_description:
                         try:
                             tags = src.tags(i)
                             if tags:
-                                desc = ";".join(f"{k}={v}" for k, v in tags.items())
+                                src_description = ";".join(
+                                    f"{k}={v}" for k, v in tags.items()
+                                )
                         except Exception:  # nosec B110
                             pass
 
-                    if not desc:
-                        desc = f"band_{i}"
+                    if not src_description:
+                        src_description = f"band_{i}"
 
-                    descriptions.append((i, desc))
+                    descriptions.append((i, src_description))
 
             session.execute(
                 text(
@@ -372,7 +381,7 @@ class TiffSaver(Saver):
             )
 
             # Insert new band metadata - using 'band_index' to match schema
-            for band_index, band_desc in descriptions:
+            for band_index, band_description in descriptions:
                 session.execute(
                     text(
                         """
@@ -384,7 +393,7 @@ class TiffSaver(Saver):
                         "layer_name": layer_name,
                         "source_name": self.source_name,
                         "band_index": band_index,  # Using band_index to match schema
-                        "description": band_desc,
+                        "description": band_description,
                     },
                 )
 
