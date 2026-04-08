@@ -13,6 +13,6 @@ services:
       # Production: Set via environment variable or .env file
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-datavia_dev}
     ports:
-      - "5432:5432"
+      - "${DATAVIA_PORT:-5432}:5432"
     volumes:
       - ./datavia/library/database:/docker-entrypoint-initdb.d
