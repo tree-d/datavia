@@ -273,7 +273,7 @@ class Pipeline:
         """
         if self.url:
             self.downloader = self.downloader_class(self.url)
-        elif args is not None and kwds != {}:
+        elif args or kwds:
             self.downloader = self.downloader_class(*args, **kwds)
         else:
             raise ValueError(

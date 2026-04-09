@@ -55,6 +55,20 @@ class _DatabaseManager:
             )
         return self._sessionmaker
 
+    def reset_engine(self) -> None:
+        """Dispose the current engine and clear all cached connection state.
+
+        Forces the next call to :meth:`get_engine` (or
+        :meth:`get_sessionmaker`) to build a fresh engine with a new
+        connection pool.  Must be called whenever the database server is
+        stopped or restarted so that stale pooled connections do not cause
+        ``sqlalchemy.exc.OperationalError`` on the next access.
+        """
+        if self._engine is not None:
+            self._engine.dispose()
+            self._engine = None
+        self._sessionmaker = None
+
 
 # Create module-level singleton instance to replace global variables
 _db_manager = _DatabaseManager()
@@ -68,6 +82,17 @@ def get_engine() -> Engine:
 def get_sessionmaker() -> sessionmaker:
     """Get or create the SQLAlchemy sessionmaker lazily."""
     return _db_manager.get_sessionmaker()
+
+
+def reset_engine() -> None:
+    """Dispose and clear the cached engine and sessionmaker.
+
+    Forces the next database operation to build a fresh engine with a new
+    connection pool.  Call this whenever the database server has been
+    stopped or restarted to avoid stale pooled connections causing
+    ``sqlalchemy.exc.OperationalError``.
+    """
+    _db_manager.reset_engine()
 
 
 def session_local() -> Any:

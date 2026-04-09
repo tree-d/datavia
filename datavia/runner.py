@@ -274,7 +274,18 @@ def _wait_for_postgres(
 
 
 def stop_container() -> None:
-    """Stop the datavia container with proper cleanup."""
+    """Stop the datavia container with proper cleanup.
+
+    Disposes the SQLAlchemy engine after the containers are removed so that
+    subsequent calls to ``initialize_database()`` or any other database
+    operation get a fresh connection pool instead of reusing stale connections
+    from the previous container instance.
+
+    Raises
+    ------
+    subprocess.CalledProcessError
+        If the graceful stop fails and the force-cleanup also fails.
+    """
     try:
         # Stop containers gracefully with timeout
         subprocess.run(
@@ -324,6 +335,18 @@ def stop_container() -> None:
             env=_compose_env(),
         )
         raise
+    finally:
+        # Always dispose the cached engine so the next start_container()
+        # call is followed by a fresh pool without stale connections.
+        try:
+            from datavia.library.database.connection import (  # noqa: PLC0415
+                reset_engine as _reset_db_engine,
+            )
+
+            _reset_db_engine()
+            logger.debug("Database engine pool reset after container stop.")
+        except Exception as exc:  # pragma: no cover
+            logger.debug("Could not reset database engine pool: %s", exc)
 
 
 def get_container_status() -> bool:
