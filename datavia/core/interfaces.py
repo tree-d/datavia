@@ -46,8 +46,8 @@ class Downloader(ABC):
 class Saver(ABC):
     """Abstract base class for data savers.
 
-    Savers handle storing downloaded data to local files and
-    registering metadata in the PostGIS database.
+    Savers handle storing downloaded data to local TIFF files and registering
+    raster metadata in the SQLite metadata database.
     """
 
     @abstractmethod
@@ -306,14 +306,9 @@ class Pipeline:
         -------
         bool
             True if update was successful
-
-        Raises
-        ------
-        RuntimeError
-            If pipeline not initialized (call pipeline() first)
         """
         if not self.downloader or not self.saver:
-            raise RuntimeError("Pipeline not initialized. Call pipeline() first.")
+            self()
         data_path = self.downloader.download()
         if data_path == "failed":
             return False
@@ -334,13 +329,13 @@ class Pipeline:
             Layer names present in the database.
         """
         if not self.getter:
-            raise RuntimeError("Pipeline not initialized. Call pipeline() first.")
+            self()
         return self.getter.get_existing_layers()
 
     def sync_files_and_database(self) -> None:
         """Sync files with database records."""
         if not self.saver:
-            raise RuntimeError("Pipeline not initialized. Call pipeline() first.")
+            self()
         self.saver.sync_files_and_database()
 
     def get_data(
@@ -373,13 +368,9 @@ class Pipeline:
         dict[str, np.ndarray]
             For multi-property pipelines (e.g. soil): coverage-ID keys, ``(N,)`` values.
 
-        Raises
-        ------
-        RuntimeError
-            If the pipeline has not been initialised (call ``pipeline()`` first).
         """
         if not self.getter:
-            raise RuntimeError("Pipeline not initialized. Call pipeline() first.")
+            self()
         return self.getter.get_data(
             coords=coords,
             crs_coords=crs_coords,

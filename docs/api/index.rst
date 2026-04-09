@@ -149,9 +149,3 @@ Command Line Interface
    :members:
    :undoc-members:
 
-Runner (Container Management)
------------------------------
-
-.. automodule:: datavia.runner
-   :members:
-   :undoc-members:

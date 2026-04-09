@@ -1,6 +1,9 @@
 """
 Database query functions for raster metadata and file path retrieval.
-Part of the Library component - provides database operations for Core components.
+
+Part of the Library component — provides database operations for Core
+components.  Uses plain SQL compatible with both SQLite and PostgreSQL:
+bbox values are stored and returned as WKT text strings.
 """
 
 import logging
@@ -57,7 +60,7 @@ def get_raster_metadata(source_name: str) -> list[dict]:
             text(
                 """
                 SELECT layer_name, uri, crs, resolution_x, resolution_y,
-                        ST_AsText(bbox) as bbox_wkt, acquisition_time
+                        bbox as bbox_wkt, acquisition_time
                 FROM raster_layers
                 WHERE source_name = :source_name
                 ORDER BY layer_name
@@ -154,7 +157,7 @@ def get_layer_by_name(layer_name: str, source_name: str | None = None) -> dict |
                 text(
                     """
                     SELECT layer_name, uri, crs, resolution_x, resolution_y,
-                            ST_AsText(bbox) as bbox_wkt, acquisition_time, source_name
+                            bbox as bbox_wkt, acquisition_time, source_name
                     FROM raster_layers
                     WHERE layer_name = :layer_name AND source_name = :source_name
                 """
@@ -166,7 +169,7 @@ def get_layer_by_name(layer_name: str, source_name: str | None = None) -> dict |
                 text(
                     """
                     SELECT layer_name, uri, crs, resolution_x, resolution_y,
-                            ST_AsText(bbox) as bbox_wkt, acquisition_time, source_name
+                            bbox as bbox_wkt, acquisition_time, source_name
                     FROM raster_layers
                     WHERE layer_name = :layer_name
                 """

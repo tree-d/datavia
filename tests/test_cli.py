@@ -285,44 +285,32 @@ class TestSelectiveImports:
 
 
 class TestContainerCommands:
-    """Test container management CLI functions."""
+    """Test no-op start/stop stubs after SQLite migration.
 
-    @patch("datavia.cli_utils.start_container")
-    @patch("datavia.cli_utils.get_container_status")
-    def test_start_when_container_stopped(self, mock_status, mock_start):
-        """Test _start function when container is stopped."""
-        # Test simply returns True - no mock assertions needed for wrapper
+    Docker container management was removed in the SQLite migration.
+    The ``_start`` and ``_stop`` helper functions are now trivial stubs
+    that always return ``True``.  These tests confirm that behaviour.
+    """
+
+    def test_start_returns_true(self):
+        """Test _start function always returns True (no-op stub)."""
         result = _start()
         assert result is True
 
-    @patch("datavia.cli_utils.start_container")
-    @patch("datavia.cli_utils.get_container_status")
-    def test_start_when_container_running(self, mock_status, mock_start):
-        """Test _start function when container is already running."""
-        mock_status.return_value = True
+    def test_start_idempotent(self):
+        """Test _start is safe to call multiple times."""
+        assert _start() is True
+        assert _start() is True
 
-        result = _start()
-
-        assert result is True
-        # Should not try to start if already running
-        mock_start.assert_not_called()
-
-    @patch("datavia.cli_utils.stop_container")
-    @patch("datavia.cli_utils.get_container_status")
-    def test_stop_when_container_running(self, mock_status, mock_stop):
-        """Test _stop function when container is running."""
-        mock_status.return_value = "running"
+    def test_stop_returns_true(self):
+        """Test _stop function always returns True (no-op stub)."""
         result = _stop()
         assert result is True
 
-    @patch("datavia.cli_utils.stop_container")
-    @patch("datavia.cli_utils.get_container_status")
-    def test_stop_when_container_stopped(self, mock_status, mock_stop):
-        """Test _stop function when container is already stopped."""
-        mock_status.return_value = "stopped"
-        result = _stop()
-        assert result is True
-        mock_stop.assert_not_called()
+    def test_stop_idempotent(self):
+        """Test _stop is safe to call multiple times."""
+        assert _stop() is True
+        assert _stop() is True
 
 
 class TestPipelineUpdate:

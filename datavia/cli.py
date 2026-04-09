@@ -19,8 +19,6 @@ from .cli_utils import (
     get_pipeline_dependencies,
     get_pipeline_status,
     install_pipeline_dependencies,
-    start_datavia_environment,
-    stop_datavia_environment,
     update_pipeline,
     validate_config_file,
 )
@@ -38,27 +36,6 @@ def main() -> None:
     """Datavia - Modular pipeline architecture for geospatial data integration."""
     _configure_logging()
     return None
-
-
-# Infrastructure commands (unchanged)
-@main.command()
-def start() -> None:
-    """Start the PostGIS database container."""
-    if start_datavia_environment():
-        logger.info("✅ Container startup completed successfully")
-    else:
-        logger.error("❌ Container startup failed")
-        sys.exit(1)
-
-
-@main.command()
-def stop() -> None:
-    """Stop the PostGIS database container."""
-    if stop_datavia_environment():
-        logger.info("✅ Container shutdown completed successfully")
-    else:
-        logger.error("❌ Container shutdown failed")
-        sys.exit(1)
 
 
 # Configuration commands
@@ -142,9 +119,7 @@ def status(config_file: str) -> None:
             logger.warning(error)
         return
 
-    # Check database container
-    db_status = "Running ✅" if status_info["database_running"] else "Stopped ❌"
-    logger.info(f"Database container: {db_status}")
+    logger.info("Database: SQLite (auto-initialised) ✅")
 
 
 # Dynamic pipeline update commands

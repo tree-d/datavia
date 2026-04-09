@@ -1,7 +1,13 @@
 """
-TiffSaver - Clean implementation of Saver interface for TIFF files.
-Handles saving TIFF files to designated folder and managing metadata in PostGIS.
-Enhanced with multi-band TIFF support.
+TiffSaver — Saver interface implementation for TIFF files.
+
+Handles copying TIFF files to the configured data directory and persisting
+raster metadata in the SQLite metadata database.  Multi-band TIFFs are also
+supported: per-band descriptions are stored in the ``raster_band_metadata``
+table.
+
+The bbox extent is stored as a WKT polygon string in EPSG:4326 — no PostGIS
+or geometry column is required.
 """
 
 import contextlib
@@ -189,13 +195,23 @@ class TiffSaver(Saver):
     def _import_raster_metadata(
         self, filepath: str, layer_name: str, session: Any = None
     ) -> None:
-        """Import raster metadata into PostGIS raster_layers table.
+        """Import raster metadata into the raster_layers table.
 
-        The ``bbox`` geometry is always stored in EPSG:4326 to satisfy the
-        fixed SRID constraint on the ``raster_layers`` table. Bounds are
-        reprojected via :func:`~datavia.library.coordinate_transforms.transform_bbox`
-        when the file's native CRS differs from EPSG:4326. The file's actual
-        CRS is recorded separately in the ``crs`` column.
+        The ``bbox`` extent is always stored in EPSG:4326 as a WKT polygon
+        string.  Bounds are reprojected via
+        :func:`~datavia.library.coordinate_transforms.transform_bbox` when the
+        file's native CRS differs from EPSG:4326.  The file's actual CRS is
+        recorded separately in the ``crs`` column.
+
+        Parameters
+        ----------
+        filepath : str
+            Absolute path to the TIFF file.
+        layer_name : str
+            Unique layer identifier to use in the database record.
+        session : optional
+            Existing SQLAlchemy session to reuse.  A new session is created
+            and closed automatically when ``None`` is passed.
         """
         should_close_session = session is None
         if session is None:
@@ -226,15 +242,12 @@ class TiffSaver(Saver):
                         bounds.top,
                     )
 
-                # Create bbox WKT
+                # bbox is stored as WKT text in EPSG:4326.
                 left, bottom, right, top = bounds_target
                 bbox_wkt = (
                     f"POLYGON(({left} {bottom}, {left} {top}, "
                     f"{right} {top}, {right} {bottom}, {left} {bottom}))"
                 )
-
-                # SRID is always 4326 — derived from _BBOX_STORAGE_CRS.
-                srid = 4326
 
             existing = session.execute(
                 text(
@@ -246,13 +259,13 @@ class TiffSaver(Saver):
             if existing:
                 self._delete_layer_metadata(layer_name, session)
 
-            # Insert new metadata with source_name
+            # Insert new metadata — bbox is stored as WKT text (no PostGIS required).
             session.execute(
                 text(
                     """
                     INSERT INTO raster_layers
                     (layer_name, source_name, bbox, resolution_x, resolution_y, crs, uri, acquisition_time)
-                    VALUES (:layer_name, :source_name, ST_GeomFromText(:bbox_wkt, :srid),
+                    VALUES (:layer_name, :source_name, :bbox_wkt,
                             :res_x, :res_y, :crs, :uri, :acq_time)
                 """
                 ),
@@ -260,12 +273,11 @@ class TiffSaver(Saver):
                     "layer_name": layer_name,
                     "source_name": self.source_name,
                     "bbox_wkt": bbox_wkt,
-                    "srid": srid,
                     "res_x": resolution[0],
                     "res_y": resolution[1],
                     "crs": src_crs_str,
                     "uri": filepath,
-                    "acq_time": datetime.datetime.now(datetime.UTC),
+                    "acq_time": datetime.datetime.now(datetime.UTC).isoformat(),
                 },
             )
 

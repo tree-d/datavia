@@ -176,11 +176,11 @@ datavia = datavia_raw()
 
 # Note: The CLI automatically detects which approach you're using!
 
-# Database connection URL for this project.
-# Port is derived from the project directory; re-run `datavia init` if you move
-# the project to a different directory.
-DATABASE_URL = get_config().database_url
-DATA_DIRECTORY = "/var/lib/datavia/data"
+# SQLite metadata database is created automatically in the data directory.
+# To use PostgreSQL instead, add to datavia.conf:
+#   [database]
+#   url = postgresql://user:password@host:5432/gis
+DATA_DIRECTORY = str(get_config().data_directory)
 DEFAULT_CRS = "EPSG:25832"
 
 # =============================================================================

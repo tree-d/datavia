@@ -1,20 +1,15 @@
 """End-to-end tests for the SoilPipeline.
 
 These tests exercise the full pipeline against real remote services (SoilGrids
-WCS API and HiHydroSoil OpenDAP catalogue) and a live PostGIS database.
+WCS API and HiHydroSoil OpenDAP catalogue) and an in-memory SQLite database.
 
 The tests are skipped unless the environment variable ``DATAVIA_E2E`` is set
 to ``"1"`` so that they are excluded from the normal unit-test run::
 
     DATAVIA_E2E=1 pytest tests/test_soil_e2e.py -v
 
-A Docker PostGIS container must be reachable and the database must be
-initialisable. The tests manage the container lifecycle themselves (start if
-required, stop in teardown).
-
-Properties and depth layers are intentionally limited to a minimal subset
-(one SoilGrids and one HiHydroSoil coverage each) to keep the download
-duration reasonable in CI.
+No Docker container is required; the database is initialised in-memory
+automatically before each test module run.
 """
 
 import logging
@@ -24,8 +19,9 @@ import numpy as np
 import pytest
 from datavia.soil.pipeline import SoilPipeline
 
+from datavia.config import get_config
+from datavia.library.database.connection import reset_engine
 from datavia.library.database.start import initialize_database
-from datavia.runner import get_container_status, start_container, stop_container
 
 logging.basicConfig(level=logging.INFO)
 
@@ -58,20 +54,21 @@ _HIHYDROSOIL_COVERAGE_ID = "field_capacity_0-5cm_mean"
 
 @pytest.fixture(scope="module")
 def live_database():
-    """Module-scoped fixture that starts the PostGIS container once.
+    """Module-scoped fixture that sets up an in-memory SQLite database once.
 
-    The container is stopped in the module teardown regardless of whether any
-    test fails so that resources are not left running after the test session.
+    Configures the global config to use ``sqlite:///:memory:``, initialises the
+    schema, and cleans up after all tests in the module have run.  No Docker
+    container is required.
     """
-    container_was_running = get_container_status()
-    if not container_was_running:
-        start_container()
+    config = get_config()
+    config.config["database"]["url"] = "sqlite:///:memory:"
+    reset_engine()
     initialize_database()
 
     yield  # run all tests in the module
 
-    if not container_was_running:
-        stop_container()
+    reset_engine()
+    config.config.remove_option("database", "url")
 
 
 # ---------------------------------------------------------------------------
