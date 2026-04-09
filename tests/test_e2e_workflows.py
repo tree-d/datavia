@@ -1,5 +1,6 @@
 """End-to-end integration tests for Datavia pipeline workflows."""
 
+import os
 import tempfile
 from pathlib import Path
 from subprocess import CalledProcessError
@@ -112,8 +113,23 @@ class TestDataviaE2EWorkflows:
 class TestContainerIntegration:
     """Test container lifecycle in realistic scenarios."""
 
+    @pytest.fixture(autouse=True)
+    def ensure_container_stopped(self):
+        """Stop any running container before and after each test.
+
+        Runs outside the scope of any ``@patch("subprocess.run")`` decorator so
+        the real docker-compose commands are executed, ensuring the host port is
+        genuinely free before the mocked test body starts.
+        """
+        if get_container_status():
+            stop_container()
+        yield
+        if get_container_status():
+            stop_container()
+
+    @patch("datavia.runner._is_port_in_use", return_value=False)
     @patch("subprocess.run")
-    def test_container_startup_workflow(self, mock_run):
+    def test_container_startup_workflow(self, mock_run, _mock_port):
         """Test complete container startup workflow.
 
         subprocess.run call sequence after _wait_for_postgres was added:
@@ -339,6 +355,20 @@ class TestConfigurationWorkflows:
 class TestErrorHandlingWorkflows:
     """Test error handling in realistic failure scenarios."""
 
+    @pytest.fixture
+    def stopped_container(self):
+        """Ensure the datavia container is stopped before a test.
+
+        Runs outside the scope of any ``@patch("subprocess.run")`` decorator
+        so the real docker-compose commands are used, guaranteeing the port is
+        free before the mocked test body starts.
+        """
+        if get_container_status():
+            stop_container()
+        yield
+        if get_container_status():
+            stop_container()
+
     def test_missing_file_workflow(self):
         """Test handling of missing TIFF files."""
 
@@ -362,8 +392,9 @@ class TestErrorHandlingWorkflows:
         assert result["valid"] is False
         assert "Coordinates must be 2D array" in result["error"]
 
+    @patch("datavia.runner._is_port_in_use", return_value=False)
     @patch("subprocess.run")
-    def test_container_failure_workflow(self, mock_run):
+    def test_container_failure_workflow(self, mock_run, _mock_port, stopped_container):
         """Test handling of container operation failures."""
         # Mock container start failure
         mock_run.side_effect = CalledProcessError(

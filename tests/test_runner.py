@@ -97,8 +97,9 @@ class TestContainerManagement:
     ):
         """Test start_container successful startup.
 
-        docker compose up -d is followed by a pg_isready probe that succeeds
-        immediately (returncode=0), so time.sleep is never called.
+        docker compose up -d is followed by a ``psql -c "SELECT 1"`` probe
+        that succeeds immediately (returncode=0), so time.sleep is never
+        called.
         """
         mock_run.return_value.returncode = 0
 
@@ -112,7 +113,20 @@ class TestContainerManagement:
             env={},
         )
         mock_run.assert_any_call(
-            ["docker", "compose", "exec", "db", "pg_isready", "-U", "gis"],
+            [
+                "docker",
+                "compose",
+                "exec",
+                "-T",
+                "db",
+                "psql",
+                "-U",
+                "gis",
+                "-d",
+                "gis",
+                "-c",
+                "SELECT 1",
+            ],
             cwd=_cwd,
             capture_output=True,
             env={},
