@@ -6,6 +6,32 @@ All notable changes to Datavia will be documented in this file.
 The format is based on `Keep a Changelog <https://keepachangelog.com/en/1.0.0/>`_,
 and this project adheres to `Semantic Versioning <https://semver.org/spec/v2.0.0.html>`_.
 
+[Unreleased] — SQLite Migration
+---------------------------------
+
+Changed
+~~~~~~~
+- **Breaking** — replaced PostgreSQL/PostGIS metadata backend with SQLite.
+  The database is now created automatically at ``<data_directory>/datavia.db``
+  (no Docker, no credentials, no setup required).
+- ``bbox`` column changed from PostGIS ``geometry`` type to plain ``TEXT``
+  (WKT string in EPSG:4326).  :func:`~datavia.library.database.query.get_raster_metadata`
+  now returns ``bbox_wkt`` as a plain WKT string.
+- ``acquisition_time`` column changed from ``timestamptz`` to ``TEXT``
+  (ISO-8601 string).
+- :func:`~datavia.library.database.start.initialize_database` uses
+  :func:`sqlalchemy.inspect` for cross-backend table detection instead of
+  ``to_regclass``.
+- :func:`~datavia.library.database.connection._DatabaseManager._build_engine`
+  skips connection-pool kwargs for SQLite URLs and adds
+  ``check_same_thread=False`` instead.
+- ``config.database_url`` now defaults to a SQLite URL derived from
+  ``data_directory``; PostgreSQL is opt-in via ``[database] url = ...``.
+- Removed ``runner.py`` (Docker container lifecycle management) — no longer
+  needed.
+- Removed ``datavia start`` and ``datavia stop`` CLI commands.
+- Removed dependency on ``psycopg2-binary``.
+
 [1.0.0] - 2025-01-15
 ---------------------
 

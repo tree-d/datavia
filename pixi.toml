@@ -33,8 +33,8 @@ format-core = {cmd = "ruff format datavia/ tests/"}
 format-check-core = {cmd = "ruff format --check datavia/ tests/"}
 lint-core = {cmd = "ruff check datavia/ tests/"}
 
-test-unit = {cmd = "python -m pytest tests/test_config.py tests/test_coordinate_transforms.py tests/test_runner.py tests/test_spatial_ops.py -v"}
-test-integration = {cmd = "python -m pytest tests/test_e2e_workflows.py::TestContainerIntegration tests/test_e2e_workflows.py::TestDataQualityWorkflows::test_coordinate_validation_workflow tests/test_e2e_workflows.py::TestDataQualityWorkflows::test_spatial_bounds_validation_workflow tests/test_e2e_workflows.py::TestSpatialOperationsWorkflow tests/test_e2e_workflows.py::TestConfigurationWorkflows::test_global_config_workflow tests/test_e2e_workflows.py::TestErrorHandlingWorkflows -v"}
+test-unit = {cmd = "python -m pytest tests/test_config.py tests/test_coordinate_transforms.py tests/test_spatial_ops.py -v"}
+test-integration = {cmd = "python -m pytest tests/test_e2e_workflows.py::TestDataQualityWorkflows tests/test_e2e_workflows.py::TestSpatialOperationsWorkflow tests/test_e2e_workflows.py::TestConfigurationWorkflows::test_global_config_workflow tests/test_e2e_workflows.py::TestErrorHandlingWorkflows -v"}
 test-light = {cmd = "python -m pytest tests/ -v -k 'not test_elevation_pipeline and not test_elevation_pipeline_inside_datavia'"}
 
 # Heavy integration tests (with running backend containers and network access)
@@ -165,17 +165,14 @@ libiconv = { version = "==1.18", build = "h4ce23a2_1" }
 libjpeg-turbo = { version = "==3.1.0", build = "hb9d3cd8_0" }
 libkml = { version = "==1.3.0", build = "hf539b9f_1021" }
 liblapack = { version = "==3.9.0", build = "31_h7ac8fdf_openblas" }
-libllvm20 = { version = "==20.1.2", build = "ha7bfdaf_0" }
 liblzma = { version = "==5.8.1", build = "hb9d3cd8_0" }
 libmpdec = { version = "==4.0.0", build = "h4bc722e_0" }
 libnghttp2 = { version = "==1.64.0", build = "h161d5f1_0" }
 libnsl = { version = "==2.0.1", build = "hd590300_0" }
 libntlm = { version = "==1.8", build = "hb9d3cd8_0" }
-libopenblas = { version = "==0.3.29", build = "pthreads_h94d23a6_0" }
 libopengl = { version = "==1.7.0", build = "ha4b6fd6_2" }
 libpciaccess = { version = "==0.18", build = "hd590300_0" }
 libpng = { version = "==1.6.47", build = "h943b412_0" }
-libpq = { version = "==17.4", build = "h27ae623_1" }
 librttopo = { version = "==1.1.0", build = "hd718a1a_18" }
 libspatialite = { version = "==5.1.0", build = "he17ca71_14" }
 libsqlite = { version = "==3.49.1", build = "hee588c1_2" }
@@ -217,8 +214,6 @@ pip = { version = "==25.0.1", build = "pyh8b19718_0" }
 pixman = { version = "==0.44.2", build = "h29eaf8c_0" }
 proj = { version = "==9.6.0", build = "h0054346_1" }
 propcache = { version = "==0.3.1", build = "py312h178313f_0" }
-psycopg2 = { version = "==2.9.9", build = "py312hfaedaf9_2" }
-psycopg2-binary = { version = "==2.9.9", build = "pyhd8ed1ab_0" }
 pthread-stubs = { version = "==0.4", build = "hb9d3cd8_1002" }
 pycparser = { version = "==2.22", build = "pyh29332c3_1" }
 pydantic = { version = "==2.11.4", build = "pyh3cfb1c2_0" }
@@ -337,7 +332,6 @@ sphinxcontrib-qthelp = "==2.0.0"
 sphinxcontrib-serializinghtml = "==2.0.0"
 tifffile = "==2025.3.30"
 build = ">=1.3.0, <2"
-docker = ">=7.1.0, <8"
 datavia = { path = ".", editable = true }
 datavia-soil = { path = "./packages/soil/", editable = true}
 datavia-elevation = { path = "./packages/elevation/", editable = true}

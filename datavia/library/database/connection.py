@@ -1,8 +1,16 @@
 """
-Unified PostgreSQL+PostGIS connection management for Datavia.
+Database connection management for Datavia — supports SQLite (default) and PostgreSQL.
 
-Provides engine and session for all components (Fetcher, Processor, Getter).
-Reads config from datavia/config.py.
+Provides a lazily-initialised SQLAlchemy engine and sessionmaker that are
+shared across all components (Downloader, Saver, Getter).  The backend is
+automatically selected from the configured ``database_url``:
+
+* **SQLite** (default) — zero-configuration; the DB file lives in the
+  configured data directory.
+* **PostgreSQL** — opt-in by setting ``[database] url = postgresql://...``
+  (or host/user keys) in ``datavia.conf``.
+
+Configuration is read from :func:`datavia.config.get_config`.
 """
 
 import logging
@@ -24,20 +32,36 @@ class _DatabaseManager:
         self._sessionmaker: sessionmaker | None = None
 
     def _build_engine(self) -> Engine:
-        """Build a new SQLAlchemy engine with configuration from config."""
+        """Build a new SQLAlchemy engine with configuration from config.
+
+        SQLite engines receive ``connect_args={"check_same_thread": False}``
+        for thread safety and skip all connection-pool kwargs (SQLite does not
+        support pool settings).  PostgreSQL engines continue to use the full
+        pool configuration when ``connection_pooling`` is enabled.
+        """
         config = get_config()
         database_url = config.database_url
 
         engine_kwargs: dict[str, Any] = {}
-        if config.database_config.get("connection_pooling", "true").lower() == "true":
-            engine_kwargs.update(
-                {
-                    "pool_size": 10,
-                    "max_overflow": 20,
-                    "pool_pre_ping": True,
-                    "pool_recycle": 3600,
-                }
-            )
+        is_sqlite = database_url.startswith("sqlite")
+
+        if is_sqlite:
+            # SQLite requires check_same_thread=False for multi-threaded use;
+            # connection-pool parameters are not supported.
+            engine_kwargs["connect_args"] = {"check_same_thread": False}
+        else:
+            if (
+                config.database_config.get("connection_pooling", "true").lower()
+                == "true"
+            ):
+                engine_kwargs.update(
+                    {
+                        "pool_size": 10,
+                        "max_overflow": 20,
+                        "pool_pre_ping": True,
+                        "pool_recycle": 3600,
+                    }
+                )
 
         return create_engine(database_url, **engine_kwargs)
 

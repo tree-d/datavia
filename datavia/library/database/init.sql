@@ -1,26 +1,28 @@
-CREATE EXTENSION IF NOT EXISTS postgis;
+-- Datavia schema — compatible with SQLite (default) and PostgreSQL.
+-- For SQLite, bbox is stored as WKT text — for PostgreSQL it is also text
+-- (no PostGIS geometry column is used so no extension is required).
 
 CREATE TABLE IF NOT EXISTS raster_layers (
-    id SERIAL PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     layer_name TEXT NOT NULL,
-    source_name TEXT, 
-    bbox geometry(POLYGON, 4326),
+    source_name TEXT,
+    bbox TEXT,
     resolution_x DOUBLE PRECISION,
     resolution_y DOUBLE PRECISION,
     crs TEXT,
     uri TEXT,
-    acquisition_time timestamptz,
-    metadata TEXT 
+    acquisition_time TEXT,
+    metadata TEXT
 );
 
 CREATE TABLE IF NOT EXISTS raster_band_metadata (
-    id SERIAL PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     layer_name TEXT NOT NULL,
-    source_name TEXT, 
+    source_name TEXT,
     band_index INTEGER,
     description TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_raster_bbox ON raster_layers USING GIST (bbox);
+-- Regular indexes (GIST / PostGIS indexes are not supported in SQLite)
 CREATE INDEX IF NOT EXISTS idx_raster_source ON raster_layers (source_name);
 CREATE INDEX IF NOT EXISTS idx_band_source ON raster_band_metadata (source_name);

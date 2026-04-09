@@ -9,10 +9,7 @@ Separated from main CLI for better maintainability and reusability.
 import importlib.util
 import logging
 import os
-import time
 from typing import Any
-
-from .runner import get_container_status, start_container, stop_container
 
 logger = logging.getLogger(__name__)
 
@@ -178,46 +175,34 @@ def install_pipeline_dependencies(pipeline_name: str) -> bool:
 
 
 def start_datavia_environment() -> bool:
-    """Build (if needed) and start the backend container."""
-    # Check if already running
-    if get_container_status():
-        logger.warning("Containers are already running. Stopping first...")
-        if not stop_datavia_environment():
-            return False
-        time.sleep(2)  # Wait before restart
+    """No-op placeholder kept for backward compatibility.
 
-    logger.info("Starting the container...")
-    start_container()
+    The Docker PostGIS container has been replaced by a local SQLite database
+    that is initialised automatically on first use.  There is no external
+    service to start.
 
-    # Verify containers started successfully
-    if get_container_status():
-        logger.info("Container started successfully.")
-        return True
-    else:
-        logger.error("Container failed to start properly.")
-        return False
+    Returns
+    -------
+    bool
+        Always ``True``.
+    """
+    logger.info("SQLite database is initialised automatically — no container to start.")
+    return True
 
 
 def stop_datavia_environment() -> bool:
-    """Stop and remove the backend container."""
-    if not get_container_status():
-        logger.info("No containers are currently running.")
-        return True
+    """No-op placeholder kept for backward compatibility.
 
-    logger.info("Stopping the container...")
-    try:
-        stop_container()
+    The SQLite database does not require an external service, so there is
+    nothing to stop.
 
-        # Verify containers stopped
-        if not get_container_status():
-            logger.info("Container stopped successfully.")
-            return True
-        else:
-            logger.warning("Container may not have stopped completely.")
-            return False
-    except Exception as e:
-        logger.error(f"Error stopping container: {e}")
-        return False
+    Returns
+    -------
+    bool
+        Always ``True``.
+    """
+    logger.info("SQLite database requires no shutdown.")
+    return True
 
 
 def validate_config_file(config_file: str) -> tuple[bool, str]:
@@ -248,10 +233,25 @@ def get_available_pipelines(config_file: str = "datavia_config.py") -> list[str]
 
 
 def get_pipeline_status(config_file: str = "datavia_config.py") -> dict[str, Any]:
-    """Get detailed status info for pipelines and infrastructure."""
+    """Get detailed status info for pipelines.
+
+    Parameters
+    ----------
+    config_file : str, optional
+        Path to the Python configuration file.  Defaults to
+        ``"datavia_config.py"``.
+
+    Returns
+    -------
+    dict[str, Any]
+        A status dictionary with keys:
+
+        * ``config_loaded`` — whether the config was loaded successfully.
+        * ``pipelines`` — list of ``{name, status}`` dicts.
+        * ``errors`` — list of error message strings.
+    """
     status: dict[str, Any] = {
         "config_loaded": False,
-        "database_running": False,
         "pipelines": [],
         "errors": [],
     }
@@ -268,8 +268,5 @@ def get_pipeline_status(config_file: str = "datavia_config.py") -> dict[str, Any
             status["errors"].append("Configuration file exists but could not be loaded")
     else:
         status["errors"].append(f"No configuration file found: {config_file}")
-
-    # Check database container
-    status["database_running"] = get_container_status()
 
     return status

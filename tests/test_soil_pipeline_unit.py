@@ -349,12 +349,27 @@ class TestSoilPipelineGetData:
 
     _COORDS = np.array([[10.0, 50.0], [11.0, 51.0]])
 
-    def test_raises_runtime_error_when_not_initialized(
-        self, pipeline: SoilPipeline
-    ) -> None:
-        """Calling get_data before __call__ raises a RuntimeError."""
-        with pytest.raises(RuntimeError, match="not initialized"):
-            pipeline.get_data(self._COORDS)
+    def test_get_data_lazily_initialises_pipeline(self, pipeline: SoilPipeline) -> None:
+        """Calling get_data on an uninitialised pipeline triggers lazy __call__.
+
+        The pipeline's downloader, saver, and getter are None after bare
+        construction.  On the first get_data call the pipeline initialises
+        itself; a mock replaces __call__ so no external services are contacted.
+        With no stored coverages the result is an empty dict.
+        """
+        getter_mock = MagicMock()
+        getter_mock.get_stored_coverage_ids.return_value = set()
+
+        def fake_call(*args, **kwargs):
+            pipeline.downloader = MagicMock()
+            pipeline.saver = MagicMock()
+            pipeline.getter = getter_mock
+            return pipeline
+
+        with patch.object(pipeline, "__call__", side_effect=fake_call):
+            result = pipeline.get_data(self._COORDS)
+
+        assert result == {}
 
     def test_returns_empty_dict_when_no_stored_ids(
         self, initialized_pipeline: SoilPipeline

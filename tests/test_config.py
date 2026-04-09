@@ -69,11 +69,9 @@ name = test_db
         assert config.base_directory.is_absolute()
         assert config.data_directory.is_absolute()
         assert config.log_directory.is_absolute()
-        assert config.config["database"]["host"] == "localhost"
-        # Port is derived from the CWD hash (range 49152-65535) when no config file
-        # is present; assert it is a valid integer rather than a specific value.
-        port = int(config.config["database"]["port"])
-        assert 49152 <= port <= 65535
+        # Default backend is SQLite — no host/port defaults are pre-filled
+        assert config.database_url.startswith("sqlite:///")
+        assert "datavia.db" in config.database_url
 
     def test_ensure_directories_creates_missing_dirs(self):
         """Test ensure_directories creates missing directories when enabled."""
@@ -235,17 +233,14 @@ class TestConfigModule:
 
     def test_config_with_environment_variables(self):
         """Test configuration with environment variable overrides."""
-        # Set environment variables
+        # Env-var overrides apply to sections that have default keys; test a
+        # section that still has defaults (spatial).
         with patch.dict(
             os.environ,
-            {
-                "DATAVIA_DATABASE_HOST": "env_host",
-                "DATAVIA_DATABASE_PORT": "9999",
-            },
+            {"DATAVIA_SPATIAL_DEFAULT_CRS": "EPSG:4326"},
         ):
             config = DataviaConfig()
-            assert config.config["database"]["host"] == "env_host"
-            assert config.config["database"]["port"] == "9999"
+            assert config.config["spatial"]["default_crs"] == "EPSG:4326"
 
 
 if __name__ == "__main__":

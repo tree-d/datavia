@@ -10,7 +10,6 @@ import pytest
 from datavia.elevation import ElevationPipeline
 
 from datavia.library.database.start import initialize_database
-from datavia.runner import get_container_status, start_container, stop_container
 
 logging.basicConfig(level=logging.INFO)
 
@@ -21,9 +20,7 @@ logging.basicConfig(level=logging.INFO)
 )
 def test_elevation_pipeline_e2e():
     """Run elevation pipeline end-to-end test."""
-    # Setup: Ensure container is running and database is initialized
-    if not get_container_status():
-        start_container()
+    # Setup: initialise in-memory SQLite database (no Docker required).
     initialize_database()
 
     try:
@@ -53,5 +50,4 @@ def test_elevation_pipeline_e2e():
         )
 
     finally:
-        # Teardown: Stop the container after the test
-        stop_container()
+        pass  # SQLite is in-memory; no teardown needed.

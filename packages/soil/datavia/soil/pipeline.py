@@ -386,14 +386,9 @@ class SoilPipeline(Pipeline):
             ``"clay_0-5cm_mean"``) to a 1-D array of interpolated values, one
             entry per coordinate. Returns an empty dict if no matching
             coverages are found or if extraction fails.
-
-        Raises
-        ------
-        RuntimeError
-            If the pipeline has not been initialised (call the pipeline first).
         """
         if not self.getter:
-            raise RuntimeError("Pipeline not initialized. Call the pipeline first.")
+            self()
 
         # Coerce plain strings to single-element lists so callers can write
         # properties="clay" or depths="0-5cm" as a convenience shorthand.

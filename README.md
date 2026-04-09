@@ -81,36 +81,17 @@ pixi add --pypi datavia[vector]
 
 ### Basic Setup
 
-1. **Configure the database password** (optional — default is `datavia_dev`):
-
-   The recommended place is `~/.datavia/.env` — a single file that works from any directory:
-   ```bash
-   mkdir -p ~/.datavia
-   echo 'POSTGRES_PASSWORD=my_secret' > ~/.datavia/.env
-   ```
-   A `<cwd>/.env` in the current working directory is also picked up and takes priority (useful for per-project overrides).
-   Alternatively, export it as a shell variable before running any `datavia` command:
-   ```bash
-   export POSTGRES_PASSWORD=my_secret
-   ```
-   If neither is set, the insecure development default `datavia_dev` is used.
+1. **No database setup required** — a SQLite database is created automatically in your
+   data directory on first use.  No Docker, no credentials, no configuration needed.
 
 2. **Advanced configuration** (optional — most users can skip this):
 
-   Datavia stores data and logs in `.datavia/` inside your project directory by default. A `.gitignore` is written there automatically so large GeoTIFF files are never accidentally committed.
+   Datavia stores data and logs in `.datavia/` inside your project directory by default.
+   A `.gitignore` is written there automatically so large GeoTIFF files are never
+   accidentally committed.
 
-   **Project isolation** — each project directory gets its own Docker container and database port automatically, derived from a hash of the directory path. Two projects in different directories never share a container or clash on a port, without any configuration needed.
-
-   To pin a human-readable name or a specific port (e.g. to share a container with team members), add a `datavia.conf` to your project directory:
-   ```ini
-   [project]
-   name = my_project
-
-   [database]
-   port = 54321
-   ```
-
-   To switch to **global storage** (one shared `~/.datavia/` for all projects — avoids re-downloading the same data in multiple projects):
+   To switch to **global storage** (one shared `~/.datavia/` for all projects — avoids
+   re-downloading the same data in multiple projects):
    ```bash
    mkdir -p ~/.datavia
    cat > ~/.datavia/datavia.conf << 'EOF'
@@ -118,16 +99,17 @@ pixi add --pypi datavia[vector]
    storage = global
    EOF
    ```
-   An annotated template with all available settings is in `datavia.conf` at the repository root.
+   An annotated template with all available settings is in `datavia.conf` at the
+   repository root.
 
-   A project-local `<cwd>/datavia.conf` is also supported and takes precedence over `~/.datavia/datavia.conf` when present.
-
-3. **Start the PostGIS database** (required for metadata storage):
-   ```bash
-   datavia start
+   To use **PostgreSQL instead of SQLite**, add a `[database]` section to your
+   `datavia.conf`:
+   ```ini
+   [database]
+   url = postgresql://user:password@localhost:5432/gis
    ```
 
-4. **Use in Python code**:
+3. **Use in Python code**:
    ```python
    from datavia import Datavia
    from datavia.elevation import ElevationPipeline
@@ -136,9 +118,8 @@ pixi add --pypi datavia[vector]
    # 1. Build the controller and register pipelines
    dv = Datavia(pipelines=[ElevationPipeline()])
 
-   # 2. dv() initialises the PostGIS connection and instantiates each
-   #    pipeline's internal Downloader / Saver / Getter components.
-   #    It does NOT download any data.
+   # 2. dv() initialises the SQLite metadata database and each pipeline's
+   #    Downloader / Saver / Getter components.  No data is downloaded.
    dv()
 
    # 3. Download data from the external source (BKG for elevation).
@@ -155,11 +136,6 @@ pixi add --pypi datavia[vector]
    print(elevation_data)                      # e.g. [471.3]
    ```
 
-5. **Shut down database**
-   ```bash
-   datavia stop
-   ```
-
 
 ## Architecture
 
@@ -170,7 +146,7 @@ Pipeline = Downloader + Saver + Getter
 ```
 
 - **Downloader**: Fetches data from external sources (URLs, APIs)
-- **Saver**: Stores data locally and metadata in PostGIS database  
+- **Saver**: Stores data locally and metadata in the SQLite database
 - **Getter**: Provides coordinate-based data access with interpolation
 
 ### Project Structure
@@ -178,16 +154,13 @@ Pipeline = Downloader + Saver + Getter
 ```
 datavia/                          # Repository root
 ├── pyproject.toml               # Main core package configuration
-├── docker-compose.yml           # Database container setup
-├── .env.example                 # Environment variables template
 ├── datavia/                     # Core Python package
 │   ├── __init__.py              # Main namespace package
 │   ├── core/                    # Pipeline interfaces & implementations
 │   ├── library/                 # Shared utilities & database operations
-│   │   └── database/            # PostGIS integration
+│   │   └── database/            # SQLite metadata database
 │   ├── cli.py                   # Command-line interface
-│   ├── config.py                # Configuration management
-│   └── runner.py                # Container management
+│   └── config.py                # Configuration management
 ├── packages/                    # Separate pipeline packages
 │   ├── elevation/               # datavia-elevation package
 │   │   ├── pyproject.toml
@@ -247,17 +220,17 @@ elevations = dv.elevation.get_data(coords=coordinates, crs_coords="EPSG:4326")
 ### Command Line Interface
 
 ```bash
-# Database management
-datavia start            # Start PostGIS container
-datavia stop             # Stop PostGIS container
-
 # Configuration management
 datavia config init --elevation --soil  # Initialize config with selected pipelines
 datavia config validate                  # Validate configuration file
 datavia config status                    # Show installation status
 
+# Data updates
+datavia update elevation                 # Download / refresh elevation data
+datavia update soil                      # Download / refresh soil data
+
 # Development/Testing
-python -m datavia.cli start            # Alternative CLI access
+python -m datavia.cli update elevation   # Alternative CLI access
 ```
 
 ### Configuration
@@ -301,7 +274,7 @@ black datavia/
 
 - **Python**: 3.12+
 - **Operating System**: Linux (tested), Windows and macOS support planned
-- **Database**: PostgreSQL with PostGIS extension (provided via Docker)
+- **Database**: SQLite (built into Python — no installation required).  PostgreSQL is supported as an opt-in via `datavia.conf`.
 - **Storage**: 
   - Core system: <50MB
   - Elevation pipeline: ~500MB per German state

@@ -2,7 +2,6 @@
 
 import tempfile
 from pathlib import Path
-from subprocess import CalledProcessError
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -17,7 +16,6 @@ from datavia.library.spatial_ops import (
     read_geotiff_metadata,
     validate_coordinates_in_bounds,
 )
-from datavia.runner import get_container_status, start_container, stop_container
 
 
 class TestDataviaE2EWorkflows:
@@ -41,21 +39,20 @@ class TestDataviaE2EWorkflows:
             ]
         )
 
-    def test_elevation_pipeline_workflow(self, temp_config_dir, sample_coordinates):
+    def test_elevation_pipeline_workflow(self, sqlite_db, temp_config_dir, sample_coordinates):
         """Test complete elevation data pipeline workflow."""
         mock_pipeline = MagicMock()
         mock_pipeline.name = "elevation"
         mock_pipeline.return_value = mock_pipeline
         mock_pipeline.get_data.return_value = np.array([500.0, 100.0, 50.0, 300.0])
 
-        with patch("datavia.core.datavia.initialize_database"):
-            datavia = Datavia(pipelines=[mock_pipeline])()
+        datavia = Datavia(pipelines=[mock_pipeline])()
         result = datavia.elevation.get_data(coords=sample_coordinates)
 
         assert len(result) == len(sample_coordinates)
         mock_pipeline.get_data.assert_called_once_with(coords=sample_coordinates)
 
-    def test_soil_pipeline_workflow(self, temp_config_dir, sample_coordinates):
+    def test_soil_pipeline_workflow(self, sqlite_db, temp_config_dir, sample_coordinates):
         """Test complete soil data pipeline workflow."""
         mock_pipeline = MagicMock()
         mock_pipeline.name = "soil"
@@ -68,8 +65,7 @@ class TestDataviaE2EWorkflows:
             "depth": "0-5cm",
         }
 
-        with patch("datavia.core.datavia.initialize_database"):
-            datavia = Datavia(pipelines=[mock_pipeline])()
+        datavia = Datavia(pipelines=[mock_pipeline])()
         result = datavia.soil.get_data(coords=sample_coordinates)
 
         assert "ph" in result
@@ -77,7 +73,7 @@ class TestDataviaE2EWorkflows:
         assert len(result["ph"]) == len(sample_coordinates)
         assert result["source"] == "SoilGrids"
 
-    def test_multi_pipeline_workflow(self, temp_config_dir, sample_coordinates):
+    def test_multi_pipeline_workflow(self, sqlite_db, temp_config_dir, sample_coordinates):
         """Test workflow combining multiple pipelines."""
         elev_pipeline = MagicMock()
         elev_pipeline.name = "elevation"
@@ -95,8 +91,7 @@ class TestDataviaE2EWorkflows:
             "coordinates": sample_coordinates,
         }
 
-        with patch("datavia.core.datavia.initialize_database"):
-            datavia = Datavia(pipelines=[elev_pipeline, soil_pipeline])()
+        datavia = Datavia(pipelines=[elev_pipeline, soil_pipeline])()
 
         elevation_result = datavia.elevation.get_data(coords=sample_coordinates)
         soil_result = datavia.soil.get_data(coords=sample_coordinates)
@@ -107,80 +102,6 @@ class TestDataviaE2EWorkflows:
         np.testing.assert_array_equal(
             elevation_result["coordinates"], soil_result["coordinates"]
         )
-
-
-class TestContainerIntegration:
-    """Test container lifecycle in realistic scenarios."""
-
-    @pytest.fixture(autouse=True)
-    def ensure_container_stopped(self):
-        """Stop any running container before and after each test.
-
-        Runs outside the scope of any ``@patch("subprocess.run")`` decorator so
-        the real docker-compose commands are executed, ensuring the host port is
-        genuinely free before the mocked test body starts.
-        """
-        if get_container_status():
-            stop_container()
-        yield
-        if get_container_status():
-            stop_container()
-
-    @patch("datavia.runner._is_port_in_use", return_value=False)
-    @patch("subprocess.run")
-    def test_container_startup_workflow(self, mock_run, _mock_port):
-        """Test complete container startup workflow.
-
-        subprocess.run call sequence after _wait_for_postgres was added:
-        1. get_container_status  → ps -q           (not running)
-        2. start_container       → docker compose up -d
-        3. _wait_for_postgres    → pg_isready (returncode=0 → ready immediately)
-        4. get_container_status  → ps -q           (running)
-        """
-        status_responses = [
-            # 1. Initial status check: not running
-            MagicMock(stdout="", returncode=0),
-            # 2. docker compose up -d
-            MagicMock(returncode=0),
-            # 3. pg_isready probe: ready on first attempt
-            MagicMock(returncode=0),
-            # 4. Status check after start: running
-            MagicMock(stdout="container123", returncode=0),
-        ]
-        mock_run.side_effect = status_responses
-
-        assert get_container_status() is False
-
-        with patch("time.sleep"):
-            start_container()
-
-        assert get_container_status() is True
-
-    @patch("subprocess.run")
-    def test_container_cleanup_workflow(self, mock_run):
-        """Test complete container cleanup workflow."""
-        # Mock container running initially
-        cleanup_responses = [
-            # Initial check: running
-            MagicMock(stdout="container123", returncode=0),
-            # Stop containers
-            MagicMock(returncode=0),
-            # Down containers
-            MagicMock(returncode=0),
-            # Verify stopped
-            MagicMock(stdout="", returncode=0),
-        ]
-        mock_run.side_effect = cleanup_responses
-
-        # Verify initially running
-        assert get_container_status() is True
-
-        # Stop containers
-        with patch("time.sleep"):
-            stop_container()
-
-        # Verify now stopped
-        assert get_container_status() is False
 
 
 class TestDataQualityWorkflows:
@@ -354,20 +275,6 @@ class TestConfigurationWorkflows:
 class TestErrorHandlingWorkflows:
     """Test error handling in realistic failure scenarios."""
 
-    @pytest.fixture
-    def stopped_container(self):
-        """Ensure the datavia container is stopped before a test.
-
-        Runs outside the scope of any ``@patch("subprocess.run")`` decorator
-        so the real docker-compose commands are used, guaranteeing the port is
-        free before the mocked test body starts.
-        """
-        if get_container_status():
-            stop_container()
-        yield
-        if get_container_status():
-            stop_container()
-
     def test_missing_file_workflow(self):
         """Test handling of missing TIFF files."""
 
@@ -390,19 +297,6 @@ class TestErrorHandlingWorkflows:
 
         assert result["valid"] is False
         assert "Coordinates must be 2D array" in result["error"]
-
-    @patch("datavia.runner._is_port_in_use", return_value=False)
-    @patch("subprocess.run")
-    def test_container_failure_workflow(self, mock_run, _mock_port, stopped_container):
-        """Test handling of container operation failures."""
-        # Mock container start failure
-        mock_run.side_effect = CalledProcessError(
-            returncode=1, cmd="docker run", output="Docker not available"
-        )
-
-        # Should handle docker failures gracefully
-        with pytest.raises(CalledProcessError):
-            start_container()
 
 
 if __name__ == "__main__":

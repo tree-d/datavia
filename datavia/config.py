@@ -269,25 +269,22 @@ class DataviaConfig:
 
     def _set_defaults(self) -> None:
         """Set default configuration values."""
-        project_name, project_port = self._derive_project_defaults(Path.cwd())
+        project_name, _ = self._derive_project_defaults(Path.cwd())
 
         # Project identity.
-        # Both values are derived from the CWD hash so each project directory
-        # gets its own isolated Docker Compose project and database port
-        # automatically.  Override in datavia.conf to pin explicit values.
+        # The value is derived from the CWD hash so each project directory gets
+        # a stable, unique name without any configuration.  Override with
+        # ``[project] name = my_project`` in datavia.conf.
         self.config["project"] = {
             "name": project_name,
         }
 
-        # Database configuration
+        # Database configuration.
+        # Only connection_pooling is set here as a default.  The backend URL is
+        # derived lazily in database_url:  SQLite (default) unless the user
+        # configures ``[database] url`` or host/user keys in datavia.conf.
         self.config["database"] = {
-            "host": "localhost",
-            "port": str(project_port),
-            "database": "gis",
-            "user": "gis",
-            "password": os.getenv("POSTGRES_PASSWORD", "datavia_dev"),
             "connection_pooling": "true",
-            "ssl_mode": "prefer",
         }
 
         # File path configuration.
@@ -348,9 +345,38 @@ class DataviaConfig:
     # Database properties
     @property
     def database_url(self) -> str:
-        """Get database connection URL."""
+        """Return the database connection URL.
+
+        Resolution order:
+
+        1. ``[database] url`` key in ``datavia.conf`` — used verbatim (any
+           SQLAlchemy-compatible backend).
+        2. ``[database] host`` key present — a PostgreSQL URL is built from
+           the ``host``, ``port``, ``user``, ``password``, and ``database``
+           keys.
+        3. Fallback — a SQLite database file located in the configured data
+           directory (``<data_directory>/datavia.db``).
+
+        Returns
+        -------
+        str
+            A SQLAlchemy-compatible database URL string.
+        """
         db = self.config["database"]
-        return f"postgresql://{db['user']}:{db['password']}@{db['host']}:{db['port']}/{db['database']}"
+        # 1. Explicit URL takes precedence (any backend).
+        explicit_url = db.get("url", "").strip()
+        if explicit_url:
+            return explicit_url
+        # 2. PostgreSQL credentials configured inline.
+        host = db.get("host", "").strip()
+        if host:
+            user = db.get("user", "gis")
+            password = db.get("password", "datavia_dev")
+            port = db.get("port", "5432")
+            database = db.get("database", "gis")
+            return f"postgresql://{user}:{password}@{host}:{port}/{database}"
+        # 3. Default: SQLite file in the data directory.
+        return f"sqlite:///{self.data_directory / 'datavia.db'}"
 
     @property
     def database_config(self) -> dict[str, Any]:

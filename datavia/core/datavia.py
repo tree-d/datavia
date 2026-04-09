@@ -53,11 +53,23 @@ class Datavia:
         self.pipelines = pipelines
 
     def __call__(self) -> "Datavia":
-        """Initialize the Datavia controller and add pipelines."""
+        """Initialise the database and register pipelines without starting them.
+
+        Each pipeline's downloader, saver, and getter are constructed lazily
+        on the first call to ``update_data`` or ``get_data``, so importing or
+        creating a :class:`Datavia` instance does not trigger any network I/O
+        or heavy initialisation for pipelines that are not used in a given run.
+
+        Returns
+        -------
+        Datavia
+            Self for method chaining.
+        """
         initialize_database()
-        logging.info("Datavia controller initialized with database.")
+        logging.info("Datavia controller initialised with database.")
         for pipeline in self.pipelines:
-            self.add_pipeline(pipeline())
+            # Register without calling pipeline() — lazy init on first use.
+            self.add_pipeline(pipeline)
         return self
 
     def add_pipeline(self, pipeline: Pipeline) -> None:
