@@ -248,7 +248,7 @@ class HiHydroSoilDownloader(Downloader):
 
         listing_url = self._BASE_URL + "/"
         try:
-            with urllib.request.urlopen(listing_url, timeout=15) as response:
+            with urllib.request.urlopen(listing_url, timeout=15) as response:  # nosec B310 — URL is always derived from the hardcoded _BASE_URL constant (http://), never from user input
                 html = response.read().decode("utf-8", errors="replace")
         except Exception as exc:
             logger.warning(
