@@ -1,6 +1,5 @@
 """End-to-end integration tests for Datavia pipeline workflows."""
 
-import os
 import tempfile
 from pathlib import Path
 from subprocess import CalledProcessError
