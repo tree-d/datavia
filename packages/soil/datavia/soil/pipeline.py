@@ -388,7 +388,7 @@ class SoilPipeline(Pipeline):
             coverages are found or if extraction fails.
         """
         if not self.getter:
-            self()
+            self.__call__()
 
         # Coerce plain strings to single-element lists so callers can write
         # properties="clay" or depths="0-5cm" as a convenience shorthand.
@@ -680,7 +680,7 @@ class SoilPipeline(Pipeline):
             returned file could not be saved.
         """
         if not self.downloader or not self.saver or not self.getter:
-            self()
+            self.__call__()
 
         # Coerce plain strings to single-element lists so callers can write
         # properties="clay" or depths="0-5cm" as a convenience shorthand.
@@ -825,5 +825,5 @@ class SoilPipeline(Pipeline):
             Returns an empty dict if no remote source can be reached.
         """
         if not self.downloader:
-            self()
+            self.__call__()
         return self.downloader.get_remote_available_properties()

@@ -39,7 +39,9 @@ class TestDataviaE2EWorkflows:
             ]
         )
 
-    def test_elevation_pipeline_workflow(self, sqlite_db, temp_config_dir, sample_coordinates):
+    def test_elevation_pipeline_workflow(
+        self, sqlite_db, temp_config_dir, sample_coordinates
+    ):
         """Test complete elevation data pipeline workflow."""
         mock_pipeline = MagicMock()
         mock_pipeline.name = "elevation"
@@ -52,7 +54,9 @@ class TestDataviaE2EWorkflows:
         assert len(result) == len(sample_coordinates)
         mock_pipeline.get_data.assert_called_once_with(coords=sample_coordinates)
 
-    def test_soil_pipeline_workflow(self, sqlite_db, temp_config_dir, sample_coordinates):
+    def test_soil_pipeline_workflow(
+        self, sqlite_db, temp_config_dir, sample_coordinates
+    ):
         """Test complete soil data pipeline workflow."""
         mock_pipeline = MagicMock()
         mock_pipeline.name = "soil"
@@ -73,7 +77,9 @@ class TestDataviaE2EWorkflows:
         assert len(result["ph"]) == len(sample_coordinates)
         assert result["source"] == "SoilGrids"
 
-    def test_multi_pipeline_workflow(self, sqlite_db, temp_config_dir, sample_coordinates):
+    def test_multi_pipeline_workflow(
+        self, sqlite_db, temp_config_dir, sample_coordinates
+    ):
         """Test workflow combining multiple pipelines."""
         elev_pipeline = MagicMock()
         elev_pipeline.name = "elevation"
