@@ -6,6 +6,10 @@ former Docker/PostGIS setup for unit and integration tests.
 
 import pytest
 
+from datavia.config import get_config
+from datavia.library.database.connection import reset_engine
+from datavia.library.database.start import initialize_database
+
 
 @pytest.fixture
 def sqlite_db():
@@ -24,10 +28,6 @@ def sqlite_db():
         through the module-level connection helpers
         (``get_engine()``, ``session_local()``, etc.).
     """
-    from datavia.config import get_config
-    from datavia.library.database.connection import reset_engine
-    from datavia.library.database.start import initialize_database
-
     config = get_config()
     # Inject the in-memory SQLite URL directly into the live config object so
     # the engine rebuilds with it on the next access.

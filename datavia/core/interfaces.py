@@ -309,6 +309,8 @@ class Pipeline:
         """
         if not self.downloader or not self.saver:
             self()
+        if self.downloader is None or self.saver is None:
+            raise RuntimeError("Pipeline components could not be initialized.")
         data_path = self.downloader.download()
         if data_path == "failed":
             return False
@@ -330,12 +332,16 @@ class Pipeline:
         """
         if not self.getter:
             self()
+        if self.getter is None:
+            raise RuntimeError("Pipeline getter could not be initialized.")
         return self.getter.get_existing_layers()
 
     def sync_files_and_database(self) -> None:
         """Sync files with database records."""
         if not self.saver:
             self()
+        if self.saver is None:
+            raise RuntimeError("Pipeline saver could not be initialized.")
         self.saver.sync_files_and_database()
 
     def get_data(
@@ -371,6 +377,8 @@ class Pipeline:
         """
         if not self.getter:
             self()
+        if self.getter is None:
+            raise RuntimeError("Pipeline getter could not be initialized.")
         return self.getter.get_data(
             coords=coords,
             crs_coords=crs_coords,
