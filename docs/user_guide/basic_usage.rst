@@ -17,8 +17,9 @@ Datavia uses namespace packages for modular installation:
     >>> elevation_pipeline = ElevationPipeline()
     >>> dv = Datavia(pipelines=[elevation_pipeline])
     >>> 
-    >>> # dv() connects to the PostGIS database and instantiates each pipeline's
-    >>> # Downloader / Saver / Getter components. Does NOT download data.
+    >>> # dv() connects to the metadata database (SQLite by default) and
+    >>> # instantiates each pipeline's Downloader / Saver / Getter components.
+    >>> # Does NOT download data.
     >>> _ = dv() # doctest: +SKIP
 
 

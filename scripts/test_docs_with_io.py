@@ -10,6 +10,12 @@ Usage:
 
     # Run with verbose output
     python scripts/test_docs_with_io.py --verbose
+
+Security note:
+    The project ``.env`` file (which may contain database passwords or API keys)
+    is **not** copied into the temporary docs directory by default.  Set
+    ``DATAVIA_DOCTEST_COPY_ENV=1`` to opt in when live credentials are required
+    for doctest runs.
 """
 
 import argparse
@@ -89,13 +95,22 @@ def process_rst_files(docs_dir, project_root):
         shutil.copytree(tests_dir, temp_tests_dir)
 
     # Copy project-root config files so Sphinx doctests find the same
-    # configuration and credentials as the live environment.
+    # configuration as the live environment.  The .env file is only copied
+    # when DATAVIA_DOCTEST_COPY_ENV=1 is set explicitly, to avoid propagating
+    # secrets (passwords, API keys) into doctest runs and CI artefacts.
     # Sphinx changes cwd to temp_docs_dir before running tests, and
     # config.py resolves both datavia.conf and .env relative to cwd.
-    for config_file in ["datavia.conf", ".env"]:
+    copy_env = os.getenv("DATAVIA_DOCTEST_COPY_ENV", "0") == "1"
+
+    for config_file in ["datavia.conf"]:
         src = project_root / config_file
         if src.exists():
             shutil.copy2(src, temp_docs_dir / config_file)
+
+    if copy_env:
+        env_src = project_root / ".env"
+        if env_src.exists():
+            shutil.copy2(env_src, temp_docs_dir / ".env")
 
     # Process all RST files
     for rst_file in temp_docs_dir.rglob("*.rst"):

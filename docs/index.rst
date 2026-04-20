@@ -14,7 +14,7 @@ Overview
 Datavia uses a modular architecture where **pipelines** combine three core components:
 
 * **Downloader**: Fetches data from external sources (URLs, APIs)
-* **Saver**: Stores data locally and metadata in PostGIS database
+* **Saver**: Stores data locally and metadata in the SQLite metadata database
 * **Getter**: Provides coordinate-based data access with spatial interpolation
 
 Available pipeline packages:
@@ -65,8 +65,6 @@ Database management:
 
 .. code-block:: bash
 
-    datavia start            # Start PostGIS container
-    datavia stop             # Stop container
     datavia config           # View configuration
 
 Architecture
@@ -94,7 +92,7 @@ Core Interfaces
 **Pipeline Components:**
 
 * **Downloader**: Fetches data from external sources (URLs, APIs)
-* **Saver**: Stores data locally and metadata in PostGIS database
+* **Saver**: Stores data locally and metadata in the SQLite metadata database
 * **Getter**: Provides coordinate-based data access with spatial interpolation
 
 Current Data Sources
@@ -119,8 +117,6 @@ System Management
 .. code-block:: bash
 
     # Database operations
-    datavia start            # Start PostGIS container
-    datavia stop             # Stop container
     datavia config           # View configuration
     
     # Data updates (planned)

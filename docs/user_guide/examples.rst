@@ -197,9 +197,6 @@ To run these examples, install the required packages:
     
     # Install visualization dependencies
     pip install matplotlib pandas
-    
-    # Start the database
-    datavia start
 
 Each example can be run independently and demonstrates different aspects of the Datavia system:
 

@@ -8,7 +8,6 @@ import pytest
 from datavia.elevation import ElevationPipeline
 
 from datavia.core.datavia import Datavia
-from datavia.library.database.start import initialize_database
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -18,10 +17,9 @@ logger = logging.getLogger(__name__)
     os.getenv("DATAVIA_E2E") != "1",
     reason="DATAVIA_E2E not set; skipping integration test",
 )
-def test_elevation_pipeline_inside_datavia_e2e():
+def test_elevation_pipeline_inside_datavia_e2e(sqlite_db):
     """Test the elevation pipeline via the Datavia controller."""
-    # Setup: initialise in-memory SQLite database (no Docker required).
-    initialize_database()
+    # sqlite_db fixture provides an isolated in-memory SQLite database.
     logger.info("Database initialised.")
 
     try:
@@ -50,4 +48,4 @@ def test_elevation_pipeline_inside_datavia_e2e():
         )
 
     finally:
-        pass  # SQLite is in-memory; no teardown needed.
+        pass  # sqlite_db fixture handles engine teardown.

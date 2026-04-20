@@ -238,15 +238,17 @@ class DataviaConfig:
 
     @staticmethod
     def _derive_project_defaults(cwd: Path) -> tuple[str, int]:
-        """Derive a stable project name and host port from the working directory.
+        """Derive a stable project name and an unused legacy port from the working directory.
 
         Uses an MD5 digest of the absolute CWD path so that every project
         directory gets a unique, reproducible identity without any persistent
         state or user configuration.
 
-        The port is chosen from the unprivileged range 49152-65535 so it
-        never requires elevated privileges and is very unlikely to conflict
-        with well-known services.
+        .. note::
+            The returned port integer is a legacy value from the Docker-era
+            design and is no longer used anywhere in the codebase.  It is
+            preserved here to avoid breaking any external callers and will be
+            removed in a future version.
 
         Parameters
         ----------
@@ -257,8 +259,8 @@ class DataviaConfig:
         -------
         tuple[str, int]
             ``(project_name, port)`` where *project_name* is
-            ``"datavia-" + 8-character hex suffix`` and *port* is in
-            49152-65535.
+            ``"datavia-" + 8-character hex suffix``.  *port* is in
+            49152-65535 and is no longer used.
         """
         _port_min = 49152
         _port_max = 65535
@@ -329,11 +331,12 @@ class DataviaConfig:
     # Project properties
     @property
     def project_name(self) -> str:
-        """Return the Docker Compose project name for this project.
+        """Return the stable per-project identifier derived from the working directory.
 
-        The value is derived from the CWD hash by default, ensuring that
-        every project directory owns its own isolated container.  Override
-        with ``[project] name = my_project`` in ``datavia.conf``.
+        The value is a short hash of the absolute CWD path, giving each project
+        directory a unique, reproducible name without any persistent state or user
+        configuration.  Override with ``[project] name = my_project`` in
+        ``datavia.conf``.
 
         Returns
         -------
@@ -392,9 +395,9 @@ class DataviaConfig:
 
         1. ``base_directory`` key in ``datavia.conf`` if non-empty — full
            explicit override for power users.
-        2. ``storage = project`` → ``<cwd>/.datavia/`` — per-project,
+        2. ``storage = project`` **(default)** → ``<cwd>/.datavia/`` — per-project,
            self-contained; set this in a project-local ``datavia.conf``.
-        3. ``storage = global`` (default) → ``~/.datavia/`` — shared across
+        3. ``storage = global`` → ``~/.datavia/`` — shared across
            all projects; avoids re-downloading large data files.
 
         Returns
@@ -457,6 +460,67 @@ class DataviaConfig:
         "logs/\n"
     )
 
+    _ROOT_GITIGNORE_ENTRY = ".datavia/\n"
+
+    def _update_root_gitignore(self) -> None:
+        """Append ``.datavia/`` to the project root ``.gitignore`` if not already present.
+
+        Walks up from the current working directory to locate the git
+        repository root (identified by a ``.git`` entry).  Falls back to the
+        current working directory when no ``.git`` is found.  The file is
+        only modified when no existing line already contains ``.datavia``, so
+        manual customisations and pre-existing entries are always preserved.
+
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        No exceptions are raised; errors are logged at the ERROR level.
+        """
+        # Walk up from cwd to find the git repository root.
+        git_root = Path.cwd()
+        for candidate in [Path.cwd(), *Path.cwd().parents]:
+            if (candidate / ".git").exists():
+                git_root = candidate
+                break
+
+        gitignore_path = git_root / ".gitignore"
+
+        # Skip if .datavia is already covered by any active (non-comment) line.
+        if gitignore_path.exists():
+            active_lines = [
+                line
+                for line in gitignore_path.read_text().splitlines()
+                if line.strip() and not line.strip().startswith("#")
+            ]
+            if any(".datavia" in line for line in active_lines):
+                logger.debug(
+                    "Root .gitignore already covers .datavia — no update needed."
+                )
+                return
+
+        # Append the entry, ensuring it starts on its own line.
+        try:
+            needs_newline = (
+                gitignore_path.exists()
+                and gitignore_path.stat().st_size > 0
+                and not gitignore_path.read_text().endswith("\n")
+            )
+            with gitignore_path.open("a") as fh:
+                if needs_newline:
+                    fh.write("\n")
+                fh.write(
+                    "\n# Datavia runtime directory — created automatically on first use\n"
+                    + self._ROOT_GITIGNORE_ENTRY
+                )
+            logger.debug("Added .datavia/ to root .gitignore at %s", gitignore_path)
+        except Exception as e:
+            logger.error(
+                "Failed to update root .gitignore at %s: %s", gitignore_path, e
+            )
+
     def ensure_directories(self) -> None:
         """Create data and log directories and write a .gitignore into the base directory.
 
@@ -482,6 +546,8 @@ class DataviaConfig:
                     logger.debug(f"Wrote .gitignore to {gitignore_path}")
                 except Exception as e:
                     logger.error(f"Failed to write .gitignore: {e}")
+
+            self._update_root_gitignore()
 
     def validate_paths(self) -> None:
         """Validate that required paths exist."""

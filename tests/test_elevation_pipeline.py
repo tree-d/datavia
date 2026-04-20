@@ -9,8 +9,6 @@ import pytest
 # Import from namespace package (works with installed packages)
 from datavia.elevation import ElevationPipeline
 
-from datavia.library.database.start import initialize_database
-
 logging.basicConfig(level=logging.INFO)
 
 
@@ -18,10 +16,9 @@ logging.basicConfig(level=logging.INFO)
     os.getenv("DATAVIA_E2E") != "1",
     reason="DATAVIA_E2E not set; skipping integration test",
 )
-def test_elevation_pipeline_e2e():
+def test_elevation_pipeline_e2e(sqlite_db):
     """Run elevation pipeline end-to-end test."""
-    # Setup: initialise in-memory SQLite database (no Docker required).
-    initialize_database()
+    # sqlite_db fixture provides an isolated in-memory SQLite database.
 
     try:
         meinehoehe = ElevationPipeline(
@@ -50,4 +47,4 @@ def test_elevation_pipeline_e2e():
         )
 
     finally:
-        pass  # SQLite is in-memory; no teardown needed.
+        pass  # sqlite_db fixture handles engine teardown.

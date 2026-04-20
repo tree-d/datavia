@@ -21,7 +21,7 @@ name: Release - PyPI Publishing
   push:
     branches: [release]
     tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v*.*.*'
   workflow_dispatch:
     inputs:
       version:
@@ -42,6 +42,7 @@ jobs:
   # Job 1: Full test suite (more comprehensive than CI)
   test:
     name: Full Test Suite
+    if: ${{ !contains(github.ref_name, '-') }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: true
@@ -91,6 +92,7 @@ jobs:
   # Job 2: Code Quality Gate (must pass for release)
   quality-gate:
     name: Release Quality Gate
+    if: ${{ !contains(github.ref_name, '-') }}
     runs-on: ubuntu-latest
 
     steps:

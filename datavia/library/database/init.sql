@@ -3,7 +3,7 @@
 -- (no PostGIS geometry column is used so no extension is required).
 
 CREATE TABLE IF NOT EXISTS raster_layers (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     layer_name TEXT NOT NULL,
     source_name TEXT,
     bbox TEXT,
@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS raster_layers (
 );
 
 CREATE TABLE IF NOT EXISTS raster_band_metadata (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     layer_name TEXT NOT NULL,
     source_name TEXT,
     band_index INTEGER,
