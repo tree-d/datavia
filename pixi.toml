@@ -34,6 +34,8 @@ format-check-core = {cmd = "ruff format --check datavia/ tests/"}
 lint-core = {cmd = "ruff check datavia/ tests/"}
 
 test-unit = {cmd = "python -m pytest tests/test_config.py tests/test_coordinate_transforms.py tests/test_spatial_ops.py -v"}
+# CI variant of unit tests: adds coverage reporting; pass --junitxml=... via `pixi run test-unit-ci -- --junitxml=<file>`
+test-unit-ci = {cmd = "python -m pytest tests/test_config.py tests/test_coordinate_transforms.py tests/test_spatial_ops.py -v --cov=datavia --cov-report=xml --cov-report=html"}
 test-integration = {cmd = "python -m pytest tests/test_e2e_workflows.py::TestDataQualityWorkflows tests/test_e2e_workflows.py::TestSpatialOperationsWorkflow tests/test_e2e_workflows.py::TestConfigurationWorkflows::test_global_config_workflow tests/test_e2e_workflows.py::TestErrorHandlingWorkflows -v"}
 test-light = {cmd = "python -m pytest tests/ -v -k 'not test_elevation_pipeline and not test_elevation_pipeline_inside_datavia'"}
 

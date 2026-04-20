@@ -112,29 +112,11 @@ jobs:
 
       - name: Run unit tests
         run: |
-          pixi run python -m pytest \
-            tests/test_config.py \
-            tests/test_coordinate_transforms.py \
-            tests/test_runner.py \
-            tests/test_spatial_ops.py \
-            -v \
-            --cov=datavia \
-            --cov-report=xml \
-            --cov-report=html \
+          pixi run test-unit-ci -- \
             --junitxml=test-results-py${{ matrix.python-version }}.xml
 
       - name: Run integration tests
-        run: |
-          F="tests/test_e2e_workflows.py"
-          T="TestDataQualityWorkflows"
-          pixi run python -m pytest \
-            "$F::TestContainerIntegration" \
-            "$F::$T::test_coordinate_validation_workflow" \
-            "$F::$T::test_spatial_bounds_validation_workflow" \
-            "$F::TestSpatialOperationsWorkflow" \
-            "$F::TestConfigurationWorkflows::test_global_config_workflow" \
-            "$F::TestErrorHandlingWorkflows" \
-            -v
+        run: pixi run test-integration
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
