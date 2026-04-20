@@ -38,6 +38,9 @@ _build/
 # pytest cache
 .pytest_cache/
 
+# Datavia runtime directory — created automatically on first use
+.datavia/
+
 # CI/CD generated files
 test-results-*.xml
 htmlcov/

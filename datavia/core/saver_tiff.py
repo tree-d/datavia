@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 class TiffSaver(Saver):
-    """Saver implementation for TIFF files with PostGIS metadata management and multi-band support."""
+    """Saver implementation for TIFF files with SQLite metadata management and multi-band support."""
 
     def __init__(self, source_name: str):
         """Initialize TiffSaver with data directory and CRS from config.
@@ -54,7 +54,7 @@ class TiffSaver(Saver):
         reproject: bool = False,
         resolution_m: int | None = None,
     ) -> bool:
-        """Save a TIFF file to the data directory and register it in PostGIS.
+        """Save a TIFF file to the data directory and register it in the metadata database.
 
         Handles both single-band and multi-band TIFF files. When *reproject*
         is ``True`` the file is reprojected in-place to ``self.target_crs``
@@ -101,7 +101,7 @@ class TiffSaver(Saver):
             if reproject:
                 reproject_tiff(dest_path, self.target_crs, resolution_m=resolution_m)
 
-            # Import metadata to PostGIS with multi-band support
+            # Import metadata to the SQLite database with multi-band support
             self._import_raster_metadata_with_bands(dest_path, layer_name)
             logger.info("Imported metadata for layer %s", layer_name)
 
@@ -169,7 +169,7 @@ class TiffSaver(Saver):
 
     def sync_files_and_database(self) -> bool:
         """
-        Sync TIFF files in data directory with PostGIS metadata records.
+        Sync TIFF files in data directory with SQLite metadata records.
         Enhanced to handle multi-band metadata cleanup and source-specific filtering.
 
         Returns:
@@ -418,7 +418,7 @@ class TiffSaver(Saver):
             logger.debug(f"Could not store band metadata (table might be missing): {e}")
 
     def _delete_layer_metadata(self, layer_name: str, session: Any = None) -> None:
-        """Delete layer metadata from PostGIS."""
+        """Delete layer metadata from the database."""
         should_close_session = session is None
         if session is None:
             session = session_local()
@@ -441,7 +441,7 @@ class TiffSaver(Saver):
                 session.close()
 
     def _delete_band_metadata(self, layer_name: str, session: Any = None) -> None:
-        """Delete band metadata from PostGIS."""
+        """Delete band metadata from the database."""
         should_close_session = session is None
         if session is None:
             session = session_local()

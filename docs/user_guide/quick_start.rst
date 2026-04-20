@@ -8,7 +8,6 @@ Prerequisites
 
 * Python 3.12 or higher
 * `pixi <https://pixi.sh/>`_ (recommended) or pip
-* Docker (for PostGIS database)
 
 Installation
 ------------
@@ -32,14 +31,13 @@ Installation
     # Or for development
     pip install -e .[dev]
 
-Setup Database
---------------
+Database
+--------
 
-Start/Stop the PostGIS database:
-
-.. code-block:: bash
-
-    datavia start/stop
+No database setup is required.  A SQLite metadata file (``datavia.db``) is
+created automatically in the configured data directory on first use.
+To use PostgreSQL instead, set ``[database] url = postgresql://...`` in
+``datavia.conf``.
 
 Basic Usage
 -----------
@@ -60,8 +58,8 @@ Basic Usage
 
 .. doctest::
 
-    >>> # dv() connects to the PostGIS database and instantiates each pipeline's
-    >>> # Downloader / Saver / Getter components. It does NOT download data.
+    >>> # dv() connects to the configured metadata backend and instantiates each
+    >>> # pipeline's Downloader / Saver / Getter components. It does NOT download data.
     >>> _ = dv() # doctest: +SKIP
     >>>
     >>> # update_data() fetches data from the external source and caches it locally.

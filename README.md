@@ -14,7 +14,7 @@ Datavia is designed for researchers who need efficient integration of multiple g
 - 🔄 **Pipeline-Based Architecture**: Modular design for easy extension to new data sources
 - 🌍 **Coordinate System Support**: Automatic CRS transformations using PyProj
 - 📊 **Spatial Interpolation**: Multiple interpolation methods for data access
-- 🐳 **Docker Integration**: Containerized PostGIS database for simplified setup
+- �️ **Zero-setup Database**: SQLite metadata database created automatically on first use
 
 ### Available Pipelines (Modular Installation)
 
