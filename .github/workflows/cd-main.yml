@@ -53,8 +53,7 @@ jobs:
         run: pixi run lint
 
       - name: Run core tests
-        run: |
-          pixi run python -m pytest tests/test_config.py tests/test_runner.py -v
+        run: pixi run test-unit
 
   # Job 2: Build Documentation and Deploy
   docs:
