@@ -89,15 +89,11 @@ html_theme_options = {
 }
 
 # -- Linkcheck configuration ------------------------------------------------
-# CI runners can be slow to reach external hosts; raise the timeout and add
-# retries so that transient network latency does not cause false failures.
-# Genuinely broken links (4xx/5xx) will still fail after all retries.
-# Timeouts are reported as warnings, not build failures, because CI egress
-# latency to certain hosts (e.g. govdata.de) is unpredictable.  A real
-# link removal or 404 will still be caught.
+# Raise timeout and retries so that slow external hosts do not cause
+# spurious failures.  The CI pipeline additionally distinguishes between
+# connection timeouts and genuinely broken links (see ci-pull-request.yml).
 linkcheck_timeout = 60
 linkcheck_retries = 3
-linkcheck_report_timeouts_as_broken = False
 
 # -- Intersphinx mapping ----------------------------------------------------
 intersphinx_mapping = {
