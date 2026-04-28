@@ -88,6 +88,13 @@ html_theme_options = {
     "show_powered_by": False,
 }
 
+# -- Linkcheck configuration ------------------------------------------------
+# CI runners can be slow to reach external hosts; raise the timeout and add
+# retries so that transient network latency does not cause false failures.
+# Genuinely broken links will still fail after all retries are exhausted.
+linkcheck_timeout = 60
+linkcheck_retries = 3
+
 # -- Intersphinx mapping ----------------------------------------------------
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3/", None),
