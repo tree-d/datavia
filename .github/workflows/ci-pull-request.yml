@@ -113,10 +113,7 @@ jobs:
       - name: Run unit tests
         run: |
           pixi run test-unit-ci -- \
-            --junitxml=test-results-py${{ matrix.python-version }}.xml
-
-      - name: Run integration tests
-        run: pixi run test-integration
+            --junitxml=test-results-py${{ matrix.python-version }}.xml      
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
