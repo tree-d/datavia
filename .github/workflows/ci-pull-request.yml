@@ -46,7 +46,7 @@ jobs:
           pixi-version: ${{ env.PIXI_VERSION }}
 
       - name: Install formatting tools
-        run: pixi install
+        run: pixi install -e dev
 
       - name: Check formatting and import sorting
         run: pixi run format-check
@@ -74,7 +74,7 @@ jobs:
           pixi-version: ${{ env.PIXI_VERSION }}
 
       - name: Install dependencies
-        run: pixi install
+        run: pixi install -e dev
 
       - name: Lint
         run: pixi run lint
@@ -108,7 +108,7 @@ jobs:
           pixi-version: ${{ env.PIXI_VERSION }}
 
       - name: Install dependencies
-        run: pixi install
+        run: pixi install -e dev
 
       - name: Run unit tests
         run: |
@@ -209,7 +209,7 @@ jobs:
           pixi-version: ${{ env.PIXI_VERSION }}
 
       - name: Install dependencies
-        run: pixi install
+        run: pixi install -e dev
 
       - name: Test documentation code examples
         run: |
@@ -236,7 +236,7 @@ jobs:
           pixi-version: ${{ env.PIXI_VERSION }}
 
       - name: Install dependencies
-        run: pixi install
+        run: pixi install -e dev
 
       - name: Security scan
         run: pixi run security-scan || true

@@ -117,7 +117,7 @@ jobs:
           pixi-version: ${{ env.PIXI_VERSION }}
 
       - name: Install dependencies
-        run: pixi install
+        run: pixi install -e dev
 
       # Generate development version number
       - name: Generate development version
