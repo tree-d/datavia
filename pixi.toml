@@ -37,7 +37,6 @@ lint-core = {cmd = "ruff check datavia/ tests/", default-environment = "dev"}
 test-unit = {cmd = "pytest tests/test_config.py tests/test_coordinate_transforms.py tests/test_spatial_ops.py -v", default-environment = "dev"}
 # CI variant of unit tests: adds coverage reporting; pass --junitxml=... via `pixi run test-unit-ci -- --junitxml=<file>`
 test-unit-ci = {cmd = "pytest tests/test_config.py tests/test_coordinate_transforms.py tests/test_spatial_ops.py -v --cov=datavia --cov-report=xml --cov-report=html", default-environment = "dev"}
-test-integration = {cmd = "pytest tests/test_e2e_workflows.py::TestDataQualityWorkflows tests/test_e2e_workflows.py::TestSpatialOperationsWorkflow tests/test_e2e_workflows.py::TestConfigurationWorkflows::test_global_config_workflow tests/test_e2e_workflows.py::TestErrorHandlingWorkflows -v", default-environment = "dev"}
 test-light = {cmd = "pytest tests/ -v -k 'not test_elevation_pipeline and not test_elevation_pipeline_inside_datavia'", default-environment = "dev"}
 
 # Heavy integration tests (with running backend containers and network access)
