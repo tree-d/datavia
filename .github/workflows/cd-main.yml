@@ -142,7 +142,7 @@ jobs:
 
       - name: Check packages
         run: |
-          pixi run twine check dist/*.whl
+          pixi run -e dev twine check dist/*.whl
 
       # Upload to GitHub Releases as development release
       - name: Create Development Release
