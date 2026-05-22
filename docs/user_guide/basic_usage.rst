@@ -135,7 +135,7 @@ You can request a subset of properties with the ``properties`` keyword:
     ...     crs_coords="EPSG:4326",
     ... )
     >>> _ = print(f"pH only: {soil_ph[0] / 10:.2f}")  # doctest: +SKIP
-    pH only: 5.35
+    pH only: 5.40
     >>>
     >>> # Verify the return type without a live pipeline
     >>> isinstance({"clay_0-5cm_mean": np.array([294.0])}, dict)

@@ -118,8 +118,8 @@ System Management
 
     # Database operations
     datavia config           # View configuration
-    
-    # Data updates (planned)
+
+    # Data updates
     datavia update elevation
     datavia update soil
 
@@ -134,9 +134,6 @@ Development Setup
     
     # Install with pixi (recommended for development)
     pixi install
-    
-    # Run setup script for local development
-    pixi run ./scripts/setup-local-dev.sh
     
     # Or install with pip (requires manual dependency management)
     pip install -e .[dev]

@@ -319,23 +319,6 @@ class Pipeline:
         )
         return success
 
-    def find_files(self) -> set[str]:
-        """Return layer names already registered in the database for this source.
-
-        Delegates to the Getter, which is the sole authorised reader of the
-        database.
-
-        Returns
-        -------
-        set[str]
-            Layer names present in the database.
-        """
-        if not self.getter:
-            self()
-        if self.getter is None:
-            raise RuntimeError("Pipeline getter could not be initialized.")
-        return self.getter.get_existing_layers()
-
     def sync_files_and_database(self) -> None:
         """Sync files with database records."""
         if not self.saver:

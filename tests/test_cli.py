@@ -6,8 +6,6 @@ Tests command line interface functions including config file creation
 and pipeline management.
 """
 
-import json
-import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -29,17 +27,6 @@ def _create_config_file(config_file):
     # Use default pipelines for backward compatibility
     default_pipelines = ["elevation", "soil"]
     create_config_file(default_pipelines, config_file)
-
-
-def load_config_if_exists(config_file):
-    """Load config file if it exists, return empty dict otherwise."""
-    if not os.path.exists(config_file):
-        return {}
-    try:
-        with open(config_file) as f:
-            return json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return {}
 
 
 class TestConfigFileCreation:
@@ -82,34 +69,6 @@ class TestConfigFileCreation:
 
         # Should not open file for writing if file exists
         mock_file.assert_not_called()
-
-    def test_load_config_if_exists_loads_existing(self):
-        """Test load_config_if_exists loads existing configuration."""
-        # Create a test config file
-        test_config = {
-            "pipelines": ["elevation", "soil"],
-            "custom_setting": "test_value",
-        }
-
-        with open(self.config_file, "w") as f:
-            json.dump(test_config, f)
-
-        result = load_config_if_exists(str(self.config_file))
-
-        assert result == test_config
-
-    def test_load_config_if_exists_returns_empty_for_nonexistent(self):
-        """Test load_config_if_exists returns empty dict for nonexistent file."""
-        result = load_config_if_exists(str(self.test_dir / "nonexistent.json"))
-
-        assert result == {}
-
-    @patch("builtins.open", mock_open(read_data="invalid json"))
-    def test_load_config_if_exists_handles_invalid_json(self):
-        """Test load_config_if_exists handles invalid JSON gracefully."""
-        result = load_config_if_exists("some_file.json")
-
-        assert result == {}
 
 
 if __name__ == "__main__":

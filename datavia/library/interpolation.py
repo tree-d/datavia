@@ -1,11 +1,4 @@
-"""
-Complete interpolation library migrated from processor.
-
-All spatial and temporal interpolation methods for pipeline use:
-- Spatial interpolation: IDW, bilinear, kriging
-- Temporal interpolation: linear, nearest, cubic spline
-- Quality-aware interpolation with outlier detection
-"""
+"""Spatial and temporal interpolation methods for pipeline use."""
 
 import logging
 from typing import Literal

@@ -237,18 +237,12 @@ class DataviaConfig:
                     self.config[section][key] = env_value
 
     @staticmethod
-    def _derive_project_defaults(cwd: Path) -> tuple[str, int]:
-        """Derive a stable project name and an unused legacy port from the working directory.
+    def _derive_project_defaults(cwd: Path) -> str:
+        """Derive a stable project name from the working directory.
 
         Uses an MD5 digest of the absolute CWD path so that every project
         directory gets a unique, reproducible identity without any persistent
         state or user configuration.
-
-        .. note::
-            The returned port integer is a legacy value from the Docker-era
-            design and is no longer used anywhere in the codebase.  It is
-            preserved here to avoid breaking any external callers and will be
-            removed in a future version.
 
         Parameters
         ----------
@@ -257,21 +251,15 @@ class DataviaConfig:
 
         Returns
         -------
-        tuple[str, int]
-            ``(project_name, port)`` where *project_name* is
-            ``"datavia-" + 8-character hex suffix``.  *port* is in
-            49152-65535 and is no longer used.
+        str
+            Project name such as ``"datavia-a1b2c3d4"``.
         """
-        _port_min = 49152
-        _port_max = 65535
         digest = hashlib.md5(str(cwd).encode()).hexdigest()  # nosec B324
-        name = "datavia-" + digest[:8]
-        port = _port_min + int(digest[:4], 16) % (_port_max - _port_min)
-        return name, port
+        return "datavia-" + digest[:8]
 
     def _set_defaults(self) -> None:
         """Set default configuration values."""
-        project_name, _ = self._derive_project_defaults(Path.cwd())
+        project_name = self._derive_project_defaults(Path.cwd())
 
         # Project identity.
         # The value is derived from the CWD hash so each project directory gets

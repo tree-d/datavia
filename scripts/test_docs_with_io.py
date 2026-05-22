@@ -27,8 +27,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-from datavia.cli_utils import start_datavia_environment, stop_datavia_environment
-
 
 def remove_skip_directives(content):
     """Remove all +SKIP directives from doctest code.
@@ -147,24 +145,6 @@ def run_sphinx_doctest(docs_dir, verbose=False):
     return result.returncode == 0
 
 
-def start_datavia():
-    """Start datavia environment.
-
-    Returns
-    -------
-    bool
-        True if successfully started, False otherwise
-    """
-    print("[INFO] Starting datavia...")
-    return start_datavia_environment()
-
-
-def stop_datavia():
-    """Stop datavia environment."""
-    print("[INFO] Stopping datavia...")
-    stop_datavia_environment()
-
-
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
@@ -186,11 +166,6 @@ def main():
     # Create temporary copies with +SKIP removed (also copies tests dir)
     temp_docs_dir = process_rst_files(docs_dir, project_root)
     original_cwd = os.getcwd()
-
-    # Start datavia before testing
-    if not start_datavia():
-        print("[ERROR] Failed to start datavia services")
-        return 1
 
     try:
         # Set environment to enable I/O tests
@@ -215,10 +190,7 @@ def main():
 
     finally:
         os.chdir(original_cwd)
-        # Stop datavia
-        stop_datavia()
         # Clean up temporary directory
-
         shutil.rmtree(Path(temp_docs_dir).parent)
 
 

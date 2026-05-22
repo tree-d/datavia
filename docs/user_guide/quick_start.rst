@@ -86,7 +86,7 @@ Here's a complete example that gets elevation data for German cities:
 
     #!/usr/bin/env python3
     import numpy as np
-    from datavia.core.datavia import Datavia
+    from datavia import Datavia
     from datavia.elevation import ElevationPipeline
 
     def main():

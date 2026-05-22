@@ -27,13 +27,28 @@ Changed
   ``check_same_thread=False`` instead.
 - ``config.database_url`` now defaults to a SQLite URL derived from
   ``data_directory``; PostgreSQL is opt-in via ``[database] url = ...``.
-- Docker setup: dynamic port assignment and isolated database per instance.
 
 Removed
 ~~~~~~~
 - ``runner.py`` (Docker container lifecycle management) — no longer needed.
 - ``datavia start`` and ``datavia stop`` CLI commands.
 - ``psycopg2-binary`` dependency.
+- ``datavia.library.quality_control`` module — never wired into any pipeline.
+- ``datavia.library.formats`` module — all format I/O is handled by
+  :class:`~datavia.core.getter_tiff.GetterTiff` and :class:`~datavia.core.saver_tiff.TiffSaver`.
+- ``VectorDownloader`` class from ``datavia.core.downloader_url`` — planned for Shapefile
+  sources that were never implemented.
+- ``Pipeline.find_files()`` method — superseded by ``Pipeline.get_data()`` and
+  :meth:`~datavia.core.interfaces.Getter.get_existing_layers`.
+- Eight unused functions from ``datavia.library.spatial_ops``
+  (``extract_values_at_coords``, ``raster_sample``, ``process_multiband_tiff``,
+  ``read_geotiff_metadata``, ``get_geotiff_bounds``, ``validate_coordinates_in_bounds``
+  and their private helpers) — duplicated logic now handled by the database +
+  :class:`~datavia.core.getter_tiff.GetterTiff` path.
+- Legacy port-computation from ``DataviaConfig._derive_project_defaults`` — Docker-era
+  artefact, never used after SQLite migration.
+- ``pixi.toml`` transitive dependency pins replaced with first-class dependencies.
+- Dev-environment tasks now default to the ``dev`` pixi environment.
 
 [1.0.2] - 2026-03-23
 ----------------------
