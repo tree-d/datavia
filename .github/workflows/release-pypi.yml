@@ -71,7 +71,7 @@ jobs:
       # Run ALL tests including slower integration tests
       - name: Run comprehensive test suite
         run: |
-          pixi run -e dev python -m pytest \
+          pixi run -e dev pytest \
             tests/ \
             -v \
             --cov=datavia \
@@ -114,16 +114,16 @@ jobs:
 
       # All quality checks must pass for release
       - name: Check formatting and import sorting
-        run: pixi run -e dev format-check
+        run: pixi run format-check
 
       - name: Lint
-        run: pixi run -e dev lint
+        run: pixi run lint
 
       - name: Type checking
-        run: pixi run -e dev type-check
+        run: pixi run type-check
 
       - name: Security scan
-        run: pixi run -e dev security-scan
+        run: pixi run security-scan
   # Job 3: Version Management
   version:
     name: Manage Version

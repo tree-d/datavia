@@ -430,7 +430,7 @@ class SoilGridsDownloader(Downloader):
         str
             OGC URN, e.g. ``"urn:ogc:def:crs:EPSG::25832"``.
         """
-        code = crs.split(":")[-1]
+        code = crs.rsplit(":", maxsplit=1)[-1]
         return f"urn:ogc:def:crs:EPSG::{code}"
 
     def _bbox_in_crs(self, crs_urn: str) -> dict[str, float]:
@@ -456,7 +456,7 @@ class SoilGridsDownloader(Downloader):
         if "4326" in crs_urn:
             return self.germany_bbox
 
-        epsg_code = crs_urn.split("::")[-1]
+        epsg_code = crs_urn.rsplit("::", maxsplit=1)[-1]
         transformer = Transformer.from_crs(
             "EPSG:4326", f"EPSG:{epsg_code}", always_xy=True
         )
