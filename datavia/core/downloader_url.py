@@ -309,27 +309,3 @@ class TiffDownloader(URLDownloader):
             logger.error(f"Expected TIFF content, got: {content_type}")
 
         return is_valid
-
-
-class VectorDownloader(URLDownloader):
-    """Specialized downloader for vector files (JSON, ZIP, etc.)."""
-
-    def _validate_content_type(self, content_type: str) -> bool:
-        """Validate that content type is suitable for vector data."""
-        if not content_type:
-            logger.warning("No content type - assuming vector format")
-            return True
-
-        valid_vector_types = [
-            "application/json",
-            "application/zip",
-            "application/octet-stream",
-            "text/plain",
-        ]
-
-        is_valid = any(vtype in content_type.lower() for vtype in valid_vector_types)
-
-        if not is_valid:
-            logger.error(f"Expected vector content, got: {content_type}")
-
-        return is_valid

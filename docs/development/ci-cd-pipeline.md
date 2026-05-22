@@ -12,9 +12,9 @@ We have three separate workflows to handle different stages of the development l
 **Purpose**: Ensure code quality and functionality before merging
 
 **Features**:
-- **Auto-formatting**: Automatically applies `black` and `isort` formatting and commits back to the PR
+- **Auto-formatting**: Automatically applies `ruff format` and commits back to the PR
 - **Code quality**: Linting with `ruff`, type checking with `mypy`
-- **Testing**: Comprehensive test suite across Python 3.9-3.12
+- **Testing**: Comprehensive test suite (Python 3.12+)
 - **Security**: Vulnerability scanning with `bandit` and `safety`
 - **Documentation**: Validates docs build correctly
 - **Build verification**: Ensures packages can be built
@@ -88,7 +88,7 @@ We have three separate workflows to handle different stages of the development l
 **Solution**: The CI pipeline automatically fixes formatting issues and commits them back to your PR.
 
 ### How it works:
-1. When you create a PR, CI checks formatting with `black` and `isort`
+1. When you create a PR, CI checks formatting with `ruff format`
 2. If formatting issues are found, CI automatically:
    - Applies the fixes
    - Commits the changes with message "Auto-fix: Apply code formatting [skip ci]"

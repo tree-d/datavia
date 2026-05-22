@@ -67,20 +67,6 @@ Interpolation
    :members:
    :undoc-members:
 
-Quality Control
-~~~~~~~~~~~~~~~
-
-.. automodule:: datavia.library.quality_control
-   :members:
-   :undoc-members:
-
-File Formats
-~~~~~~~~~~~~
-
-.. automodule:: datavia.library.formats
-   :members:
-   :undoc-members:
-
 Database Integration
 ~~~~~~~~~~~~~~~~~~~~
 
