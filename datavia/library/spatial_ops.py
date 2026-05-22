@@ -9,8 +9,6 @@ import logging
 import os
 import tempfile
 
-import numpy as np
-
 from .coordinate_transforms import is_geographic_crs
 
 logger = logging.getLogger(__name__)
