@@ -16,9 +16,7 @@ from .cli_config import create_config_file
 from .cli_utils import (
     get_available_pipelines,
     get_datavia_instance,
-    get_pipeline_dependencies,
     get_pipeline_status,
-    install_pipeline_dependencies,
     update_pipeline,
     validate_config_file,
 )
@@ -202,52 +200,6 @@ def all(config_file: str) -> None:
             success_count += 1
 
     logger.info(f"Update complete: {success_count}/{len(pipeline_names)} successful")
-
-
-# NEW: Install command for selective installation
-@main.command()
-@click.option(
-    "--config-file", default="datavia_config.py", help="Configuration file path"
-)
-@click.option(
-    "--dry-run", is_flag=True, help="Show what would be installed without installing"
-)
-def install(config_file: str, dry_run: bool) -> None:
-    """Install dependencies for pipelines specified in configuration."""
-    pipeline_names = get_available_pipelines(config_file)
-    if not pipeline_names:
-        logger.error(f"Configuration file not found: {config_file}")
-        logger.info("Run 'datavia config init' to create a configuration first.")
-        return
-
-    if dry_run:
-        logger.info("=== DRY RUN - No actual installation ===")
-        logger.info(f"Would install dependencies for: {', '.join(pipeline_names)}")
-        for pipeline_name in pipeline_names:
-            dependencies = get_pipeline_dependencies(pipeline_name)
-            logger.info(f"  {pipeline_name}: {', '.join(dependencies)}")
-        return
-
-    logger.info("📋 Checking dependencies for your configured pipelines...")
-    logger.info(f"Configured pipelines: {', '.join(pipeline_names)}\n")
-
-    # Check dependencies for each pipeline
-    needs_installation = []
-    for pipeline_name in pipeline_names:
-        if not install_pipeline_dependencies(pipeline_name):
-            needs_installation.append(pipeline_name)
-        logger.info("")  # Add spacing between pipelines
-
-    if needs_installation:
-        logger.info("🎯 SUMMARY:")
-        logger.info(f"Dependencies needed for: {', '.join(needs_installation)}")
-        logger.info("\n✨ Once dependencies are installed, you can use:")
-        for pipeline_name in pipeline_names:
-            logger.info(f"   datavia update {pipeline_name}")
-    else:
-        logger.info("🎉 All pipelines ready! You can now run update commands:")
-        for pipeline_name in pipeline_names:
-            logger.info(f"   datavia update {pipeline_name}")
 
 
 if __name__ == "__main__":
