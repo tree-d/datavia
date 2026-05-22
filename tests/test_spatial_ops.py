@@ -1,10 +1,11 @@
 """Tests for spatial operations library functions."""
 
+from unittest.mock import patch
+
 import numpy as np
 import pytest
 import rasterio
 from rasterio.transform import from_bounds
-from unittest.mock import patch
 
 from datavia.library.spatial_ops import reproject_tiff
 
