@@ -397,7 +397,7 @@ def write_parquet(records: list[dict[str, Any]], path: str) -> None:
         If *records* is empty.
     """
     try:
-        import pandas as pd
+        import pandas as pd  # noqa: PLC0415 — deferred: pandas is an optional dependency
     except ImportError as exc:
         raise ImportError(
             "pandas is required for write_parquet. "
@@ -445,7 +445,7 @@ def read_parquet_time_range(
         If *variable* column is absent in the Parquet file.
     """
     try:
-        import pandas as pd
+        import pandas as pd  # noqa: PLC0415 — deferred: pandas is an optional dependency
     except ImportError as exc:
         raise ImportError(
             "pandas is required for read_parquet_time_range. "

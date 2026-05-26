@@ -114,7 +114,7 @@ SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
 # ---------------------------------------------------------------------------
 
 
-def get_grid_downloader_class(source_name: str) -> "type[Downloader] | None":
+def get_grid_downloader_class(source_name: str) -> type[Downloader] | None:
     """Return the grid downloader class registered for *source_name*.
 
     Parameters

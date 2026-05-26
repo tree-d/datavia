@@ -19,6 +19,7 @@ Covers (all without network access or real files):
 
 from __future__ import annotations
 
+from typing import ClassVar
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -451,7 +452,7 @@ class TestGetterWeather:
 class TestCompositeWeatherDownloader:
     """Tests for the composite downloader structure and delegation."""
 
-    _BASE_CFG: dict = {
+    _BASE_CFG: ClassVar[dict] = {
         "variables": ["2m_temperature"],
         "date_start": "2024-01-01",
         "date_end": "2024-01-31",
@@ -826,7 +827,7 @@ class TestUnitConversions:
         """86400 J m⁻² day⁻¹ should equal 0.5 * 4.57 µmol m⁻² s⁻¹."""
         from datavia.library.unit_conversions import ssrd_to_par
 
-        # 86400 J/m²/day ÷ 86400 s/day × 0.5 × 4.57 = 2.285 µmol/m²/s
+        # 86400 J/m2/day / 86400 s/day x 0.5 x 4.57 = 2.285 umol/m2/s
         expected = 1.0 * 0.5 * 4.57
         assert ssrd_to_par(86400.0) == pytest.approx(expected)
 
@@ -892,8 +893,8 @@ class TestInterpolateStationParquetIndexAlignment:
         )
 
         # The result should be a valid number close to the near stations'
-        # values (20–22 °C), not NaN and not a spurious out-of-range value.
-        assert not (result != result), "Result must not be NaN"
+        # values (20-22 degrees C), not NaN and not a spurious out-of-range value.
+        assert result == result, "Result must not be NaN"
         assert 19.0 < result < 23.0, f"Unexpected IDW result: {result}"
 
     def test_no_stations_returns_nan(self, tmp_path) -> None:

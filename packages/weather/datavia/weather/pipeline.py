@@ -169,8 +169,8 @@ class WeatherPipeline(Pipeline):
         if not self.downloader or not self.saver:
             self()
 
-        assert self.downloader is not None
-        assert self.saver is not None
+        assert self.downloader is not None  # nosec B101
+        assert self.saver is not None  # nosec B101
 
         combined_paths = self.downloader.download()
         if combined_paths == "failed":
@@ -223,8 +223,8 @@ class WeatherPipeline(Pipeline):
         if not self.getter:
             self()
 
-        assert self.getter is not None
-        assert isinstance(self.getter, GetterWeather)
+        assert self.getter is not None  # nosec B101
+        assert isinstance(self.getter, GetterWeather)  # nosec B101
 
         return self.getter.get_weather_data(
             lat=lat,
@@ -268,7 +268,7 @@ class WeatherPipeline(Pipeline):
         if not self.getter:
             self()
 
-        assert self.getter is not None
+        assert self.getter is not None  # nosec B101
 
         return self.getter.get_data(
             coords=coords,
@@ -308,7 +308,7 @@ class WeatherPipeline(Pipeline):
         if not self.saver:
             self()
 
-        assert self.saver is not None
-        assert isinstance(self.saver, SaverWeather)
+        assert self.saver is not None  # nosec B101
+        assert isinstance(self.saver, SaverWeather)  # nosec B101
 
         return self.saver.sync_files_and_database()

@@ -24,7 +24,7 @@ try:
 
     PANDAS_AVAILABLE = True
 except ImportError:  # pragma: no cover - optional dependency
-    pd = None  # type: ignore[assignment]
+    pd = None
     PANDAS_AVAILABLE = False
 
 try:

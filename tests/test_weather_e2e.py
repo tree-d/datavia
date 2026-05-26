@@ -10,7 +10,7 @@ These tests exercise real remote services:
 - **HYRAS via DWD OpenData** (no auth required): the fast test only fetches
   the DWD HTML directory listing to verify version auto-discovery; the slow
   full-file download is gated behind ``DATAVIA_E2E_SLOW=1`` because each
-  annual NetCDF is 20–110 MB.
+  annual NetCDF is 20-110 MB.
 - **HYRAS via DWD OpenData** (no auth required): tests version auto-discovery
   against the live DWD directory listing; the full file download is gated
   behind ``DATAVIA_E2E_SLOW=1`` because each annual NetCDF is 20-110 MB.

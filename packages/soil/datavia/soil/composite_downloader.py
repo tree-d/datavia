@@ -195,7 +195,7 @@ class CompositeDownloader(CompositeDownloaderABC):
             Path to the first successfully downloaded file across either
             backend, or ``"failed"`` if nothing could be downloaded.
         """
-        import tempfile  # noqa: PLC0415 — deferred: this method is an interface-only edge-case
+        import tempfile
 
         with tempfile.TemporaryDirectory() as temp_dir:
             results = self.download_coverages(self.get_coverage_ids(), temp_dir)

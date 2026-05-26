@@ -347,7 +347,7 @@ class Pipeline:
             If neither a URL nor any arguments are provided.
         """
         if self.url:
-            self.downloader = self.downloader_class(self.url)
+            self.downloader = self.downloader_class(self.url)  # type: ignore[call-arg]
         elif args or kwds:
             self.downloader = self.downloader_class(*args, **kwds)
         else:

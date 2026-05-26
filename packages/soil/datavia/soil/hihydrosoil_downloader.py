@@ -240,8 +240,8 @@ class HiHydroSoilDownloader(Downloader):
             strings, e.g.
             ``{"field_capacity": ["0-5cm", "5-15cm", ...], ...}``.
         """
-        import re  # noqa: PLC0415 — deferred: avoid cost at module import
-        import urllib.request  # noqa: PLC0415 — deferred: avoid cost at module import
+        import re
+        import urllib.request
 
         prefix_to_canonical = {v: k for k, v in self._CANONICAL_TO_PREFIX.items()}
         catalogue: dict[str, set[str]] = {}

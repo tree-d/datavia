@@ -17,6 +17,8 @@ keeping ``interpolation.py`` free of source-specific knowledge.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import numpy as np
 
 # ---------------------------------------------------------------------------
@@ -116,7 +118,7 @@ def ssrd_to_par(ssrd_daily_j_m2: np.ndarray | float) -> np.ndarray | float:
 
 #: Maps ERA5 variable names to their conversion function.
 #: Variables not listed here are returned unchanged.
-_CONVERSION_MAP: dict[str, callable] = {  # type: ignore[type-arg]
+_CONVERSION_MAP: dict[str, Callable[[float | np.ndarray], float | np.ndarray]] = {
     "2m_temperature": kelvin_to_celsius,
     "total_precipitation": precipitation_m_to_mm,
     "surface_solar_radiation_downwards": ssrd_to_par,
