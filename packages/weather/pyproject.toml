@@ -29,6 +29,7 @@ dependencies = [
     "netCDF4>=1.7,<2",
     "pyarrow>=14.0",
     "pandas>=2.2.0,<3",
+    "cdsapi>=0.7.7,<0.8",
 ]
 
 # ERA5 downloads require a valid ~/.cdsapirc credentials file.
