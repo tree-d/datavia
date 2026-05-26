@@ -256,7 +256,7 @@ class GetterWeather(Getter):
             else np.full(n_coords, np.nan)
         )
 
-        # --- Gridded NetCDF path (BUG-05 fix: single batch call for all coords) ---
+        # --- Gridded NetCDF path (single batch call for all coords) ---
         if nc_files:
             try:
                 nc_variable = get_nc_variable_name(self.source_name, variable)

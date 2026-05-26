@@ -24,15 +24,15 @@ logger = logging.getLogger(__name__)
 #: Open-Meteo historical weather API endpoint.
 _OPEN_METEO_URL: str = "https://archive-api.open-meteo.com/v1/archive"
 
-#: Default DWD stations (WMO IDs) covering the German climate regions.
+#: Default DWD station locations covering the German climate regions.
 #: A more complete list can be generated at runtime from the Open-Meteo
 #: station index, but these representative stations are used as a bootstrap.
 _DEFAULT_STATIONS: list[dict[str, Any]] = [
-    {"id": "Berlin", "latitude": 52.52, "longitude": 13.41},
-    {"id": "Munich", "latitude": 48.14, "longitude": 11.58},
-    {"id": "Hamburg", "latitude": 53.55, "longitude": 10.0},
-    {"id": "Frankfurt", "latitude": 50.11, "longitude": 8.68},
-    {"id": "Cologne", "latitude": 50.94, "longitude": 6.96},
+    {"name": "Berlin", "latitude": 52.52, "longitude": 13.41},
+    {"name": "Munich", "latitude": 48.14, "longitude": 11.58},
+    {"name": "Hamburg", "latitude": 53.55, "longitude": 10.0},
+    {"name": "Frankfurt", "latitude": 50.11, "longitude": 8.68},
+    {"name": "Cologne", "latitude": 50.94, "longitude": 6.96},
 ]
 
 
@@ -65,7 +65,7 @@ class DWDStationDownloader(APIDownloader):
         date_end : date or str, optional
             End date for the download (inclusive). Defaults to today.
         stations : list[dict[str, Any]], optional
-            Station dicts, each with keys ``id``, ``latitude``, ``longitude``.
+            Station dicts, each with keys ``name``, ``latitude``, ``longitude``.
             Defaults to :data:`_DEFAULT_STATIONS`.
         **kwargs : Any
             Additional keyword arguments forwarded to
@@ -120,7 +120,7 @@ class DWDStationDownloader(APIDownloader):
             }
             logger.info(
                 "Requesting DWD data for station '%s' (%s to %s)",
-                station["id"],
+                station["name"],
                 self.date_start,
                 self.date_end,
             )
@@ -128,7 +128,7 @@ class DWDStationDownloader(APIDownloader):
             if response.status_code != 200:
                 raise RuntimeError(
                     f"Open-Meteo API returned {response.status_code} for "
-                    f"station '{station['id']}': {response.text[:200]}"
+                    f"station '{station['name']}': {response.text[:200]}"
                 )
 
             payload = response.json()
@@ -136,7 +136,7 @@ class DWDStationDownloader(APIDownloader):
             timestamps = hourly.get("time", [])
             for i, ts in enumerate(timestamps):
                 row: dict[str, Any] = {
-                    "station_id": station["id"],
+                    "station_id": station["name"],
                     "latitude": station["latitude"],
                     "longitude": station["longitude"],
                     "datetime": ts,

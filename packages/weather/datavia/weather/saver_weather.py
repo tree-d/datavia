@@ -150,8 +150,7 @@ class SaverWeather(Saver):
                 # Derive a descriptive stem from the file content BEFORE
                 # copying so the permanent filename reflects what is actually
                 # inside the file rather than the random temp-path stem
-                # produced by tempfile.mkstemp (BUG-07: naming responsibility
-                # moved from downloader to saver).
+                # produced by tempfile.mkstemp.
                 dest_stem = _build_dest_stem(data_path, file_format, self.source_name)
                 dest_path = os.path.join(self.data_dir, f"{dest_stem}{ext}")
                 shutil.copy2(data_path, dest_path)

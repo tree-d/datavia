@@ -23,14 +23,14 @@ classifiers = [
 ]
 dependencies = [
     "datavia>=1.0.0.dev0,<2.0",
-    "requests>=2.32.3,<3.0",
-    "numpy>=2.0.0,<3",
-    "xarray>=2024.0,<2027",
     "netCDF4>=1.7,<2",
-    "pyarrow>=14.0",
+    "numpy>=2.0.0,<3",
     "pandas>=2.2.0,<3",
+    "pyarrow>=14.0",
+    "requests>=2.32.3,<3.0",
     "shapely>=2.0.4,<3.0",
     "tqdm>=4.66,<5",
+    "xarray>=2024.0,<2027",
 ]
 
 # ERA5 downloads require a valid ~/.cdsapirc credentials file.

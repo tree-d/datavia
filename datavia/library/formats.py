@@ -342,7 +342,7 @@ def extract_netcdf_layer_metadata(filepath: str) -> dict[str, Any]:
                 valid_from = str(time_vals.min().values)
                 # Round the last time step up to end-of-day (23:59:59) so
                 # that annual queries succeed even when a variable's final
-                # daily value is stored earlier in the day (BUG-06: HYRAS pr
+                # daily value is stored earlier in the day (e.g. HYRAS pr
                 # ends at 06:00 UTC on 31 December).
                 import pandas as pd  # noqa: PLC0415 — deferred: guaranteed by xarray
 

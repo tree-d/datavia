@@ -287,7 +287,7 @@ def _prefill_nodata(da: "xr.DataArray") -> "xr.DataArray":
     Propagates valid values outward in all four axis directions (forward and
     backward along both spatial axes).  This ensures that bilinear (or cubic)
     interpolation stencils touching the domain boundary always have a finite
-    value to work with, eliminating NaN propagation at domain edges (BUG-08).
+    value to work with, eliminating NaN propagation at domain edges.
 
     The approach is an approximation: cells filled by this method receive the
     nearest value along one of the four cardinal directions, not the globally
@@ -340,10 +340,10 @@ def interpolate_netcdf(
     r"""Sample a NetCDF variable at one or more geographic points.
 
     Opens the file **once** with xarray and interpolates all coordinates in a
-    single vectorised call, eliminating per-point file-open overhead (BUG-05).
+    single vectorised call, eliminating per-point file-open overhead.
     Before interpolation, nodata cells are replaced with the nearest valid
     neighbour so that bilinear stencils touching domain boundaries always have
-    finite values (BUG-08).
+    finite values.
 
     Supports both geographic coordinate files (ERA5: ``latitude``/``longitude``
     dimensions in degrees) and projected coordinate files (HYRAS: ``x``/``y``
@@ -423,11 +423,11 @@ def interpolate_netcdf(
             )
 
         # Pre-fill nodata cells so bilinear stencils at domain edges are
-        # always finite (BUG-08 fix).
+        # always finite.
         da = _prefill_nodata(ds[variable])
 
         # Build vectorised spatial interpolation coordinates for all N points
-        # in one batch — single pyproj call, single xarray interp call (BUG-05).
+        # in one batch — single pyproj call, single xarray interp call.
         interp_coords = _build_spatial_interp_coords(
             ds, variable, lats_arr, lons_arr, input_crs
         )

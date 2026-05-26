@@ -308,7 +308,7 @@ class WeatherPipeline(Pipeline):
                 "Call the pipeline instance (pipe()) before update_data()."
             )
 
-        # Reconcile disk with DB before checking what to download (BUG-01 fix).
+        # Reconcile disk with DB before checking what to download.
         self.sync_files_and_database()
 
         # Compute the uncovered (bbox, date_range) cells before issuing any
