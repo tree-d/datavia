@@ -4,18 +4,17 @@ This section contains documentation for developers and contributors to the Datav
 
 ## Setup & Environment
 
-- [Local Development Setup](local-setup.md) - How to set up your development environment
-- [CI/CD Pipeline](ci-cd-pipeline.md) - Understanding our automated workflows
+- [Local Development Setup](local-setup.md) — How to set up your development environment
+- [CI/CD Pipeline](ci-cd-pipeline.md) — Understanding our automated workflows
 
 ## Standards & Guidelines
 
-- [Coding Standards](coding-standards.md) - Code quality and style guidelines
+- [Coding Standards](coding-standards.md) — Code quality and style guidelines
 
-## Architecture
+## Weather Pipeline
 
-- Project structure and design decisions
-- Multi-package namespace architecture
-- Extension development guidelines
+- [Next Steps](weather_next_steps.md) — Active plan: open bugs, Step 9 (ERA5 chunking), deferred Step 8 items
+- [ERA5 Issue Report](era5_pipeline_issue_report.md) — Root cause analysis for ERA5 variable-name and `valid_time` bugs
 
 ---
 
