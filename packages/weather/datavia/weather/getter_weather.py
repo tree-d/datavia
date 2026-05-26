@@ -78,6 +78,7 @@ class GetterWeather(Getter):
         self,
         source_name: str,
         unit_overrides: dict[str, dict[str, str]] | None = None,
+        temporal_resolution: str = "daily",
     ) -> None:
         """Initialise getter with the source identifier and optional unit overrides.
 
@@ -93,9 +94,14 @@ class GetterWeather(Getter):
             precedence over the registry defaults for matched variable names.
             Forwarded from ``config["unit_conversions"]`` by
             :class:`WeatherPipeline`.
+        temporal_resolution : str, optional
+            ``"daily"`` (default) or ``"hourly"``.  Forwarded to
+            :func:`~datavia.library.interpolation.interpolate_netcdf` for
+            each query.
         """
         self.source_name: str = source_name
         self._unit_overrides: dict[str, dict[str, str]] | None = unit_overrides
+        self._temporal_resolution: str = temporal_resolution
 
     # ------------------------------------------------------------------
     # Getter interface
@@ -156,10 +162,11 @@ class GetterWeather(Getter):
         ----------
         coords : np.ndarray
             Coordinate array of shape ``(N, 2)`` as ``[longitude, latitude]``
-            pairs in EPSG:4326.
+            (or ``[easting, northing]``) pairs in *crs_coords*.
         crs_coords : str, optional
-            CRS of the input coordinates. Only ``"EPSG:4326"`` is supported
-            for weather data. Defaults to ``"EPSG:4326"``.
+            CRS of the input coordinates, e.g. ``"EPSG:4326"`` (default) or
+            ``"EPSG:3035"``.  Any CRS understood by ``pyproj`` is accepted.
+            Coordinates are reprojected to the file's native CRS automatically.
         interpolation_order : int, optional
             Accepted for interface compatibility; not used. Defaults to 3.
         band : int, optional
@@ -168,24 +175,30 @@ class GetterWeather(Getter):
             Required keyword arguments:
 
             - ``variable`` (str): Variable name, e.g. ``"temperature_2m"``.
-            - ``datetime_utc`` (datetime-like): Target UTC timestamp (single)
-              or list of timestamps (time-series).
+            - ``datetime_utc`` (datetime-like or list): Target UTC timestamp
+              (single) or list of T timestamps for a batched time-series
+              query.  When a list is passed the return shape is ``(N, T)``
+              instead of ``(N,)``.
             - ``radius_km`` (float, optional): Station search radius in km.
-              Defaults to :data:`_DEFAULT_RADIUS_KM`.
-            - ``station_weight`` (float, optional): Blending weight for station
-              data. Defaults to :data:`_DEFAULT_STATION_WEIGHT`.
+              Defaults to :data:`_DEFAULT_RADIUS_KM`.  Ignored when
+              ``datetime_utc`` is a list (multi-timestamp station blending
+              is not supported).
+            - ``station_weight`` (float, optional): Blending weight for
+              station data. Defaults to :data:`_DEFAULT_STATION_WEIGHT`.
+              Ignored when ``datetime_utc`` is a list.
 
         Returns
         -------
         np.ndarray
-            Interpolated values at each coordinate, shape ``(N,)``.
+            - Shape ``(N,)`` when a single timestamp is supplied.
+            - Shape ``(N, T)`` when a list of T timestamps is supplied;
+              rows correspond to coordinates, columns to timestamps.
             Points outside the covered area or time window are ``NaN``.
 
         Raises
         ------
         ValueError
-            If ``variable`` or ``datetime_utc`` is not provided in *kwargs*,
-            or if ``crs_coords`` is not ``"EPSG:4326"``.
+            If ``variable`` or ``datetime_utc`` is not provided in *kwargs*.
         RuntimeError
             If no weather files are found for the requested variable / time.
         """
@@ -204,13 +217,13 @@ class GetterWeather(Getter):
             raise ValueError(
                 "GetterWeather.get_data requires 'datetime_utc' as a keyword argument."
             )
-        if crs_coords != "EPSG:4326":
-            raise ValueError(
-                f"GetterWeather only supports EPSG:4326 coordinates, "
-                f"got '{crs_coords}'."
-            )
-
         coords_arr = np.asarray(coords, dtype=float)
+        n_coords = len(coords_arr)
+        is_multi_time = (
+            isinstance(datetime_utc, (list, tuple)) and len(datetime_utc) > 1
+        )
+        n_times = len(datetime_utc) if is_multi_time else 1
+
         from_dt = (
             str(datetime_utc)
             if not isinstance(datetime_utc, (list, tuple))
@@ -236,7 +249,12 @@ class GetterWeather(Getter):
                 f"Run the pipeline update first."
             )
 
-        results = np.full(len(coords_arr), np.nan)
+        # Multi-timestamp path: returns shape (N, T); single-timestamp: shape (N,).
+        results = (
+            np.full((n_coords, n_times), np.nan)
+            if is_multi_time
+            else np.full(n_coords, np.nan)
+        )
 
         # --- Gridded NetCDF path (BUG-05 fix: single batch call for all coords) ---
         if nc_files:
@@ -245,24 +263,50 @@ class GetterWeather(Getter):
                 lats = coords_arr[:, 1]
                 lons = coords_arr[:, 0]
                 raw_batch = interpolate_netcdf(
-                    nc_files[0], lats, lons, nc_variable, datetime_utc
+                    nc_files[0],
+                    lats,
+                    lons,
+                    nc_variable,
+                    datetime_utc,
+                    input_crs=crs_coords,
+                    temporal_resolution=self._temporal_resolution,
                 )
-                # raw_batch shape: (N,) for a single timestamp; scalar when N=1.
-                raw_arr = np.atleast_1d(np.asarray(raw_batch, dtype=float))
-                for i, raw_val in enumerate(raw_arr):
-                    if not np.isnan(raw_val):
-                        results[i] = float(
-                            apply_conversion(
-                                self.source_name,
-                                variable,
-                                raw_val,
-                                self._unit_overrides,
+                if is_multi_time:
+                    # interpolate_netcdf returns (T, N) when timestamps is a list;
+                    # normalise to (N, T) so callers always get coords-first layout.
+                    raw_arr = np.asarray(raw_batch, dtype=float)
+                    if (
+                        raw_arr.ndim == 2
+                        and raw_arr.shape[0] == n_times
+                        and raw_arr.shape[0] != n_coords
+                    ):
+                        raw_arr = raw_arr.T  # (T, N) → (N, T)
+                    converted = apply_conversion(
+                        self.source_name, variable, raw_arr, self._unit_overrides
+                    )
+                    results = np.asarray(converted, dtype=float)
+                else:
+                    # raw_batch shape: (N,) for a single timestamp; scalar when N=1.
+                    raw_arr = np.atleast_1d(np.asarray(raw_batch, dtype=float))
+                    for i, raw_val in enumerate(raw_arr):
+                        if not np.isnan(raw_val):
+                            results[i] = float(
+                                apply_conversion(
+                                    self.source_name,
+                                    variable,
+                                    raw_val,
+                                    self._unit_overrides,
+                                )
                             )
-                        )
             except Exception as exc:
                 logger.warning("NetCDF batch interpolation failed: %s", exc)
 
-        # --- Station Parquet path (still per-coord; station IDW is inherently local) ---
+        # --- Station Parquet path: per-coord; only supported for a single timestamp ---
+        # Multi-timestamp station blending is not yet implemented; skip the station
+        # path when the caller supplies a list of times.
+        if is_multi_time:
+            return results
+
         for i, coord in enumerate(coords_arr):
             lon, lat = float(coord[0]), float(coord[1])
             station_val: float | None = None

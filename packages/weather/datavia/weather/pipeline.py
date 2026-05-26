@@ -58,7 +58,13 @@ _REQUIRED_CONFIG_KEYS: frozenset[str] = frozenset(
 
 #: All valid WeatherPipeline config keys (required + optional).
 _KNOWN_CONFIG_KEYS: frozenset[str] = _REQUIRED_CONFIG_KEYS | frozenset(
-    {"era5_bbox", "dwd_stations", "unit_conversions", "buffer_days"}
+    {
+        "era5_bbox",
+        "dwd_stations",
+        "unit_conversions",
+        "buffer_days",
+        "temporal_resolution",
+    }
 )
 
 
@@ -139,6 +145,7 @@ class WeatherPipeline(Pipeline):
         self.getter = GetterWeather(
             self.name,
             unit_overrides=self._config.get("unit_conversions"),
+            temporal_resolution=self._config.get("temporal_resolution", "daily"),
         )
         return self
 

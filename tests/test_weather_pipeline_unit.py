@@ -1480,3 +1480,312 @@ class TestInterpolateNetcdf:
         nc = self._make_geographic_nc(tmp_path)
         with pytest.raises(KeyError, match="no_such_var"):
             interpolate_netcdf(nc, 49.0, 11.0, "no_such_var", "2024-06-15T12:00:00")
+
+
+# ---------------------------------------------------------------------------
+# interpolate_netcdf — input_crs parameter (Enhancement 1 / Step 5)
+# ---------------------------------------------------------------------------
+
+
+class TestInterpolateNetcdfCRS:
+    """Tests for the ``input_crs`` parameter of :func:`~datavia.library.interpolation.interpolate_netcdf`.
+
+    Verifies that input coordinates in any pyproj-compatible CRS are
+    reprojected correctly to the file's native CRS before interpolation.
+    All tests use synthetic NetCDF files written to ``tmp_path``.
+    """
+
+    @staticmethod
+    def _make_geographic_nc(tmp_path) -> str:
+        """Write a tiny ERA5-style geographic NetCDF to *tmp_path*.
+
+        Parameters
+        ----------
+        tmp_path : pathlib.Path
+            Temporary directory for the file.
+
+        Returns
+        -------
+        str
+            Absolute path to the written file.
+        """
+        import xarray as xr
+
+        lats = np.array([47.0, 48.0, 49.0, 50.0, 51.0], dtype=float)
+        lons = np.array([9.0, 10.0, 11.0, 12.0, 13.0], dtype=float)
+        times = np.array(["2024-06-15T12:00:00"], dtype="datetime64[ns]")
+        data = np.ones((1, len(lats), len(lons)), dtype=float) * 20.0
+        da = xr.DataArray(
+            data,
+            dims=["time", "latitude", "longitude"],
+            coords={"time": times, "latitude": lats, "longitude": lons},
+        )
+        ds = xr.Dataset({"t2m": da})
+        path = str(tmp_path / "era5_crs.nc")
+        ds.to_netcdf(path)
+        return path
+
+    def test_default_input_crs_is_epsg4326(self, tmp_path) -> None:
+        """Omitting input_crs returns the same value as passing EPSG:4326 explicitly.
+
+        Parameters
+        ----------
+        tmp_path : pathlib.Path
+            pytest-provided temporary directory.
+        """
+        from datavia.library.interpolation import interpolate_netcdf
+
+        nc = self._make_geographic_nc(tmp_path)
+        result_default = interpolate_netcdf(
+            nc, 49.0, 11.0, "t2m", "2024-06-15T12:00:00"
+        )
+        result_explicit = interpolate_netcdf(
+            nc, 49.0, 11.0, "t2m", "2024-06-15T12:00:00", input_crs="EPSG:4326"
+        )
+        assert result_default == pytest.approx(result_explicit)
+
+    def test_epsg3035_geographic_file_matches_wgs84_result(self, tmp_path) -> None:
+        """EPSG:3035 input for a geographic file gives the same result as EPSG:4326.
+
+        The EPSG:3035 equivalent of (lat=49.0, lon=11.0) is computed via pyproj
+        and passed with ``input_crs="EPSG:3035"``.  The returned value must
+        match the WGS84 query within floating-point tolerance.
+
+        Parameters
+        ----------
+        tmp_path : pathlib.Path
+            pytest-provided temporary directory.
+        """
+        import pyproj
+
+        from datavia.library.interpolation import interpolate_netcdf
+
+        nc = self._make_geographic_nc(tmp_path)
+        lat_wgs84, lon_wgs84 = 49.0, 11.0
+
+        t = pyproj.Transformer.from_crs("EPSG:4326", "EPSG:3035", always_xy=True)
+        x_3035, y_3035 = t.transform(lon_wgs84, lat_wgs84)
+
+        result_wgs84 = interpolate_netcdf(
+            nc, lat_wgs84, lon_wgs84, "t2m", "2024-06-15T12:00:00"
+        )
+        result_3035 = interpolate_netcdf(
+            nc, y_3035, x_3035, "t2m", "2024-06-15T12:00:00", input_crs="EPSG:3035"
+        )
+
+        assert result_3035 == pytest.approx(result_wgs84, abs=1e-4)
+
+    def test_getter_weather_accepts_non_wgs84_crs(self) -> None:
+        """GetterWeather.get_data() no longer raises for non-EPSG:4326 input.
+
+        The old guard that raised ValueError for any CRS other than EPSG:4326
+        has been removed.  This test verifies that the call reaches
+        ``interpolate_netcdf`` with the correct ``input_crs`` keyword argument.
+        """
+        from datavia.weather.getter_weather import GetterWeather
+
+        getter = GetterWeather("HYRAS")
+        coords = np.array([[4_100_000.0, 3_200_000.0]])  # arbitrary EPSG:3035 coords
+
+        with (
+            patch(
+                "datavia.weather.getter_weather.get_weather_paths",
+                return_value=["/fake/file.nc"],
+            ),
+            patch(
+                "datavia.weather.getter_weather.interpolate_netcdf",
+                return_value=np.array([15.0]),
+            ) as mock_interp,
+            patch(
+                "datavia.weather.getter_weather.get_nc_variable_name",
+                return_value="tas",
+            ),
+            patch(
+                "datavia.weather.getter_weather.apply_conversion",
+                side_effect=lambda s, v, val, u: val,
+            ),
+        ):
+            getter.get_data(
+                coords,
+                crs_coords="EPSG:3035",
+                variable="2m_temperature",
+                datetime_utc="2024-06-15",
+            )
+
+        assert mock_interp.call_args.kwargs.get("input_crs") == "EPSG:3035", (
+            "input_crs was not forwarded to interpolate_netcdf"
+        )
+
+
+# ---------------------------------------------------------------------------
+# interpolate_netcdf — temporal_resolution parameter (Enhancement 2 / Step 6)
+# ---------------------------------------------------------------------------
+
+
+class TestTemporalResolution:
+    """Tests for the ``temporal_resolution`` parameter and the HYRAS hourly guard.
+
+    Covers:
+
+    - ``"daily"`` returns a scalar (unchanged behaviour).
+    - ``"hourly"`` returns a 1-D time-series for all sub-daily steps in the
+      requested day.
+    - Unknown resolution values raise :exc:`ValueError`.
+    - :class:`~datavia.weather.hyras_downloader.HYRASDownloader` raises
+      :exc:`ValueError` immediately when ``temporal_resolution="hourly"``.
+    - :class:`~datavia.weather.getter_weather.GetterWeather` forwards
+      ``temporal_resolution`` to ``interpolate_netcdf``.
+    """
+
+    @staticmethod
+    def _make_hourly_nc(tmp_path) -> str:
+        """Write a synthetic NetCDF with 24 hourly time steps to *tmp_path*.
+
+        Parameters
+        ----------
+        tmp_path : pathlib.Path
+            Temporary directory.
+
+        Returns
+        -------
+        str
+            Absolute path to the written file.
+        """
+        import xarray as xr
+
+        lats = np.array([48.0, 49.0, 50.0], dtype=float)
+        lons = np.array([10.0, 11.0, 12.0], dtype=float)
+        times = np.array(
+            [f"2024-06-15T{h:02d}:00:00" for h in range(24)],
+            dtype="datetime64[ns]",
+        )
+        data = np.ones((24, len(lats), len(lons)), dtype=float) * 20.0
+        da = xr.DataArray(
+            data,
+            dims=["time", "latitude", "longitude"],
+            coords={"time": times, "latitude": lats, "longitude": lons},
+        )
+        ds = xr.Dataset({"t2m": da})
+        path = str(tmp_path / "hourly.nc")
+        ds.to_netcdf(path)
+        return path
+
+    def test_daily_resolution_returns_scalar(self, tmp_path) -> None:
+        """``temporal_resolution="daily"`` returns the nearest single step as a scalar.
+
+        Parameters
+        ----------
+        tmp_path : pathlib.Path
+            pytest-provided temporary directory.
+        """
+        from datavia.library.interpolation import interpolate_netcdf
+
+        nc = self._make_hourly_nc(tmp_path)
+        result = interpolate_netcdf(
+            nc,
+            49.0,
+            11.0,
+            "t2m",
+            "2024-06-15T12:00:00",
+            temporal_resolution="daily",
+        )
+        assert isinstance(result, float)
+        assert np.isfinite(result)
+
+    def test_hourly_resolution_returns_time_series(self, tmp_path) -> None:
+        """``temporal_resolution="hourly"`` returns all 24 sub-daily steps as an array.
+
+        Parameters
+        ----------
+        tmp_path : pathlib.Path
+            pytest-provided temporary directory.
+        """
+        from datavia.library.interpolation import interpolate_netcdf
+
+        nc = self._make_hourly_nc(tmp_path)
+        result = interpolate_netcdf(
+            nc,
+            49.0,
+            11.0,
+            "t2m",
+            "2024-06-15T06:00:00",
+            temporal_resolution="hourly",
+        )
+        assert isinstance(result, np.ndarray), (
+            f"Expected ndarray for hourly resolution, got {type(result)}"
+        )
+        assert result.ndim == 1
+        assert result.shape[0] == 24, f"Expected 24 hourly steps, got {result.shape[0]}"
+        np.testing.assert_allclose(result, 20.0, atol=1e-6)
+
+    def test_unknown_resolution_raises_value_error(self, tmp_path) -> None:
+        """An unrecognised ``temporal_resolution`` value raises :exc:`ValueError`.
+
+        Parameters
+        ----------
+        tmp_path : pathlib.Path
+            pytest-provided temporary directory.
+        """
+        from datavia.library.interpolation import interpolate_netcdf
+
+        nc = self._make_hourly_nc(tmp_path)
+        with pytest.raises(ValueError, match="temporal_resolution"):
+            interpolate_netcdf(
+                nc,
+                49.0,
+                11.0,
+                "t2m",
+                "2024-06-15T00:00:00",
+                temporal_resolution="minutely",
+            )
+
+    def test_hyras_hourly_raises_at_init(self) -> None:
+        """HYRASDownloader raises :exc:`ValueError` on ``temporal_resolution='hourly'``.
+
+        HYRAS provides daily-only data so hourly is unsupported.  The error
+        is raised in ``__init__`` before any network access occurs.
+        """
+        from datavia.weather.hyras_downloader import HYRASDownloader
+
+        with pytest.raises(ValueError, match="hourly"):
+            HYRASDownloader(
+                variables=["2m_temperature"],
+                date_start="2024-01-01",
+                date_end="2024-12-31",
+                temporal_resolution="hourly",
+            )
+
+    def test_getter_forwards_temporal_resolution(self) -> None:
+        """GetterWeather passes its configured temporal_resolution to interpolate_netcdf."""
+        from datavia.weather.getter_weather import GetterWeather
+
+        getter = GetterWeather("ERA5_land", temporal_resolution="hourly")
+        coords = np.array([[11.0, 49.0]])
+
+        with (
+            patch(
+                "datavia.weather.getter_weather.get_weather_paths",
+                return_value=["/fake/era5.nc"],
+            ),
+            patch(
+                "datavia.weather.getter_weather.interpolate_netcdf",
+                return_value=np.array([20.0]),
+            ) as mock_interp,
+            patch(
+                "datavia.weather.getter_weather.get_nc_variable_name",
+                return_value="2m_temperature",
+            ),
+            patch(
+                "datavia.weather.getter_weather.apply_conversion",
+                side_effect=lambda s, v, val, u: val,
+            ),
+        ):
+            getter.get_data(
+                coords,
+                variable="2m_temperature",
+                datetime_utc="2024-06-15",
+            )
+
+        assert mock_interp.call_args.kwargs.get("temporal_resolution") == "hourly", (
+            "temporal_resolution was not forwarded to interpolate_netcdf"
+        )

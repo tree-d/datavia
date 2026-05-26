@@ -5,9 +5,10 @@
 > (bugs) and `weather_further_enhancements.md` (features).
 >
 > **Current state:** Pipeline is functionally correct and produces
-> climatologically plausible results.  Steps 1, 2, 3, and 4 (BUG-06,
-> BUG-01/09/10, BUG-07, BUG-05/08) are **done**.  All blocking and significant
-> bugs have been fixed.  Enhancements build on top of a clean bug-free base.
+> climatologically plausible results.  Steps 1–6 are **done**:  all blocking
+> bugs have been fixed and the first two enhancements (CRS-agnostic input,
+> configurable temporal resolution) are implemented.  Steps 7 → 9 are the
+> remaining work.
 
 ---
 
@@ -319,41 +320,65 @@ Enhancement roadmap, not blocking for the bug fix).
 
 ---
 
-## Step 5 — Enhancement 1: wire the CRS stub *(quick win)*
+## ✅ Step 5 — Enhancement 1: wire the CRS stub *(done — 2026-04-29)*
 
-The `crs_coords` parameter already exists on `GetterWeather.get_data()` but
-raises `ValueError` for anything other than `"EPSG:4326"`.  After the BUG-05
-rewrite, `interpolate_netcdf` already has all coordinates flowing through a
-pyproj transformer.  Wiring the stub requires:
+The `crs_coords` guard in `GetterWeather.get_data()` that rejected anything
+other than `"EPSG:4326"` has been removed.  Both branches of
+`_build_spatial_interp_coords()` now accept an `input_crs` parameter:
 
-1. Remove the guard in `get_data()` that rejects non-EPSG:4326 input.
-2. Pass `crs_coords` to `interpolate_netcdf` as a `input_crs` parameter.
-3. Inside `interpolate_netcdf`, reproject from `input_crs → file_crs` instead
-   of always assuming `EPSG:4326 → file_crs`.
+- **Projected grid (HYRAS EPSG:3035):** the pyproj transformer source CRS is
+  now `input_crs` instead of the hardcoded `"EPSG:4326"`.
+- **Geographic grid (ERA5):** when `input_crs != "EPSG:4326"`, coordinates are
+  reprojected to WGS84 degrees before being passed to xarray.  EPSG:4326
+  input is passed through unchanged (no transform call).
 
-This is a small change on top of the BUG-05 rewrite.
+`interpolate_netcdf()` gains an `input_crs: str = "EPSG:4326"` parameter and
+forwards it to `_build_spatial_interp_coords()`.  `get_data()` passes
+`crs_coords` as `input_crs=crs_coords`.
 
-**Files changed:** `packages/weather/datavia/weather/getter_weather.py`,
-`datavia/library/interpolation.py`
+**Tests added:** `tests/test_weather_pipeline_unit.py` —
+`TestInterpolateNetcdfCRS` (3 tests):
+- `test_default_input_crs_is_epsg4326` — omitting the param gives the same result.
+- `test_epsg3035_geographic_file_matches_wgs84_result` — EPSG:3035 reprojected input matches WGS84 query.
+- `test_getter_weather_accepts_non_wgs84_crs` — `GetterWeather` no longer raises; forwards `input_crs`.
+
+**Files changed:** `datavia/library/interpolation.py`,
+`packages/weather/datavia/weather/getter_weather.py`
 
 ---
 
-## Step 6 — Enhancement 2: configurable temporal resolution *(simple config key)*
+## ✅ Step 6 — Enhancement 2: configurable temporal resolution *(done — 2026-04-29)*
 
-Add `"temporal_resolution"` as a config key with two values: `"daily"`
-(default, current behaviour) and `"hourly"`.
+`"temporal_resolution"` is now a recognised pipeline config key with two
+values:
 
-- `"daily"`: no change to existing code path.
-- `"hourly"`: `interpolate_netcdf` returns all time steps in the day as an
-  `xr.DataArray` keyed by `valid_time` rather than selecting the nearest.
-- `HYRASDownloader` raises `ValueError` immediately on `"hourly"` since HYRAS
-  is daily-only.
+- `"daily"` (default): unchanged behaviour — nearest single time step.
+- `"hourly"`: `interpolate_netcdf` selects all sub-daily time steps within
+  the requested calendar day via a `pd.Timestamp.normalize()` day-slice, and
+  returns an `(N, T)` array.
 
-This is self-contained and does not interact with any other pending change.
+`HYRASDownloader.__init__()` raises `ValueError` immediately when
+`temporal_resolution="hourly"` because HYRAS is daily-only.
+
+The config key is threaded from `_KNOWN_CONFIG_KEYS` in `pipeline.py` →
+`GetterWeather.__init__(temporal_resolution=...)` → stored as
+`self._temporal_resolution` → passed to `interpolate_netcdf()` on every
+`get_data()` call.  `CompositeWeatherDownloader` also forwards
+`temporal_resolution` to `HYRASDownloader` when `source="HYRAS"`.
+
+**Tests added:** `tests/test_weather_pipeline_unit.py` —
+`TestTemporalResolution` (5 tests):
+- `test_daily_resolution_returns_scalar` — `"daily"` still returns a float.
+- `test_hourly_resolution_returns_time_series` — `"hourly"` returns 24 steps.
+- `test_unknown_resolution_raises_value_error` — unknown value raises `ValueError`.
+- `test_hyras_hourly_raises_at_init` — HYRAS guard fires at `__init__`.
+- `test_getter_forwards_temporal_resolution` — forwarded to `interpolate_netcdf`.
 
 **Files changed:** `packages/weather/datavia/weather/pipeline.py`,
 `datavia/library/interpolation.py`,
-`packages/weather/datavia/weather/hyras_downloader.py`
+`packages/weather/datavia/weather/hyras_downloader.py`,
+`packages/weather/datavia/weather/getter_weather.py`,
+`packages/weather/datavia/weather/composite_downloader.py`
 
 ---
 
@@ -437,8 +462,8 @@ that cannot be tested with cached data and requires real Copernicus credentials.
 | **2** | BUG-01 / BUG-09 / BUG-10 — sync + source_name | S | — | Clean DB state | ✅ pre-2026-04-28 |
 | **3** | BUG-07 — deterministic filenames | M | — | Enhancement 3 | ✅ 2026-04-28 |
 | **4** | BUG-05 + BUG-08 — batch interp + NaN fill | M | — | Enhancement 1 | ✅ 2026-04-28 |
-| **5** | Enh. 1 — wire CRS stub | S | Step 4 | CRS-agnostic queries | |
-| **6** | Enh. 2 — temporal resolution config key | S | — | Hourly ERA5 queries | |
+| **5** | Enh. 1 — wire CRS stub | S | Step 4 | CRS-agnostic queries | ✅ 2026-04-29 |
+| **6** | Enh. 2 — temporal resolution config key | S | — | Hourly ERA5 queries | ✅ 2026-04-29 |
 | **7** | Enh. 3 — `CoverageManager`, incremental DL | L | Steps 1–4 | Enhancement 4 | |
 | **8** | Enh. 4 — pipeline lifecycle (merge, rename) | L | Step 7 | Full lifecycle API | |
 | **9** | Enh. 5 — ERA5 chunking + progress | L | Steps 7–8, CDS creds | Production ERA5 use | |

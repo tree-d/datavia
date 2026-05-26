@@ -64,17 +64,26 @@ pipeline()
 # Incremental — re-running is safe; files already on disk are skipped.
 pipeline.update_data()
 
-# Query interpolated values at [lon, lat] coordinates in EPSG:4326.
-# HYRAS is natively in ETRS89-LAEA (EPSG:3035); the getter reprojects
-# input coordinates automatically.
+# Query interpolated values at [lon, lat] coordinates.
+# Any CRS understood by pyproj is accepted via crs_coords.
+# HYRAS is natively ETRS89-LAEA (EPSG:3035); the getter reprojects automatically.
 coords = np.array([[13.4, 52.5], [10.0, 50.0]])  # Berlin, Kassel
 values = pipeline.get_data(
     coords=coords,
-    crs_coords="EPSG:4326",
+    crs_coords="EPSG:4326",   # default — WGS84 lon/lat
     variable="2m_temperature",
     datetime_utc="2024-06-15T12:00:00",
 )
 # values.shape == (2,) — one value per coordinate in °C
+
+# Pass ETRS89-LAEA coordinates directly — no manual reprojection needed:
+coords_laea = np.array([[4_490_000, 3_350_000]])  # Berlin in EPSG:3035
+values_laea = pipeline.get_data(
+    coords=coords_laea,
+    crs_coords="EPSG:3035",
+    variable="2m_temperature",
+    datetime_utc="2024-06-15T12:00:00",
+)
 
 # Single-point convenience method
 temperature = pipeline.get_weather_data(
@@ -297,40 +306,44 @@ DATAVIA_E2E=1 pytest tests/test_weather_e2e.py::TestERA5E2E -v
 
 ---
 
-## Planned enhancements
+## Implemented enhancements
 
-### Flexible output CRS in `get_data`
+### CRS-agnostic input coordinates
 
-`GetterWeather.get_data()` currently accepts `crs_coords="EPSG:4326"` for the
-*input* coordinates only, and always returns scalar values (no spatial
-reprojection of the output).  A future extension will allow callers to request
-output data in an arbitrary CRS — for example to receive values on the native
-HYRAS ETRS89-LAEA grid (EPSG:3035) or any other projection without having to
-reproject manually afterwards:
+`GetterWeather.get_data()` accepts input coordinates in any CRS recognised by
+`pyproj`.  Pass the CRS string via `crs_coords`; coordinates are reprojected
+to the file's native CRS automatically before interpolation:
 
 ```python
-# Proposed future API — not yet implemented
+# WGS84 (default)
 values = pipeline.get_data(
-    coords=np.array([[4_438_345, 2_781_634]]),
-    crs_coords="EPSG:3035",          # input coordinates already in LAEA metres
+    coords=np.array([[13.4, 52.5]]),
+    crs_coords="EPSG:4326",
+    variable="relative_humidity_2m",
+    datetime_utc="2024-06-15T12:00:00",
+)
+
+# ETRS89-LAEA — no manual reprojection needed
+values = pipeline.get_data(
+    coords=np.array([[4_490_000, 3_350_000]]),
+    crs_coords="EPSG:3035",
     variable="relative_humidity_2m",
     datetime_utc="2024-06-15T12:00:00",
 )
 ```
 
-This would let users work entirely in their preferred projection and avoid
-round-trip WGS84 conversions when the source data is natively in EPSG:3035.
-Tracked as a follow-up to Phase A3 (interpolation CRS auto-detection).
+For projected files (HYRAS): the pyproj transformer uses `input_crs` as its
+source CRS and the file's CF `grid_mapping` CRS as its target — an identity
+transform when both are EPSG:3035.
+
+For geographic files (ERA5): when `input_crs != "EPSG:4326"`, coordinates are
+reprojected to WGS84 degrees before being handed to xarray.
 
 ### Configurable temporal resolution
 
-All sources currently return daily values (HYRAS is daily by definition; ERA5
-is downloaded at hourly intervals but queries return the nearest single time
-step).  A planned `"temporal_resolution"` config key would let users choose
-explicitly:
+`"temporal_resolution"` is a recognised pipeline config key:
 
 ```python
-# Proposed future API — not yet implemented
 WeatherPipeline(config={
     "source":               "ERA5_land",
     "variables":            ["2m_temperature"],
@@ -340,11 +353,14 @@ WeatherPipeline(config={
 })
 ```
 
-- `"daily"` — one value per calendar day (noon or daily mean depending on the
-  variable); compatible with HYRAS, ERA5, and DWD station data.
-- `"hourly"` — one value per hour; ERA5 and DWD stations support this natively;
-  HYRAS is daily-only and would raise a `ValueError` if hourly is requested.
+- `"daily"` (default) — one interpolated value per calendar day (nearest time
+  step).  Compatible with HYRAS, ERA5, and DWD station data.
+- `"hourly"` — all sub-daily time steps for the requested day are returned as
+  a 1-D array of shape `(T,)` or `(N, T)`.  Supported by ERA5 and DWD
+  stations; `HYRASDownloader` raises `ValueError` at initialisation if
+  hourly is requested (HYRAS is daily-only).
 
+## Planned enhancements
 
 ### Configurable spatial and temporal extent
 

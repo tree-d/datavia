@@ -162,14 +162,14 @@ def _build_spatial_interp_coords(
     variable: str,
     lats: np.ndarray,
     lons: np.ndarray,
+    input_crs: str = "EPSG:4326",
 ) -> dict[str, "xr.DataArray"]:
-    """Build vectorised xarray.DataArray.interp() coordinates for N WGS84 points.
+    """Build vectorised xarray.DataArray.interp() coordinates for N input points.
 
     Detects whether the dataset uses geographic coordinates (ERA5-style
     ``latitude``/``longitude``) or projected coordinates (HYRAS-style ``x``/``y``
-    with a CF ``grid_mapping`` attribute).  For projected files all input points
-    are reprojected to the dataset's native CRS in a single ``pyproj`` batch
-    call.
+    with a CF ``grid_mapping`` attribute).  Input coordinates are reprojected to
+    the dataset's native CRS as needed using a single ``pyproj`` batch call.
 
     Parameters
     ----------
@@ -178,9 +178,15 @@ def _build_spatial_interp_coords(
     variable : str
         Variable name; used to read the ``grid_mapping`` attribute.
     lats : np.ndarray
-        Geographic latitudes in degrees North (EPSG:4326), shape ``(N,)``.
+        Latitudes (or northing values) of input points, shape ``(N,)``.
+        Interpreted in *input_crs*.
     lons : np.ndarray
-        Geographic longitudes in degrees East (EPSG:4326), shape ``(N,)``.
+        Longitudes (or easting values) of input points, shape ``(N,)``.
+        Interpreted in *input_crs*.
+    input_crs : str, optional
+        CRS of the input *lats*/*lons* coordinates, given as an EPSG string
+        (e.g. ``"EPSG:4326"``, ``"EPSG:3035"``).  Defaults to
+        ``"EPSG:4326"``.  Any CRS understood by ``pyproj`` is accepted.
 
     Returns
     -------
@@ -193,7 +199,7 @@ def _build_spatial_interp_coords(
     Raises
     ------
     ImportError
-        If the dataset uses projected coordinates but ``pyproj`` is not
+        If coordinate reprojection is required but ``pyproj`` is not
         installed.
     """
     grid_mapping_name = ds[variable].attrs.get("grid_mapping")
@@ -211,7 +217,7 @@ def _build_spatial_interp_coords(
                 "(e.g. HYRAS EPSG:3035). Install with `pip install pyproj`."
             )
         crs_file = pyproj.CRS.from_cf(ds[grid_mapping_name].attrs)
-        transformer = pyproj.Transformer.from_crs("EPSG:4326", crs_file, always_xy=True)
+        transformer = pyproj.Transformer.from_crs(input_crs, crs_file, always_xy=True)
         # Batch-reproject all N points in a single transformer call.
         x_arr, y_arr = transformer.transform(lons, lats)
         return {
@@ -220,8 +226,18 @@ def _build_spatial_interp_coords(
         }
 
     # Geographic grid (ERA5, ICON): dimensions are latitude/longitude in degrees.
+    # When input is not WGS84, reproject to EPSG:4326 degrees first.
     lat_name = "latitude" if "latitude" in ds.coords else "lat"
     lon_name = "longitude" if "longitude" in ds.coords else "lon"
+    if input_crs != "EPSG:4326":
+        if not PYPROJ_AVAILABLE:
+            raise ImportError(
+                "pyproj is required to reproject non-EPSG:4326 input "
+                "coordinates for geographic NetCDF files. "
+                "Install with `pip install pyproj`."
+            )
+        t = pyproj.Transformer.from_crs(input_crs, "EPSG:4326", always_xy=True)
+        lons, lats = t.transform(lons, lats)
     return {
         lat_name: xr.DataArray(lats, dims="points"),
         lon_name: xr.DataArray(lons, dims="points"),
@@ -318,6 +334,8 @@ def interpolate_netcdf(
     lons: float | np.ndarray,
     variable: str,
     datetime_utc: Any,
+    input_crs: str = "EPSG:4326",
+    temporal_resolution: str = "daily",
 ) -> float | np.ndarray:
     r"""Sample a NetCDF variable at one or more geographic points.
 
@@ -341,27 +359,41 @@ def interpolate_netcdf(
     nc_path : str
         Absolute path to the NetCDF file (``*.nc``).
     lats : float or np.ndarray
-        Geographic latitude(s) in degrees North (EPSG:4326).  A scalar float
+        Latitude(s) of the query point(s) in *input_crs*.  A scalar float
         produces a scalar (or 1-D time-series) return value; an array of
         shape ``(N,)`` produces an ``(N,)`` array.
     lons : float or np.ndarray
-        Geographic longitude(s) in degrees East (EPSG:4326).  Must be the
-        same shape as *lats*.
+        Longitude(s) (or easting values) of the query point(s) in
+        *input_crs*.  Must be the same shape as *lats*.
     variable : str
         Name of the variable to sample, e.g. ``"tas"`` or ``"2m_temperature"``.
     datetime_utc : datetime-like or sequence of datetime-like
-        One or more UTC timestamps.  Passed to ``xarray.Dataset.sel`` with
-        ``method="nearest"``.
+        One or more UTC timestamps.  Used with ``method="nearest"`` for
+        ``temporal_resolution="daily"``.  For ``temporal_resolution="hourly"``,
+        used to identify the calendar day from which all sub-daily time steps
+        are returned.
+    input_crs : str, optional
+        CRS of the input *lats*/*lons* coordinates, as an EPSG string
+        (e.g. ``"EPSG:4326"`` or ``"EPSG:3035"``).  Defaults to
+        ``"EPSG:4326"``.  Coordinates are reprojected to the file's native
+        CRS automatically.
+    temporal_resolution : str, optional
+        ``"daily"`` (default) — return the single nearest time step.
+        ``"hourly"`` — return all sub-daily time steps for the requested day
+        as an extra trailing dimension.
 
     Returns
     -------
     float
-        Interpolated scalar value when *lats*/*lons* are scalars and a single
-        timestamp is provided.
+        Interpolated scalar value when *lats*/*lons* are scalars,
+        ``temporal_resolution="daily"``, and a single timestamp is provided.
     np.ndarray
-        - Shape ``(T,)`` — scalar coordinate, sequence of timestamps.
-        - Shape ``(N,)`` — array of coordinates, single timestamp.
-        - Shape ``(N, T)`` — array of coordinates, sequence of timestamps.
+        - Shape ``(T,)`` — scalar coordinate, sequence of daily timestamps.
+        - Shape ``(N,)`` — array of coordinates, single daily timestamp.
+        - Shape ``(N, T)`` — array of coordinates, sequence of daily timestamps.
+        - Shape ``(T,)`` — scalar coordinate, ``temporal_resolution="hourly"``,
+          all *T* sub-daily steps for the requested day.
+        - Shape ``(N, T)`` — array of coordinates, ``temporal_resolution="hourly"``.
 
     Raises
     ------
@@ -370,6 +402,8 @@ def interpolate_netcdf(
         and pyproj is not installed.
     KeyError
         If *variable* does not exist in the NetCDF file.
+    ValueError
+        If *temporal_resolution* is not ``"daily"`` or ``"hourly"``.
     """
     if not XARRAY_AVAILABLE:
         raise ImportError(
@@ -394,16 +428,33 @@ def interpolate_netcdf(
 
         # Build vectorised spatial interpolation coordinates for all N points
         # in one batch — single pyproj call, single xarray interp call (BUG-05).
-        interp_coords = _build_spatial_interp_coords(ds, variable, lats_arr, lons_arr)
+        interp_coords = _build_spatial_interp_coords(
+            ds, variable, lats_arr, lons_arr, input_crs
+        )
 
         # Bilinear spatial interpolation across all N points simultaneously.
         point = da.interp(interp_coords, method="linear")
 
-        # Temporal selection: nearest available time step.
+        # Temporal selection.
         # ERA5 files from cdsapi >= 0.7 use 'valid_time' instead of 'time'.
+        if temporal_resolution not in ("daily", "hourly"):
+            raise ValueError(
+                f"temporal_resolution must be 'daily' or 'hourly', "
+                f"got '{temporal_resolution}'."
+            )
         time_dim = "time" if "time" in point.coords else "valid_time"
         if time_dim in point.coords:
-            point = point.sel({time_dim: datetime_utc}, method="nearest")
+            if temporal_resolution == "hourly":
+                if not PANDAS_AVAILABLE:
+                    raise ImportError(
+                        "pandas is required for temporal_resolution='hourly'. "
+                        "Install with `pip install pandas`."
+                    )
+                day_start = pd.Timestamp(str(datetime_utc)).normalize()
+                day_end = day_start + pd.Timedelta(days=1) - pd.Timedelta(nanoseconds=1)
+                point = point.sel({time_dim: slice(day_start, day_end)})
+            else:
+                point = point.sel({time_dim: datetime_utc}, method="nearest")
 
         values = np.asarray(point.values, dtype=float)
 

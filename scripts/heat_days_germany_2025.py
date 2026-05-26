@@ -98,9 +98,9 @@ def build_pipeline() -> WeatherPipeline:
 def collect_temperatures(pipeline: WeatherPipeline) -> np.ndarray:
     """Query daily mean temperature for all cities across the full summer.
 
-    Issues one :meth:`~datavia.weather.pipeline.WeatherPipeline.get_data`
-    call per day with all 15 city coordinates vectorised, giving
-    ``_N_DAYS`` network-free file reads total.
+    Issues a **single** :meth:`~datavia.weather.pipeline.WeatherPipeline.get_data`
+    call with all 15 city coordinates *and* all ``_N_DAYS`` timestamps
+    vectorised, opening the NetCDF file only once.
 
     Parameters
     ----------
@@ -114,31 +114,29 @@ def collect_temperatures(pipeline: WeatherPipeline) -> np.ndarray:
         ``NaN`` is used for any day/city pair where data are unavailable.
     """
     coords = np.array([[c["lon"], c["lat"]] for c in CITIES])
-    n_cities = len(CITIES)
-    temps = np.full((_N_DAYS, n_cities), np.nan)
+    all_timestamps = [
+        f"{(_SUMMER_START + timedelta(days=i)).isoformat()}T12:00:00"
+        for i in range(_N_DAYS)
+    ]
 
-    for day_idx in range(_N_DAYS):
-        query_date = _SUMMER_START + timedelta(days=day_idx)
-        datetime_utc = f"{query_date.isoformat()}T12:00:00"
+    print(
+        f"  Querying all {_N_DAYS} days × {len(CITIES)} cities in one batch call…",
+        flush=True,
+    )
 
-        print(
-            f"\r  Querying {query_date} ({day_idx + 1}/{_N_DAYS})…",
-            end="",
-            flush=True,
+    try:
+        # Returns shape (N_cities, N_days); transpose to (N_days, N_cities).
+        batch = pipeline.get_data(
+            coords=coords,
+            crs_coords="EPSG:4326",
+            variable="2m_temperature",
+            datetime_utc=all_timestamps,
         )
+        temps = np.asarray(batch, dtype=float).T
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Batch temperature query failed: %s", exc)
+        temps = np.full((_N_DAYS, len(CITIES)), np.nan)
 
-        try:
-            values = pipeline.get_data(
-                coords=coords,
-                crs_coords="EPSG:4326",
-                variable="2m_temperature",
-                datetime_utc=datetime_utc,
-            )
-            temps[day_idx] = values
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Query failed for %s: %s", query_date, exc)
-
-    print()  # newline after progress indicator
     return temps
 
 

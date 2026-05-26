@@ -33,9 +33,9 @@ import sys
 from datetime import date, timedelta
 
 import numpy as np
+from datavia.weather import WeatherPipeline
 
 from datavia import Datavia
-from datavia.weather import WeatherPipeline
 
 logging.basicConfig(
     level=logging.WARNING,
@@ -101,7 +101,11 @@ def build_pipeline() -> WeatherPipeline:
 def collect_daily_precip(pipeline: WeatherPipeline) -> np.ndarray:
     """Query daily precipitation for all transect stations for the whole year.
 
-    Issues one ``get_data()`` call per day (vectorised over all 8 stations).
+    Issues a **single** ``get_data()`` call with all 8 station coordinates
+    *and* all ``_N_DAYS`` timestamps batched, opening the NetCDF file only
+    once.  HYRAS precipitation timestamps are at 06:00 UTC (end of
+    accumulation period); nearest-time matching inside the getter handles
+    the noon-UTC query offset automatically.
 
     Parameters
     ----------
@@ -115,33 +119,29 @@ def collect_daily_precip(pipeline: WeatherPipeline) -> np.ndarray:
         ``NaN`` for any unavailable day/station.
     """
     coords = np.array([[s["lon"], s["lat"]] for s in TRANSECT])
-    n_stations = len(TRANSECT)
-    precip = np.full((_N_DAYS, n_stations), np.nan)
+    all_timestamps = [
+        f"{(_YEAR_START + timedelta(days=i)).isoformat()}T12:00:00"
+        for i in range(_N_DAYS)
+    ]
 
-    for day_idx in range(_N_DAYS):
-        query_date = _YEAR_START + timedelta(days=day_idx)
-        # Query at noon UTC; HYRAS precipitation timestamps are at 06:00 UTC
-        # (end of accumulation period) — the getter must match by nearest time.
-        datetime_utc = f"{query_date.isoformat()}T12:00:00"
+    print(
+        f"  Querying all {_N_DAYS} days x {len(TRANSECT)} stations in one batch call…",
+        flush=True,
+    )
 
-        print(
-            f"\r  Day {day_idx + 1:03d}/{_N_DAYS}  ({query_date})…",
-            end="",
-            flush=True,
+    try:
+        # Returns shape (N_stations, N_days); transpose to (N_days, N_stations).
+        batch = pipeline.get_data(
+            coords=coords,
+            crs_coords="EPSG:4326",
+            variable="total_precipitation",
+            datetime_utc=all_timestamps,
         )
+        precip = np.asarray(batch, dtype=float).T
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Batch precipitation query failed: %s", exc)
+        precip = np.full((_N_DAYS, len(TRANSECT)), np.nan)
 
-        try:
-            values = pipeline.get_data(
-                coords=coords,
-                crs_coords="EPSG:4326",
-                variable="total_precipitation",
-                datetime_utc=datetime_utc,
-            )
-            precip[day_idx] = values
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Query failed for %s: %s", query_date, exc)
-
-    print()
     return precip
 
 

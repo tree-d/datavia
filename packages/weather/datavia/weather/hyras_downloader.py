@@ -93,6 +93,7 @@ class HYRASDownloader(URLDownloader):
         variables: list[str] | None = None,
         date_start: date | str | None = None,
         date_end: date | str | None = None,
+        temporal_resolution: str = "daily",
     ) -> None:
         """Initialise the HYRAS downloader.
 
@@ -109,7 +110,21 @@ class HYRASDownloader(URLDownloader):
             First day of the download range (inclusive). Defaults to today.
         date_end : date or str, optional
             Last day of the download range (inclusive). Defaults to today.
+        temporal_resolution : str, optional
+            Must be ``"daily"`` (default).  ``"hourly"`` raises
+            :exc:`ValueError` immediately because HYRAS provides daily data
+            only.
+
+        Raises
+        ------
+        ValueError
+            If *temporal_resolution* is ``"hourly"``.
         """
+        if temporal_resolution == "hourly":
+            raise ValueError(
+                "HYRASDownloader does not support temporal_resolution='hourly'. "
+                "HYRAS provides daily observations only."
+            )
         super().__init__(url=_HYRAS_BASE_URL)
         self.variables: list[str] = variables or ["2m_temperature"]
         self.date_start: str = (

@@ -98,12 +98,14 @@ class CompositeWeatherDownloader(CompositeDownloader):
                 "date_start": date_start,
                 "date_end": date_end,
             }
-            # bbox and buffer_days are ERA5-specific and must not be forwarded
-            # to other grid downloaders (e.g. HYRASDownloader) that do not
-            # accept them.
+            # Source-specific kwargs: only forward params accepted by each downloader.
             if source == "ERA5_land":
                 grid_kwargs["bbox"] = cfg.get("era5_bbox")
                 grid_kwargs["buffer_days"] = cfg.get("buffer_days", 1)
+            elif source == "HYRAS":
+                grid_kwargs["temporal_resolution"] = cfg.get(
+                    "temporal_resolution", "daily"
+                )
             self._grid: Downloader | None = grid_class(**grid_kwargs)
         else:
             self._grid = None
