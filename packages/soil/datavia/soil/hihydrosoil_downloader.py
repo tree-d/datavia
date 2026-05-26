@@ -204,7 +204,14 @@ class HiHydroSoilDownloader(Downloader):
         results: list[tuple[str, str]] = []
         total = len(coverage_ids)
 
-        for i, coverage_id in enumerate(coverage_ids, 1):
+        try:
+            from tqdm import tqdm  # type: ignore[import]
+
+            coverage_iter: Any = tqdm(coverage_ids, desc="HiHydroSoil", unit="coverage")
+        except ImportError:
+            coverage_iter = iter(coverage_ids)
+
+        for i, coverage_id in enumerate(coverage_iter, 1):
             path = self._download_single_coverage(coverage_id, output_dir)
             if path != "failed":
                 results.append((path, coverage_id))

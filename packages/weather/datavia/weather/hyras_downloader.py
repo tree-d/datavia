@@ -299,31 +299,45 @@ class HYRASDownloader(URLDownloader):
         years = self._years_in_range(self.date_start, self.date_end)
         downloaded_paths: list[str] = []
 
-        for variable in self.variables:
-            mapping = _VARIABLE_MAP[variable]
-            subdir = mapping["subdir"]
-            prefix = mapping["prefix"]
-            subdir_url = f"{_HYRAS_BASE_URL}{subdir}/"
+        total_files = len(self.variables) * len(years)
+        try:
+            from tqdm import tqdm  # type: ignore[import]
 
-            for year in years:
-                filename = self._discover_latest_filename(subdir_url, year, prefix)
-                self.url = f"{subdir_url}{filename}"
-                logger.info(
-                    "Downloading HYRAS file: variable=%s, year=%d, url=%s",
-                    variable,
-                    year,
-                    self.url,
-                )
-                path = super().download()
-                if path != "failed":
-                    downloaded_paths.append(path)
-                    logger.info("HYRAS download complete: %s", path)
-                else:
-                    logger.warning(
-                        "HYRAS download failed: variable=%s, year=%d, url=%s",
+            progress = tqdm(total=total_files, desc="HYRAS", unit="file")
+        except ImportError:
+            progress = None
+
+        try:
+            for variable in self.variables:
+                mapping = _VARIABLE_MAP[variable]
+                subdir = mapping["subdir"]
+                prefix = mapping["prefix"]
+                subdir_url = f"{_HYRAS_BASE_URL}{subdir}/"
+
+                for year in years:
+                    filename = self._discover_latest_filename(subdir_url, year, prefix)
+                    self.url = f"{subdir_url}{filename}"
+                    logger.info(
+                        "Downloading HYRAS file: variable=%s, year=%d, url=%s",
                         variable,
                         year,
                         self.url,
                     )
+                    path = super().download()
+                    if path != "failed":
+                        downloaded_paths.append(path)
+                        logger.info("HYRAS download complete: %s", path)
+                    else:
+                        logger.warning(
+                            "HYRAS download failed: variable=%s, year=%d, url=%s",
+                            variable,
+                            year,
+                            self.url,
+                        )
+                    if progress is not None:
+                        progress.update(1)
+        finally:
+            if progress is not None:
+                progress.close()
 
         return "\n".join(downloaded_paths)

@@ -107,7 +107,14 @@ class DWDStationDownloader(APIDownloader):
 
         records: list[dict[str, Any]] = []
 
-        for station in self.stations:
+        try:
+            from tqdm import tqdm  # type: ignore[import]
+
+            station_iter: Any = tqdm(self.stations, desc="DWD stations", unit="station")
+        except ImportError:
+            station_iter = self.stations
+
+        for station in station_iter:
             params: dict[str, Any] = {
                 "latitude": station["latitude"],
                 "longitude": station["longitude"],
