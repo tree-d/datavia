@@ -279,6 +279,59 @@ class Pipeline:
         Data source URL. If None, must be provided during __call__
     """
 
+    # -----------------------------------------------------------------------
+    # Config validation utility
+    # -----------------------------------------------------------------------
+
+    @staticmethod
+    def validate_pipeline_config(
+        config: dict,
+        required_keys: set[str],
+        known_keys: set[str],
+        pipeline_name: str = "Pipeline",
+    ) -> None:
+        """Validate a pipeline configuration dict against required and known keys.
+
+        Checks for missing required keys and unrecognised keys in a single
+        pass, reporting *all* violations in one ``ValueError`` instead of
+        stopping at the first problem.  Call this at ``__init__`` time before
+        any other logic so users see the full list of mistakes at once.
+
+        Parameters
+        ----------
+        config : dict
+            The configuration dict provided by the caller.
+        required_keys : set[str]
+            Keys that must be present in *config*.
+        known_keys : set[str]
+            All keys that are valid for this pipeline (must include all
+            required keys).  Keys absent from this set are treated as typos
+            and raise an error.
+        pipeline_name : str, optional
+            Human-readable name of the calling pipeline, used in error
+            messages.  Defaults to ``"Pipeline"``.
+
+        Raises
+        ------
+        ValueError
+            If one or more required keys are absent from *config*.
+        ValueError
+            If one or more keys in *config* are not in *known_keys*.
+        """
+        provided_keys = set(config.keys())
+
+        missing = required_keys - provided_keys
+        unknown = provided_keys - known_keys
+
+        if missing:
+            raise ValueError(
+                f"{pipeline_name} config missing required key(s): {missing}"
+            )
+        if unknown:
+            raise ValueError(
+                f"{pipeline_name} config contains unknown key(s): {unknown}"
+            )
+
     def __init__(
         self,
         name: str,
