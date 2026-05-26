@@ -233,8 +233,9 @@ class TestSaverWeather:
 
     def test_save_netcdf_inserts_db_row(self, sqlite_db: None, tmp_path) -> None:
         """A NetCDF file is copied and a DB row is inserted."""
-        from datavia.library.database.query import check_weather_source_exists
         from datavia.weather.saver_weather import SaverWeather
+
+        from datavia.library.database.query import check_weather_source_exists
 
         # Create a dummy .nc file — content irrelevant; only the save() path
         # logic is tested here; metadata extraction is mocked out.
@@ -263,10 +264,10 @@ class TestSaverWeather:
 
     def test_save_idempotent(self, sqlite_db: None, tmp_path) -> None:
         """Calling save() twice on the same file does not create duplicate rows."""
+        from datavia.weather.saver_weather import SaverWeather
         from sqlalchemy import text
 
         from datavia.library.database.connection import session_local
-        from datavia.weather.saver_weather import SaverWeather
 
         nc_file = tmp_path / "era5_temperature_2m.nc"
         nc_file.write_bytes(b"FAKE")
@@ -876,9 +877,9 @@ class TestUnitConversions:
 
     def test_kelvin_to_celsius_array(self) -> None:
         """Array conversion preserves shape and values."""
-        from datavia.library.unit_conversions import kelvin_to_celsius
-
         import numpy as np
+
+        from datavia.library.unit_conversions import kelvin_to_celsius
 
         values = np.array([273.15, 373.15])
         result = kelvin_to_celsius(values)
@@ -1013,10 +1014,10 @@ class TestSaverWeatherExplicitVariable:
 
     def test_explicit_variable_stored_in_db(self, sqlite_db: None, tmp_path) -> None:
         """When variable is passed explicitly it is stored as-is in the DB."""
+        from datavia.weather.saver_weather import SaverWeather
         from sqlalchemy import text
 
         from datavia.library.database.connection import session_local
-        from datavia.weather.saver_weather import SaverWeather
 
         nc_file = tmp_path / "era5_tmpXYZabc.nc"
         nc_file.write_bytes(b"FAKE_NC")
@@ -1050,10 +1051,10 @@ class TestSaverWeatherExplicitVariable:
 
     def test_auto_detect_variables_from_netcdf(self, sqlite_db: None, tmp_path) -> None:
         """When variable=None the variables are read from the NC file metadata."""
+        from datavia.weather.saver_weather import SaverWeather
         from sqlalchemy import text
 
         from datavia.library.database.connection import session_local
-        from datavia.weather.saver_weather import SaverWeather
 
         nc_file = tmp_path / "era5_tmpABC.nc"
         nc_file.write_bytes(b"FAKE_NC")
@@ -1198,10 +1199,10 @@ class TestSaverWeatherDestNaming:
         tmp_path : pathlib.Path
             pytest-provided temporary directory.
         """
+        from datavia.weather.saver_weather import SaverWeather
         from sqlalchemy import text
 
         from datavia.library.database.connection import session_local
-        from datavia.weather.saver_weather import SaverWeather
 
         nc_file = tmp_path / "HYRAS_tas_2024.nc"
         nc_file.write_bytes(b"FAKE_NC")
@@ -1249,7 +1250,6 @@ class TestSaverWeatherDestNaming:
             pytest-provided temporary directory.
         """
         import pandas as pd
-
         from datavia.weather.saver_weather import SaverWeather
 
         parquet_file = tmp_path / "tmpABCDEF.parquet"
@@ -1431,7 +1431,6 @@ class TestExtractNetcdfLayerMetadata:
         """
         import numpy as np
         import xarray as xr
-
         from datavia.weather.saver_weather import _build_dest_stem
 
         times = np.array(

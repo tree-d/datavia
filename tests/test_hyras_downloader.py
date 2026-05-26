@@ -20,13 +20,11 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from datavia.weather.hyras_downloader import (
-    HYRASDownloader,
     _HYRAS_BASE_URL,
     _VARIABLE_MAP,
+    HYRASDownloader,
 )
-
 
 # ---------------------------------------------------------------------------
 # _years_in_range

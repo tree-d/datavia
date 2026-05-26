@@ -170,9 +170,10 @@ class TestDWDStationE2E:
         into *tmp_path* via :class:`SaverWeather`, and asserts the row appears
         in ``weather_layers``.
         """
-        from datavia.library.database.query import check_weather_source_exists
         from datavia.weather.dwd_downloader import DWDStationDownloader
         from datavia.weather.saver_weather import SaverWeather
+
+        from datavia.library.database.query import check_weather_source_exists
 
         downloader = DWDStationDownloader(
             variables=[_VARIABLE],
@@ -313,7 +314,6 @@ class TestERA5E2E:
         manageable.  Asserts the file is non-empty and that xarray can open it.
         """
         import xarray as xr
-
         from datavia.weather.era5_downloader import ERA5Downloader
 
         one_day = str(_DATE_START)
@@ -339,9 +339,10 @@ class TestERA5E2E:
 
     def test_era5_save_registers_in_database(self, live_database, tmp_path) -> None:
         """SaverWeather registers a downloaded ERA5 NetCDF in weather_layers."""
-        from datavia.library.database.query import check_weather_source_exists
         from datavia.weather.era5_downloader import ERA5Downloader
         from datavia.weather.saver_weather import SaverWeather
+
+        from datavia.library.database.query import check_weather_source_exists
 
         one_day = str(_DATE_START)
         downloader = ERA5Downloader(
@@ -427,7 +428,6 @@ class TestHYRASE2E:
                 test_single_variable_year_download_opens_with_xarray -v
         """
         import xarray as xr
-
         from datavia.weather.hyras_downloader import HYRASDownloader
 
         downloader = HYRASDownloader(

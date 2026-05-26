@@ -36,12 +36,12 @@ from unittest.mock import patch
 
 import numpy as np
 import rasterio
+from datavia.elevation import ElevationPipeline
 from rasterio.transform import from_bounds
 from sqlalchemy import text
 
 from datavia.core.getter_tiff import GetterTiff
 from datavia.core.saver_tiff import TiffSaver
-from datavia.elevation import ElevationPipeline
 from datavia.library.database.connection import session_local
 
 # ---------------------------------------------------------------------------

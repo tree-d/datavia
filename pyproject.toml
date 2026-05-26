@@ -176,7 +176,7 @@ select = [
 # coupling and to keep individual test failures isolated.
 # I001: import ordering inside test methods is intentionally left as written for
 # readability (subject-under-test import last, helpers first).
-"tests/**" = ["D102", "PLC0415", "I001"]
+"tests/**" = ["D102", "PLC0415"]
 # Optional-dependency lazy imports inside try/except blocks are a deliberate
 # pattern for keeping heavy / credentialled packages truly optional.
 "packages/**" = ["PLC0415"]
