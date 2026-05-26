@@ -42,6 +42,7 @@ class ERA5Downloader(APIDownloader):
         date_start: date | str | None = None,
         date_end: date | str | None = None,
         bbox: list[float] | None = None,
+        buffer_days: int = 1,
         **kwargs: Any,
     ) -> None:
         """Initialise the ERA5 downloader.
@@ -59,6 +60,12 @@ class ERA5Downloader(APIDownloader):
         bbox : list[float], optional
             Bounding box ``[north, west, south, east]`` in degrees.  Defaults
             to the Germany bounding box ``[55.1, 5.9, 47.3, 15.0]``.
+            The edges are snapped to the 0.1\u00b0 ERA5-Land grid automatically.
+        buffer_days : int, optional
+            Number of additional days prepended to *date_start* before
+            submitting the CDS request.  Accumulative variables (precipitation,
+            SSRD) reset at UTC midnight, so a buffer ensures the first
+            local-day total can be reconstructed.  Defaults to ``1``.
         **kwargs : Any
             Additional keyword arguments forwarded to
             :class:`datavia.core.downloader_api.APIDownloader`.
@@ -71,7 +78,44 @@ class ERA5Downloader(APIDownloader):
         self.date_end: str = (
             str(date_end) if date_end is not None else str(date.today())
         )
-        self.bbox: list[float] = bbox or _GERMANY_BBOX
+        raw_bbox = bbox or _GERMANY_BBOX
+        self.bbox: list[float] = self._snap_bbox(raw_bbox)
+        self.buffer_days: int = max(0, int(buffer_days))
+
+    @staticmethod
+    def _snap_bbox(bbox: list[float]) -> list[float]:
+        """Snap a bounding box to the ERA5-Land 0.1\u00b0 grid.
+
+        ERA5-Land has a native resolution of 0.1\u00b0.  Rounding request edges
+        outward to the nearest 0.1\u00b0 boundary ensures that all grid points
+        within the area of interest are included in the download.
+
+        Parameters
+        ----------
+        bbox : list[float]
+            Bounding box ``[north, west, south, east]`` in degrees.
+
+        Returns
+        -------
+        list[float]
+            Snapped bounding box ``[north, west, south, east]`` where north
+            and east edges are rounded up (``ceil``) and south and west edges
+            are rounded down (``floor``) to the nearest 0.1\u00b0.
+        """
+        import math
+
+        grid_step = 0.1
+        north, west, south, east = bbox
+        snapped_north = math.ceil(round(north / grid_step, 10)) * grid_step
+        snapped_east = math.ceil(round(east / grid_step, 10)) * grid_step
+        snapped_south = math.floor(round(south / grid_step, 10)) * grid_step
+        snapped_west = math.floor(round(west / grid_step, 10)) * grid_step
+        return [
+            round(snapped_north, 10),
+            round(snapped_west, 10),
+            round(snapped_south, 10),
+            round(snapped_east, 10),
+        ]
 
     @staticmethod
     def _build_request_date_fields(
@@ -118,12 +162,12 @@ class ERA5Downloader(APIDownloader):
         return years, months, days
 
     def download(self) -> str:
-        """Request ERA5 data from CDS and return the path to the downloaded NetCDF.
+        """Request ERA5-Land data from CDS and return the path to the downloaded NetCDF.
 
-        Submits a ``reanalysis-era5-single-levels`` CDS request for all
-        configured variables, hours and dates.  The result is written to a
-        uniquely named temporary file so concurrent downloads do not
-        overwrite each other.
+        Submits a ``reanalysis-era5-land`` CDS request (0.1° land surface
+        reanalysis) for all configured variables, hours and dates using the
+        CDS API v2 parameter keys.  The result is written to a uniquely named
+        temporary file so concurrent downloads do not overwrite each other.
 
         Returns
         -------
@@ -149,6 +193,17 @@ class ERA5Downloader(APIDownloader):
             self.date_start, self.date_end
         )
 
+        # Widen the start date by buffer_days so that accumulative variables
+        # (precipitation, SSRD) that reset at UTC midnight include enough
+        # context to reconstruct the first local-day total.
+        if self.buffer_days > 0:
+            buffered_start = date.fromisoformat(self.date_start) - timedelta(
+                days=self.buffer_days
+            )
+            years, months, days = self._build_request_date_fields(
+                str(buffered_start), self.date_end
+            )
+
         _, output_path = tempfile.mkstemp(suffix=".nc", prefix="era5_")
         logger.info(
             "Requesting ERA5 data: variables=%s, %s to %s",
@@ -160,7 +215,7 @@ class ERA5Downloader(APIDownloader):
         client = cdsapi.Client()
         try:
             client.retrieve(
-                "reanalysis-era5-single-levels",
+                "reanalysis-era5-land",
                 {
                     "product_type": "reanalysis",
                     "variable": self.variables,
@@ -169,8 +224,9 @@ class ERA5Downloader(APIDownloader):
                     "day": days,
                     "time": [f"{h:02d}:00" for h in range(24)],
                     "area": self.bbox,
-                    "format": "netcdf",
-                    "date": f"{self.date_start}/{self.date_end}",
+                    "data_format": "netcdf",
+                    "download_format": "unarchived",
+                    "grid": "0.1/0.1",
                 },
                 output_path,
             )

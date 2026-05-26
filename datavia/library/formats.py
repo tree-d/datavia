@@ -94,7 +94,7 @@ def read_tiff_metadata(filepath: str) -> dict[str, Any]:
             return metadata
 
     except Exception as e:
-        logger.error(f"Error reading TIFF metadata from {filepath}: {e}")
+        logger.error("Error reading TIFF metadata from %s: %s", filepath, e)
         return {}
 
 
@@ -119,7 +119,7 @@ def write_tiff_data(
         elif data.ndim == 3:
             count, height, width = data.shape
         else:
-            logger.error(f"Unsupported array dimensions: {data.ndim}")
+            logger.error("Unsupported array dimensions: %s", data.ndim)
             return False
 
         # Create transform if not provided
@@ -144,11 +144,11 @@ def write_tiff_data(
         ) as dst:
             dst.write(data)
 
-        logger.info(f"Successfully wrote TIFF: {filepath}")
+        logger.info("Successfully wrote TIFF: %s", filepath)
         return True
 
     except Exception as e:
-        logger.error(f"Error writing TIFF to {filepath}: {e}")
+        logger.error("Error writing TIFF to %s: %s", filepath, e)
         return False
 
 
@@ -171,12 +171,12 @@ def validate_tiff_file(filepath: str) -> bool:
 
             # Check CRS
             if not src.crs:
-                logger.warning(f"TIFF {filepath} has no CRS information")
+                logger.warning("TIFF %s has no CRS information", filepath)
 
             return True
 
     except Exception as e:
-        logger.error(f"TIFF validation failed for {filepath}: {e}")
+        logger.error("TIFF validation failed for %s: %s", filepath, e)
         return False
 
 
@@ -207,7 +207,7 @@ def read_shapefile_data(filepath: str) -> dict[str, Any]:
             }
 
     except Exception as e:
-        logger.error(f"Error reading shapefile {filepath}: {e}")
+        logger.error("Error reading shapefile %s: %s", filepath, e)
         return {}
 
 
@@ -239,7 +239,7 @@ def query_shapefile_by_coords(
         return results
 
     except Exception as e:
-        logger.error(f"Error querying shapefile by coordinates: {e}")
+        logger.error("Error querying shapefile by coordinates: %s", e)
         return []
 
 
@@ -284,7 +284,7 @@ def read_netcdf_metadata(filepath: str) -> dict[str, Any]:
             return metadata
 
     except Exception as e:
-        logger.error(f"Error reading NetCDF metadata from {filepath}: {e}")
+        logger.error("Error reading NetCDF metadata from %s: %s", filepath, e)
         return {}
 
 
@@ -353,11 +353,14 @@ def extract_netcdf_layer_metadata(filepath: str) -> dict[str, Any]:
                 if len(lats) > 1:
                     resolution_y = float(abs(lats[1] - lats[0]))
 
+            # ERA5 geographic-coordinate files carry a CF convention string
+            # (e.g. "latitude_longitude") in grid_mapping_name, not an EPSG
+            # code.  Always default to EPSG:4326 for ERA5 data.
             return {
                 "valid_from": valid_from,
                 "valid_until": valid_until,
                 "variables": list(ds.data_vars.keys()),
-                "crs": ds.attrs.get("grid_mapping_name", "EPSG:4326"),
+                "crs": "EPSG:4326",
                 "bbox": bbox_wkt,
                 "resolution_x": resolution_x,
                 "resolution_y": resolution_y,
@@ -473,7 +476,7 @@ def process_temporal_netcdf(
     try:
         with xr.open_dataset(filepath) as ds:
             if variable not in ds.data_vars:
-                logger.error(f"Variable {variable} not found in NetCDF")
+                logger.error("Variable %s not found in NetCDF", variable)
                 return {}
 
             # Select time range if specified
@@ -503,7 +506,7 @@ def process_temporal_netcdf(
 
                 except Exception as e:
                     logger.warning(
-                        f"Failed to extract data for coordinate {coord}: {e}"
+                        "Failed to extract data for coordinate %s: %s", coord, e
                     )
                     results[f"point_{i}"] = None
 
@@ -517,5 +520,5 @@ def process_temporal_netcdf(
             }
 
     except Exception as e:
-        logger.error(f"Error processing NetCDF temporal data: {e}")
+        logger.error("Error processing NetCDF temporal data: %s", e)
         return {}

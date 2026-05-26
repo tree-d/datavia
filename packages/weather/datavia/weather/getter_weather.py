@@ -24,6 +24,7 @@ from datavia.library.interpolation import (
     interpolate_netcdf,
     interpolate_station_parquet,
 )
+from datavia.library.unit_conversions import convert_era5_variable
 
 logger = logging.getLogger(__name__)
 
@@ -178,11 +179,11 @@ class GetterWeather(Getter):
         )
 
         nc_paths = get_weather_paths(self.source_name, variable, from_dt, to_dt)
-        parquet_paths = get_weather_paths(self.source_name, variable, from_dt, to_dt)
 
         # Separate by format (query returns all; filter by extension).
+        # A single call is made and split to avoid a redundant DB query.
         nc_files = [p for p in nc_paths if p.endswith(".nc")]
-        parquet_files = [p for p in parquet_paths if p.endswith(".parquet")]
+        parquet_files = [p for p in nc_paths if p.endswith(".parquet")]
 
         if not nc_files and not parquet_files:
             raise RuntimeError(
@@ -200,11 +201,11 @@ class GetterWeather(Getter):
 
             if nc_files:
                 try:
-                    gridded_val = float(
-                        interpolate_netcdf(
-                            nc_files[0], lat, lon, variable, datetime_utc
-                        )
+                    raw_gridded = interpolate_netcdf(
+                        nc_files[0], lat, lon, variable, datetime_utc
                     )
+                    # Apply ERA5 unit conversions (K→°C, m→mm, SSRD→PAR).
+                    gridded_val = float(convert_era5_variable(raw_gridded, variable))
                 except Exception as exc:
                     logger.warning(
                         "NetCDF interpolation failed for (%.4f, %.4f): %s",
@@ -214,17 +215,31 @@ class GetterWeather(Getter):
                     )
 
             if parquet_files:
-                try:
-                    station_val = interpolate_station_parquet(
-                        parquet_files[0], lat, lon, variable, datetime_utc, radius_km
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "Station interpolation failed for (%.4f, %.4f): %s",
-                        lat,
-                        lon,
-                        exc,
-                    )
+                for parquet_path in parquet_files:
+                    try:
+                        candidate = interpolate_station_parquet(
+                            parquet_path,
+                            lat,
+                            lon,
+                            variable,
+                            datetime_utc,
+                            radius_km,
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "Station interpolation failed for (%.4f, %.4f) in '%s': %s",
+                            lat,
+                            lon,
+                            parquet_path,
+                            exc,
+                        )
+                        continue
+                    if not np.isnan(candidate):
+                        station_val = candidate
+                        break
+                    # Keep the NaN as fallback so station_val is set even
+                    # when all files return NaN (avoids silently missing data).
+                    station_val = candidate
 
             if (
                 gridded_val is not None

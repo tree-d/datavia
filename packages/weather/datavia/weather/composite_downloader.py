@@ -102,24 +102,44 @@ class CompositeWeatherDownloader(CompositeDownloader):
         Returns
         -------
         str
-            Newline-joined pair of absolute file paths::
+            Newline-joined absolute file paths for every successful download,
+            e.g.::
 
                 /tmp/era5_abc123.nc\n/tmp/dwd_stations_xyz789.parquet
 
-            Returns ``"failed"`` if either sub-download fails or raises.
+            If ERA5 is unavailable (missing ``cdsapi`` package or missing
+            ``~/.cdsapirc`` credentials) the ERA5 path is omitted and only
+            the DWD path is returned — allowing partial updates without
+            blocking station data.
+
+            Returns ``"failed"`` only when *all* sub-downloads fail.
 
         Raises
         ------
         RuntimeError
-            If a sub-downloader raises an unexpected exception (logged and
+            If the DWD download raises an unexpected exception (logged and
             re-raised so the pipeline can mark the update as failed).
         """
+        paths: list[str] = []
+
         logger.info("CompositeWeatherDownloader: starting ERA5 download")
-        era5_path = self._era5.download()
-        logger.info("CompositeWeatherDownloader: ERA5 done -> %s", era5_path)
+        try:
+            era5_path = self._era5.download()
+            logger.info("CompositeWeatherDownloader: ERA5 done -> %s", era5_path)
+            paths.append(era5_path)
+        except (ImportError, RuntimeError) as exc:
+            logger.warning(
+                "CompositeWeatherDownloader: ERA5 download skipped (%s). "
+                "Continuing with DWD station data only. "
+                "To enable ERA5, install cdsapi and create ~/.cdsapirc.",
+                exc,
+            )
 
         logger.info("CompositeWeatherDownloader: starting DWD download")
         dwd_path = self._dwd.download()
         logger.info("CompositeWeatherDownloader: DWD done -> %s", dwd_path)
+        paths.append(dwd_path)
 
-        return f"{era5_path}\n{dwd_path}"
+        if not paths:
+            return "failed"
+        return "\n".join(paths)

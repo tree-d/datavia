@@ -294,8 +294,12 @@ def interpolate_station_parquet(
     dist_km: np.ndarray = earth_radius_km * np.sqrt(
         dlat**2 + (np.cos(lat_rad) * dlon) ** 2
     )
-    df = df[dist_km <= radius_km].copy()
-    dist_km = dist_km[dist_km <= radius_km]
+    # Reset the DataFrame index and rebuild dist_km together so that
+    # df.index and dist_km positions remain aligned for the later IDW step.
+    radius_mask = dist_km <= radius_km
+    df = df[radius_mask].copy()
+    dist_km = dist_km[radius_mask]
+    df.reset_index(drop=True, inplace=True)
 
     if df.empty:
         logger.warning(

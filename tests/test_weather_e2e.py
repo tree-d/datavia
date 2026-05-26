@@ -248,6 +248,7 @@ class TestDWDStationE2E:
             date_end=str(_DATE_END),
             stations=[
                 {"id": "Berlin", "latitude": _BERLIN_LAT, "longitude": _BERLIN_LON},
+                {"id": "Frankfurt", "latitude": 50.11, "longitude": 8.68},
                 {"id": "Cologne", "latitude": 50.94, "longitude": 6.96},
             ],
         )

@@ -474,17 +474,36 @@ class TestCompositeWeatherDownloader:
 
         assert result == "/tmp/era5.nc\n/tmp/dwd.parquet"
 
-    def test_download_propagates_era5_error(self) -> None:
-        """RuntimeError from the ERA5 sub-downloader is re-raised."""
+    def test_download_era5_error_falls_back_to_dwd(self) -> None:
+        """RuntimeError from ERA5 is caught; DWD path is still returned."""
         from datavia.weather.composite_downloader import CompositeWeatherDownloader
 
         composite = CompositeWeatherDownloader()
         composite._era5.download = MagicMock(
             side_effect=RuntimeError("CDS unavailable")
         )
+        composite._dwd.download = MagicMock(return_value="/tmp/dwd.parquet")
 
-        with pytest.raises(RuntimeError, match="CDS unavailable"):
-            composite.download()
+        result = composite.download()
+
+        # ERA5 skipped — only DWD path returned
+        assert result == "/tmp/dwd.parquet"
+        composite._dwd.download.assert_called_once()
+
+    def test_download_era5_import_error_falls_back_to_dwd(self) -> None:
+        """ImportError (missing cdsapi) from ERA5 is caught; DWD path returned."""
+        from datavia.weather.composite_downloader import CompositeWeatherDownloader
+
+        composite = CompositeWeatherDownloader()
+        composite._era5.download = MagicMock(
+            side_effect=ImportError("No module named 'cdsapi'")
+        )
+        composite._dwd.download = MagicMock(return_value="/tmp/dwd.parquet")
+
+        result = composite.download()
+
+        assert result == "/tmp/dwd.parquet"
+        composite._dwd.download.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -624,3 +643,281 @@ class TestERA5DownloaderDateFields:
         assert years == sorted(years)
         assert months == sorted(months)
         assert days == sorted(days)
+
+
+# ---------------------------------------------------------------------------
+# ERA5Downloader._snap_bbox (issue #8)
+# ---------------------------------------------------------------------------
+
+
+class TestERA5SnapBbox:
+    """Tests for the ERA5-Land 0.1° grid-snapping helper."""
+
+    def test_already_aligned_bbox_unchanged(self) -> None:
+        """A bbox already on 0.1° boundaries should be returned as-is."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        bbox = [55.1, 5.9, 47.3, 15.0]
+        result = ERA5Downloader._snap_bbox(bbox)
+        assert round(result[0], 6) == 55.1  # north — ceil → same
+        assert round(result[1], 6) == 5.9  # west  — floor → same
+        assert round(result[2], 6) == 47.3  # south — floor → same
+        assert round(result[3], 6) == 15.0  # east  — ceil → same
+
+    def test_north_east_rounded_up(self) -> None:
+        """North and east edges are ceiled to the next 0.1° boundary."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        bbox = [55.04, 5.91, 47.31, 15.04]
+        result = ERA5Downloader._snap_bbox(bbox)
+        # north 55.04 → ceil to 55.1
+        assert round(result[0], 6) == round(55.1, 6)
+        # east 15.04 → ceil to 15.1
+        assert round(result[3], 6) == round(15.1, 6)
+
+    def test_south_west_rounded_down(self) -> None:
+        """South and west edges are floored to the previous 0.1° boundary."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        bbox = [55.0, 5.96, 47.36, 15.0]
+        result = ERA5Downloader._snap_bbox(bbox)
+        # west 5.96 → floor to 5.9
+        assert round(result[1], 6) == round(5.9, 6)
+        # south 47.36 → floor to 47.3
+        assert round(result[2], 6) == round(47.3, 6)
+
+    def test_snap_applied_in_init(self) -> None:
+        """ERA5Downloader stores the snapped bbox, not the raw input."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        raw_bbox = [55.04, 5.91, 47.31, 15.04]
+        dl = ERA5Downloader(bbox=raw_bbox)
+        # snapped values must differ from the raw non-aligned inputs
+        assert dl.bbox != raw_bbox
+
+
+# ---------------------------------------------------------------------------
+# unit_conversions (issue #5)
+# ---------------------------------------------------------------------------
+
+
+class TestUnitConversions:
+    """Tests for the ERA5 unit conversion utilities."""
+
+    def test_kelvin_to_celsius_scalar(self) -> None:
+        """0 K converts to -273.15 °C."""
+        from datavia.library.unit_conversions import kelvin_to_celsius
+
+        assert kelvin_to_celsius(273.15) == pytest.approx(0.0)
+
+    def test_kelvin_to_celsius_array(self) -> None:
+        """Array conversion preserves shape and values."""
+        from datavia.library.unit_conversions import kelvin_to_celsius
+
+        import numpy as np
+
+        values = np.array([273.15, 373.15])
+        result = kelvin_to_celsius(values)
+        assert result == pytest.approx([0.0, 100.0])
+
+    def test_precipitation_m_to_mm(self) -> None:
+        """0.001 m converts to 1 mm."""
+        from datavia.library.unit_conversions import precipitation_m_to_mm
+
+        assert precipitation_m_to_mm(0.001) == pytest.approx(1.0)
+
+    def test_ssrd_to_par_zero(self) -> None:
+        """Zero SSRD yields zero PAR."""
+        from datavia.library.unit_conversions import ssrd_to_par
+
+        assert ssrd_to_par(0.0) == pytest.approx(0.0)
+
+    def test_ssrd_to_par_known_value(self) -> None:
+        """86400 J m⁻² day⁻¹ should equal 0.5 * 4.57 µmol m⁻² s⁻¹."""
+        from datavia.library.unit_conversions import ssrd_to_par
+
+        # 86400 J/m²/day ÷ 86400 s/day × 0.5 × 4.57 = 2.285 µmol/m²/s
+        expected = 1.0 * 0.5 * 4.57
+        assert ssrd_to_par(86400.0) == pytest.approx(expected)
+
+    def test_convert_era5_variable_temperature(self) -> None:
+        """Dispatches temperature to kelvin_to_celsius."""
+        from datavia.library.unit_conversions import convert_era5_variable
+
+        result = convert_era5_variable(300.0, "2m_temperature")
+        assert result == pytest.approx(300.0 - 273.15)
+
+    def test_convert_era5_variable_precipitation(self) -> None:
+        """Dispatches precipitation to precipitation_m_to_mm."""
+        from datavia.library.unit_conversions import convert_era5_variable
+
+        assert convert_era5_variable(0.005, "total_precipitation") == pytest.approx(5.0)
+
+    def test_convert_era5_variable_unknown_passthrough(self) -> None:
+        """Unknown variable names are returned unchanged."""
+        from datavia.library.unit_conversions import convert_era5_variable
+
+        assert convert_era5_variable(42.0, "u_component_of_wind") == pytest.approx(42.0)
+
+
+# ---------------------------------------------------------------------------
+# interpolate_station_parquet — index alignment fix (issue #4)
+# ---------------------------------------------------------------------------
+
+
+class TestInterpolateStationParquetIndexAlignment:
+    """Tests for the IDW index-alignment bug fix in interpolate_station_parquet."""
+
+    def test_returns_correct_weighted_value(self, tmp_path) -> None:
+        """IDW returns the correct value even when original DataFrame indices
+        are non-contiguous (simulating a pre-filtered DataFrame)."""
+        try:
+            import pandas as pd
+        except ImportError:
+            pytest.skip("pandas not installed")
+
+        from datavia.library.interpolation import interpolate_station_parquet
+
+        # Build a DataFrame with stations spread around the target point
+        # (52.5N, 13.4E).  We intentionally create multiple rows then select
+        # a subset to reproduce the non-contiguous-index scenario.
+        data = {
+            "station_id": ["A", "B", "C", "D"],
+            "latitude": [52.5, 52.6, 48.0, 48.0],  # A and B are within 50 km
+            "longitude": [13.4, 13.5, 8.0, 8.0],  # C and D are far away
+            "datetime": ["2024-06-15T12:00:00"] * 4,
+            "temperature_2m": [20.0, 22.0, 99.0, 99.0],
+        }
+        df = pd.DataFrame(data)
+        parquet_path = str(tmp_path / "test_stations.parquet")
+        df.to_parquet(parquet_path, index=False)
+
+        result = interpolate_station_parquet(
+            parquet_path=parquet_path,
+            lat=52.5,
+            lon=13.4,
+            variable="temperature_2m",
+            datetime_utc="2024-06-15T12:00:00",
+            radius_km=50.0,
+        )
+
+        # The result should be a valid number close to the near stations'
+        # values (20–22 °C), not NaN and not a spurious out-of-range value.
+        assert not (result != result), "Result must not be NaN"
+        assert 19.0 < result < 23.0, f"Unexpected IDW result: {result}"
+
+    def test_no_stations_returns_nan(self, tmp_path) -> None:
+        """Returns NaN (float) when no stations are within the search radius."""
+        try:
+            import pandas as pd
+        except ImportError:
+            pytest.skip("pandas not installed")
+
+        from datavia.library.interpolation import interpolate_station_parquet
+
+        data = {
+            "station_id": ["A"],
+            "latitude": [48.0],
+            "longitude": [8.0],
+            "datetime": ["2024-06-15T12:00:00"],
+            "temperature_2m": [15.0],
+        }
+        df = pd.DataFrame(data)
+        parquet_path = str(tmp_path / "far_station.parquet")
+        df.to_parquet(parquet_path, index=False)
+
+        result = interpolate_station_parquet(
+            parquet_path=parquet_path,
+            lat=52.5,
+            lon=13.4,
+            variable="temperature_2m",
+            datetime_utc="2024-06-15T12:00:00",
+            radius_km=50.0,
+        )
+        import math
+
+        assert math.isnan(result)
+
+
+# ---------------------------------------------------------------------------
+# SaverWeather — explicit variable parameter (issue #6)
+# ---------------------------------------------------------------------------
+
+
+class TestSaverWeatherExplicitVariable:
+    """Tests for the explicit variable parameter added to SaverWeather.save()."""
+
+    def test_explicit_variable_stored_in_db(self, sqlite_db: None, tmp_path) -> None:
+        """When variable is passed explicitly it is stored as-is in the DB."""
+        from sqlalchemy import text
+
+        from datavia.library.database.connection import session_local
+        from datavia.weather.saver_weather import SaverWeather
+
+        nc_file = tmp_path / "era5_tmpXYZabc.nc"
+        nc_file.write_bytes(b"FAKE_NC")
+
+        saver = SaverWeather.__new__(SaverWeather)
+        saver.source_name = "weather"
+        saver.data_dir = str(tmp_path)
+
+        with patch(
+            "datavia.weather.saver_weather.extract_netcdf_layer_metadata",
+            return_value={
+                "valid_from": "2024-06-01T00:00:00",
+                "valid_until": "2024-06-30T23:00:00",
+                "bbox": None,
+                "crs": "EPSG:4326",
+                "variables": ["2m_temperature"],
+            },
+        ):
+            result = saver.save(str(nc_file), variable="2m_temperature")
+
+        assert result is True
+
+        session = session_local()
+        row = session.execute(
+            text("SELECT variable FROM weather_layers WHERE source_name='weather'")
+        ).fetchone()
+        session.close()
+        assert row is not None
+        # The stored variable must be the explicit value, not a random stem fragment.
+        assert row[0] == "2m_temperature"
+
+    def test_auto_detect_variables_from_netcdf(self, sqlite_db: None, tmp_path) -> None:
+        """When variable=None the variables are read from the NC file metadata."""
+        from sqlalchemy import text
+
+        from datavia.library.database.connection import session_local
+        from datavia.weather.saver_weather import SaverWeather
+
+        nc_file = tmp_path / "era5_tmpABC.nc"
+        nc_file.write_bytes(b"FAKE_NC")
+
+        saver = SaverWeather.__new__(SaverWeather)
+        saver.source_name = "weather"
+        saver.data_dir = str(tmp_path)
+
+        with patch(
+            "datavia.weather.saver_weather.extract_netcdf_layer_metadata",
+            return_value={
+                "valid_from": "2024-06-01T00:00:00",
+                "valid_until": "2024-06-30T23:00:00",
+                "bbox": None,
+                "crs": "EPSG:4326",
+                "variables": ["2m_temperature", "total_precipitation"],
+            },
+        ):
+            result = saver.save(str(nc_file))
+
+        assert result is True
+
+        session = session_local()
+        rows = session.execute(
+            text("SELECT variable FROM weather_layers WHERE source_name='weather'")
+        ).fetchall()
+        session.close()
+        stored_vars = {r[0] for r in rows}
+        # Both variables from the NC file must have their own DB rows.
+        assert "2m_temperature" in stored_vars
+        assert "total_precipitation" in stored_vars

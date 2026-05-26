@@ -19,7 +19,7 @@ from datavia.core.downloader_api import APIDownloader
 logger = logging.getLogger(__name__)
 
 #: Open-Meteo historical weather API endpoint.
-_OPEN_METEO_URL: str = "https://historical-api.open-meteo.com/v1/archive"
+_OPEN_METEO_URL: str = "https://archive-api.open-meteo.com/v1/archive"
 
 #: Default DWD stations (WMO IDs) covering the German climate regions.
 #: A more complete list can be generated at runtime from the Open-Meteo

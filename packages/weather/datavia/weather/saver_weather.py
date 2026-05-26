@@ -68,6 +68,7 @@ class SaverWeather(Saver):
         data_path: str,
         reproject: bool = False,
         resolution_m: int | None = None,
+        variable: str | None = None,
     ) -> bool:
         """Copy a weather file to the data directory and register it in the DB.
 
@@ -78,6 +79,9 @@ class SaverWeather(Saver):
         - **NetCDF**: reads ``valid_from`` / ``valid_until`` from the ``time``
           dimension via
           :func:`datavia.library.formats.extract_netcdf_layer_metadata`.
+          When *variable* is ``None`` a DB row is inserted for every variable
+          found in the file so that per-variable path lookups work correctly
+          for multi-variable ERA5 downloads.
         - **Parquet**: infers ``valid_from`` / ``valid_until`` from the
           ``datetime`` column.
 
@@ -94,11 +98,17 @@ class SaverWeather(Saver):
             interface compatibility. Defaults to ``False``.
         resolution_m : int, optional
             Ignored for weather files. Defaults to ``None``.
+        variable : str, optional
+            Explicit variable name to register in the database, e.g.
+            ``"2m_temperature"``.  When ``None`` the variable is read from
+            the file content (NetCDF: all data-variable names; Parquet: the
+            source name).  Passing an explicit value is strongly preferred to
+            avoid relying on temp-file stem conventions.
 
         Returns
         -------
         bool
-            ``True`` when the file was copied and the DB row was inserted
+            ``True`` when the file was copied and all DB rows were inserted
             successfully, ``False`` on any error.
         """
         try:
@@ -111,27 +121,44 @@ class SaverWeather(Saver):
             shutil.copy2(data_path, dest_path)
             logger.info("Copied weather file to %s", dest_path)
 
-            # Extract variable name from stem: "era5_temperature_2m_2024" → "temperature_2m"
-            # Convention: <source_name>_<variable>[_<date_suffix>]
-            # The variable is the stem portion after the source_name prefix.
-            variable = _extract_variable_from_stem(stem, self.source_name)
+            # Resolve the list of variables to register for this file.
+            # When an explicit variable is given, register exactly that one.
+            # For multi-variable NetCDF files (ERA5 downloads), read the
+            # variable names from the file and insert one row per variable so
+            # that per-variable path queries return the correct file.
+            variables_to_register: list[str] = _resolve_variables(
+                dest_path, file_format, variable, self.source_name
+            )
 
-            # Extract temporal / spatial metadata.
+            # Temporal / spatial metadata is the same for all variables in
+            # a single file — read it once.
             valid_from, valid_until, bbox, crs = _read_temporal_metadata(
-                dest_path, file_format, variable
+                dest_path, file_format, variables_to_register[0]
             )
 
-            self._insert_weather_layer(
-                layer_name=layer_name,
-                variable=variable,
-                file_format=file_format,
-                valid_from=valid_from,
-                valid_until=valid_until,
-                uri=dest_path,
-                bbox=bbox,
-                crs=crs,
-            )
-            logger.info("Registered weather layer '%s' in database.", layer_name)
+            for var in variables_to_register:
+                # Use a per-variable layer name so each row is uniquely
+                # identifiable even when multiple variables share one file.
+                var_layer_name = (
+                    f"{layer_name}_{var}"
+                    if len(variables_to_register) > 1
+                    else layer_name
+                )
+                self._insert_weather_layer(
+                    layer_name=var_layer_name,
+                    variable=var,
+                    file_format=file_format,
+                    valid_from=valid_from,
+                    valid_until=valid_until,
+                    uri=dest_path,
+                    bbox=bbox,
+                    crs=crs,
+                )
+                logger.info(
+                    "Registered weather layer '%s' (variable='%s') in database.",
+                    var_layer_name,
+                    var,
+                )
             return True
 
         except Exception as exc:
@@ -446,6 +473,82 @@ def _extract_variable_from_stem(stem: str, source_name: str) -> str:
     if len(parts) == 2 and parts[1].isdigit() and len(parts[1]) == 8:
         return parts[0]
     return remainder
+
+
+def _resolve_variables(
+    dest_path: str,
+    file_format: str,
+    explicit_variable: str | None,
+    source_name: str,
+) -> list[str]:
+    """Determine the list of variable names to register for a weather file.
+
+    When *explicit_variable* is provided it is used as-is.  When it is
+    ``None`` the variables are inferred from the file content:
+
+    - **NetCDF**: all data-variable names are read from the file.  This
+      ensures that a multi-variable ERA5 download results in one DB row per
+      variable so per-variable path queries return the correct file.
+    - **Parquet**: the source name is used as a placeholder because Parquet
+      station files contain multiple observation columns without a single
+      canonical variable name.
+
+    Parameters
+    ----------
+    dest_path : str
+        Absolute path to the saved file.
+    file_format : str
+        ``"netcdf"`` or ``"parquet"``.
+    explicit_variable : str or None
+        Explicitly supplied variable name; ``None`` triggers auto-detection.
+    source_name : str
+        Source identifier used as fallback for Parquet files.
+
+    Returns
+    -------
+    list[str]
+        Non-empty list of variable names.  Contains exactly one entry when
+        *explicit_variable* is provided.
+    """
+    if explicit_variable is not None:
+        return [explicit_variable]
+
+    if file_format == "netcdf":
+        meta = extract_netcdf_layer_metadata(dest_path)
+        nc_vars = meta.get("variables", [])
+        if nc_vars:
+            return list(nc_vars)
+        # Fallback: use source_name when metadata extraction fails.
+        logger.warning(
+            "Could not read variable names from NetCDF '%s'; "
+            "using source_name '%s' as fallback.",
+            dest_path,
+            source_name,
+        )
+        return [source_name]
+
+    # Parquet: read the schema to find observation columns.
+    # DWD Parquet files always carry metadata columns (station_id, latitude,
+    # longitude, datetime); every other column is an observation variable.
+    _PARQUET_METADATA_COLS: frozenset[str] = frozenset(
+        {"station_id", "latitude", "longitude", "datetime"}
+    )
+    try:
+        import pyarrow.parquet as pq
+
+        schema = pq.read_schema(dest_path)
+        obs_vars = [name for name in schema.names if name not in _PARQUET_METADATA_COLS]
+        if obs_vars:
+            return obs_vars
+    except Exception as exc:
+        logger.warning(
+            "Could not infer variable names from Parquet '%s': %s; "
+            "using source_name '%s' as fallback.",
+            dest_path,
+            exc,
+            source_name,
+        )
+    return [source_name]
 
 
 def _read_temporal_metadata(
