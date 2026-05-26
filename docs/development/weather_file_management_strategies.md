@@ -1,11 +1,15 @@
 # Weather File Management — Strategy Comparison
 
-> **Context (2026-05-08):** Bug 3 from [era5_pipeline_issue_report.md](era5_pipeline_issue_report.md)
+> **Context (2026-05-08):** Bug C from [era5_pipeline_issue_report.md](era5_pipeline_issue_report.md)
 > identified that `_build_dest_stem()` encodes only `(source, variable, year)` in the
 > filename.  Two ERA5 downloads for the same variable and year but different bounding
 > boxes or months produce the same filename and the second silently overwrites the
 > first.  This document compares all strategies considered for solving the broader
 > "many fragment files" problem, from minimal fixes to full architecture replacements.
+>
+> **Scope:** the collision bug lives in `SaverWeather._build_dest_stem()` and therefore
+> affects **all NetCDF sources** (ERA5, HYRAS, and any future source) that go through
+> the same saver.  The practical exposure differs by source — see the note below.
 
 ---
 
@@ -25,6 +29,22 @@ return f"{source_name}_{nc_vars[0]}_{year}"
 `CoverageManager`'s 4-strip spatial subtraction logic is correct but relies on each
 downloaded tile receiving a unique filename.  As long as filenames collide, incremental
 spatial coverage is broken.
+
+### Exposure by source
+
+**ERA5-Land** — high exposure.  The CDS API accepts arbitrary bounding boxes, so
+`CoverageManager` routinely generates spatial fragments (4-strip remainders) for the
+same variable and year.  Data loss has been observed in practice.
+
+**HYRAS** — low exposure.  Each HYRAS file from the DWD OpenData server covers all of
+Germany at full resolution for a full calendar year — there is no bbox parameter.
+A collision can only occur if `update_data()` is called twice for an overlapping year
+before `sync_files_and_database()` runs.  In that case the overwritten file is
+identical to the original, so no data is lost — only bandwidth is wasted.
+
+**Future sources** — any source that accepts an arbitrary bbox (e.g. a second reanalysis
+product) would be high-exposure by default.  The fix in Strategy 1 should be applied
+to `_build_dest_stem()` once and covers all sources automatically.
 
 ---
 

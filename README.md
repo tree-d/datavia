@@ -19,7 +19,7 @@ Datavia is designed for researchers who need efficient integration of multiple g
 ### Available Pipelines (Modular Installation)
 
 - **📈 Elevation Pipeline** (`datavia[elevation]`): BKG DGM200 (200m resolution German elevation model)
-- **🌱 Soil Pipeline** (`datavia[soil]`): Still under construction - SoilGrids API integration with selective download strategy
+- **🌱 Soil Pipeline** (`datavia[soil]`): SoilGrids + HiHydroSoil integration with selective download strategy
 - **🌤️ Weather Pipeline** (`datavia[weather]`): Available — HYRAS daily gridded data (precipitation, temperature) + DWD station data; ERA5 in development
 - **☀️ Radiation Pipeline**: Planned - CAMS radiation data
 
@@ -165,9 +165,12 @@ datavia/                          # Repository root
 │   ├── elevation/               # datavia-elevation package
 │   │   ├── pyproject.toml
 │   │   └── datavia/elevation/   # Elevation pipeline code
-│   └── soil/                    # datavia-soil package
+│   ├── soil/                    # datavia-soil package
+│   │   ├── pyproject.toml
+│   │   └── datavia/soil/        # Soil pipeline code
+│   └── weather/                 # datavia-weather package
 │       ├── pyproject.toml
-│       └── datavia/soil/        # Soil pipeline code (WIP)
+│       └── datavia/weather/     # Weather pipeline code
 ├── tests/                       # Test suite
 ├── scripts/                     # Build and utility scripts
 └── docs/                        # Documentation
@@ -214,7 +217,6 @@ dv.elevation.update_data()
 coordinates = np.array([[10.0, 50.0], [11.0, 51.0]])  # [longitude, latitude]
 elevations = dv.elevation.get_data(coords=coordinates, crs_coords="EPSG:4326")
 
-# Note: API is under active development - see tests/ for latest examples
 ```
 
 ### Command Line Interface
@@ -326,6 +328,7 @@ See the [LICENSE](LICENSE) file for details.
 
 ## Roadmap
 
+- [x] Soil data pipeline (SoilGrids + HiHydroSoil integration)
 - [x] Weather data pipeline (HYRAS + DWD station integration)
 - [ ] Radiation data pipeline  
 - [ ] Vector data support (BÜK soil classification)
