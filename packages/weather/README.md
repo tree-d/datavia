@@ -245,6 +245,31 @@ WeatherPipeline(config={
 - `"hourly"` — one value per hour; ERA5 and DWD stations support this natively;
   HYRAS is daily-only and would raise a `ValueError` if hourly is requested.
 
+
+### Configurable spatial and temporal extent
+
+automated download (priorities for download)
+
+regions and times overlapping each other being respected
+
+(larger files mean longer download, maybe better use zip?)
+
+Check what downloaded data is avaiable before download (first downloaded specific region then larger region -> does it download everything or just the extension?)
+example: leipzig -> berlin -> sachsen : is whole sachsen or just sachsen without leipzig downloaded?
+
+### Reconfigure the Pipeline
+
+naming of the pipelines: what if pipelines have same name?
+different way if identifying the data? (fail save)
+how does it know this is a new pipeline? (or a different pipeline)
+just now it is in the hand of the user to choose a pipeline name -> automated possibility
+
+can I reconfigure the pipeline while running? (different name, different time extent, ...)
+command line tool -> reconfigure
+
+
+
+
 ---
 
 ## Data licensing
