@@ -1105,7 +1105,7 @@ class TestSaverWeatherDestNaming:
     def test_single_variable_nc_uses_source_variable_year(
         self, sqlite_db: None, tmp_path
     ) -> None:
-        """A single-variable NC file is copied as ``{source}_{nc_var}_{year}.nc``.
+        """A single-variable NC is copied as ``{source}_{nc_var}_{YYYYmm_start}_{YYYYmm_end}_{bbox_tag}.nc``.
 
         Parameters
         ----------
@@ -1138,12 +1138,12 @@ class TestSaverWeatherDestNaming:
         # The temp file must NOT appear in the data directory.
         assert not (tmp_path / "HYRAS_tmpXXXXXX.nc").exists()
         # The descriptive name must exist instead.
-        assert (tmp_path / "HYRAS_tas_2024.nc").exists()
+        assert (tmp_path / "HYRAS_tas_202401_202412_nobbox.nc").exists()
 
     def test_multi_variable_nc_omits_variable_from_stem(
         self, sqlite_db: None, tmp_path
     ) -> None:
-        """A multi-variable NC file is copied as ``{source}_{year}.nc``.
+        """A multi-variable NC is copied as ``{source}_{YYYYmm_start}_{YYYYmm_end}_{bbox_tag}.nc``.
 
         When more than one data variable is present in the file, encoding all
         of them in the filename would be impractically long.
@@ -1176,7 +1176,7 @@ class TestSaverWeatherDestNaming:
         ):
             saver.save(str(nc_file))
 
-        assert (tmp_path / "ERA5_land_2024.nc").exists()
+        assert (tmp_path / "ERA5_land_202406_202406_nobbox.nc").exists()
 
     def test_register_only_uses_file_stem_as_layer_name(
         self, sqlite_db: None, tmp_path
@@ -1414,11 +1414,12 @@ class TestExtractNetcdfLayerMetadata:
         )
 
     def test_valid_time_coord_stem(self, tmp_path) -> None:
-        """``_build_dest_stem`` extracts the year from ``valid_time`` files.
+        """``_build_dest_stem`` encodes month-range and bbox tag in the stem.
 
         When ``extract_netcdf_layer_metadata`` correctly resolves ``valid_from``
-        from the ``valid_time`` coordinate, the dest stem must end in the
-        correct year rather than ``_unknown``.
+        and ``valid_until`` from the ``valid_time`` coordinate, the dest stem
+        must contain ``{year}{month_start}_{year}{month_end}`` and ``nobbox``
+        (no lat/lon in this dataset) rather than just ``_{year}``.
 
         Parameters
         ----------
@@ -1443,8 +1444,8 @@ class TestExtractNetcdfLayerMetadata:
 
         stem = _build_dest_stem(str(nc_file), "netcdf", "ERA5_land")
 
-        assert stem == "ERA5_land_2m_temperature_2024", (
-            f"Expected 'ERA5_land_2m_temperature_2024', got '{stem}'"
+        assert stem == "ERA5_land_2m_temperature_202401_202412_nobbox", (
+            f"Expected 'ERA5_land_2m_temperature_202401_202412_nobbox', got '{stem}'"
         )
 
 

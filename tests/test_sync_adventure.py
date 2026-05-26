@@ -471,9 +471,11 @@ class TestWeatherSyncAdventure:
         # the deterministic destination name (BUG-07 fix).
         src_file = tmp_path / "temperature_jan.nc"
         src_file.write_bytes(b"FAKE_NC_CONTENT")
-        # _FAKE_NC_META has variables=["temperature_2m"], valid_from="2024-..."
-        # → _build_dest_stem produces ERA5_land_temperature_2m_2024.nc
-        expected_dest = str(tmp_path / f"{self._SOURCE}_temperature_2m_2024.nc")
+        # _FAKE_NC_META: variable=temperature_2m, Jan 2024, Germany bbox
+        # → _build_dest_stem produces ERA5_land_temperature_2m_202401_202401_11dae5.nc
+        expected_dest = str(
+            tmp_path / f"{self._SOURCE}_temperature_2m_202401_202401_11dae5.nc"
+        )
 
         with patch(
             "datavia.weather.saver_weather.extract_netcdf_layer_metadata",

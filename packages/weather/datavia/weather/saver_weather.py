@@ -15,6 +15,7 @@ File format is inferred automatically from the file extension:
 from __future__ import annotations
 
 import datetime
+import hashlib
 import json
 import logging
 import os
@@ -463,12 +464,18 @@ def _build_dest_stem(
 
     Naming rules:
 
-    - Single data variable: ``{source_name}_{nc_variable}_{year}``
-      e.g. ``HYRAS_tas_2024``, ``ERA5_land_2m_temperature_2024``.
-    - Multiple data variables: ``{source_name}_{year}``
+    - Single data variable:
+      ``{source_name}_{nc_variable}_{YYYYmm_start}_{YYYYmm_end}_{bbox_hash}``
+      e.g. ``ERA5_land_2m_temperature_202401_202412_a3f91c``.
+    - Multiple data variables:
+      ``{source_name}_{YYYYmm_start}_{YYYYmm_end}_{bbox_hash}``
       (encoding all variable names would produce an impractically long stem).
     - Unreadable NC / Parquet: ``{source_name}_{temp_stem}`` as a safe
       fallback so existing behaviour for Parquet station files is preserved.
+    - ``bbox_hash`` is the first 6 hex digits of the MD5 of the WKT bounding
+      box string, ensuring spatially distinct fragments for the same variable
+      and period receive unique filenames.  Falls back to ``nobbox`` when the
+      file has no spatial coordinates.
 
     Parameters
     ----------
@@ -488,11 +495,22 @@ def _build_dest_stem(
         meta = extract_netcdf_layer_metadata(data_path)
         nc_vars: list[str] = meta.get("variables", [])
         valid_from: str | None = meta.get("valid_from")
-        year: str = valid_from[:4] if valid_from else "unknown"
+        valid_until: str | None = meta.get("valid_until")
+        bbox_wkt: str | None = meta.get("bbox")
+
+        year_start = valid_from[:4] if valid_from else "unknown"
+        month_start = valid_from[5:7] if valid_from else "XX"
+        year_end = valid_until[:4] if valid_until else "unknown"
+        month_end = valid_until[5:7] if valid_until else "XX"
+        bbox_tag = (
+            hashlib.md5(bbox_wkt.encode()).hexdigest()[:6] if bbox_wkt else "nobbox"
+        )
+        time_range = f"{year_start}{month_start}_{year_end}{month_end}"
+
         if len(nc_vars) == 1:
-            return f"{source_name}_{nc_vars[0]}_{year}"
+            return f"{source_name}_{nc_vars[0]}_{time_range}_{bbox_tag}"
         # Multiple variables or metadata unreadable — omit variable name.
-        return f"{source_name}_{year}"
+        return f"{source_name}_{time_range}_{bbox_tag}"
 
     # Parquet (DWD station files): derive a year from the datetime column so
     # the filename is descriptive rather than random.  Falls back to the temp
