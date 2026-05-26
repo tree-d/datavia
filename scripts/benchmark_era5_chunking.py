@@ -90,10 +90,13 @@ Use fewer variables for a faster / lighter test (~0.75 GB per run)::
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 logging.basicConfig(
@@ -129,6 +132,12 @@ DEFAULT_YEAR_SPATIAL_4TILE_YEARLY: int = 2025  # Spatial-tiling test on 2025.
 #: Used to derive the 2×2 spatial tile sub-boxes.
 _BENCHMARK_BBOX: list[float] = [55.1, 5.9, 47.3, 15.0]
 
+#: Persistent results log — one JSON record per completed strategy run.
+#: Stored in logs/ so it survives script edits and accumulates over time.
+_RESULTS_LOG_PATH: Path = (
+    Path(__file__).parent.parent / "logs" / "benchmark_era5_results.jsonl"
+)
+
 #: Strategies to run (in order) when --strategy is not specified.
 ALL_STRATEGIES: list[str] = [
     "monthly",
@@ -161,6 +170,58 @@ _STRATEGY_CONFIG: dict[str, dict[str, object]] = {
         "spatial_tiles": 4,
     },
 }
+
+
+# ---------------------------------------------------------------------------
+# Persistent history
+# ---------------------------------------------------------------------------
+
+
+def _load_history() -> list[dict[str, object]]:
+    """Load all past benchmark results from the JSONL log file.
+
+    Returns an empty list if the file does not yet exist or is unreadable.
+
+    Returns
+    -------
+    list[dict[str, object]]
+        One dict per past completed strategy run.
+    """
+    if not _RESULTS_LOG_PATH.exists():
+        return []
+    records: list[dict[str, object]] = []
+    for line in _RESULTS_LOG_PATH.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line:
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                pass  # Ignore malformed lines.
+    return records
+
+
+def _append_to_history(result: StrategyResult) -> None:
+    """Append a single completed strategy result to the JSONL log file.
+
+    Creates the log file and its parent directory if they do not yet exist.
+
+    Parameters
+    ----------
+    result : StrategyResult
+        The completed strategy result to persist.
+    """
+    _RESULTS_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    record = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "strategy": result.strategy,
+        "year": result.year,
+        "n_jobs": result.n_jobs,
+        "total_wall_s": round(result.total_wall_s, 1),
+        "avg_job_s": round(result.avg_job_s, 1),
+        "max_job_s": round(result.max_job_s, 1),
+    }
+    with _RESULTS_LOG_PATH.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record) + "\n")
 
 
 # ---------------------------------------------------------------------------
@@ -446,13 +507,21 @@ def _run_strategy(
 # ---------------------------------------------------------------------------
 
 
-def _print_summary(results: list[StrategyResult]) -> None:
+def _print_summary(
+    results: list[StrategyResult],
+    history: list[dict[str, object]],
+) -> None:
     """Print a formatted comparison table to stdout.
+
+    Shows timings for the current run and the all-time fastest strategy
+    accumulated from the persistent JSONL log.
 
     Parameters
     ----------
     results : list[StrategyResult]
-        One result object per strategy that was run.
+        One result object per strategy run in the current session.
+    history : list[dict[str, object]]
+        All past records loaded from the JSONL log (may include current run).
     """
     width = 90
     print()
@@ -489,6 +558,20 @@ def _print_summary(results: list[StrategyResult]) -> None:
         print(
             f"  → Fastest strategy for this run: {fastest.strategy!r} ({fastest.total_wall_s:.1f} s)"
         )
+
+    # All-time winner from the persistent log.
+    if history:
+        best = min(history, key=lambda r: float(str(r["total_wall_s"])))
+        print(
+            f"  → All-time fastest (across {len(history)} recorded run(s)): "
+            f"{best['strategy']!r} — {best['total_wall_s']} s "
+            f"(year {best['year']}, {best['n_jobs']} jobs, "
+            f"recorded {str(best['timestamp'])[:10]})"
+        )
+    else:
+        print("  → No previous runs recorded yet.")
+    print()
+    print(f"  Full history: {_RESULTS_LOG_PATH}")
     print()
 
 
@@ -594,6 +677,11 @@ def main(argv: list[str] | None = None) -> None:
     """
     args = _parse_args(argv)
 
+    # Load history before any downloads so new results can be compared.
+    history = _load_history()
+    if history:
+        logger.info("Loaded %d past result(s) from %s", len(history), _RESULTS_LOG_PATH)
+
     strategy_years: dict[str, int] = {
         "monthly": args.year_monthly,
         "quarterly": args.year_quarterly,
@@ -625,6 +713,18 @@ def main(argv: list[str] | None = None) -> None:
                 variables=args.variables,
             )
             results.append(result)
+            _append_to_history(result)
+            history.append(
+                {
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "strategy": result.strategy,
+                    "year": result.year,
+                    "n_jobs": result.n_jobs,
+                    "total_wall_s": round(result.total_wall_s, 1),
+                    "avg_job_s": round(result.avg_job_s, 1),
+                    "max_job_s": round(result.max_job_s, 1),
+                }
+            )
         except KeyboardInterrupt:
             logger.warning(
                 "Interrupted during strategy %r — partial results follow.", strategy
@@ -635,7 +735,7 @@ def main(argv: list[str] | None = None) -> None:
             continue
 
     if results:
-        _print_summary(results)
+        _print_summary(results, history)
     else:
         logger.error("No strategies completed successfully.")
         sys.exit(1)
