@@ -89,6 +89,18 @@ SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
         "grid_downloader": _HYRASDownloader,
         # HYRAS files are already in target units (°C, mm/day, W/m²).
         "conversions": {},
+        # Maps NetCDF CF variable names (as they appear inside the .nc file)
+        # to the pipeline variable names used throughout the datavia API.
+        # Needed because HYRAS uses short CF names (e.g. "tas") while the rest
+        # of the pipeline uses descriptive names (e.g. "2m_temperature").
+        "nc_variable_map": {
+            "tas": "2m_temperature",
+            "tasmax": "temperature_2m_max",
+            "tasmin": "temperature_2m_min",
+            "pr": "total_precipitation",
+            "rsds": "surface_solar_radiation_downwards",
+            "hurs": "relative_humidity_2m",
+        },
     },
     "DWD_stations": {
         # Station-only source — no gridded downloader.
@@ -128,6 +140,41 @@ def get_grid_downloader_class(source_name: str) -> "type[Downloader] | None":
             f"Valid sources: {sorted(SOURCE_REGISTRY)}"
         )
     return SOURCE_REGISTRY[source_name]["grid_downloader"]
+
+
+def get_nc_variable_name(source_name: str, pipeline_variable: str) -> str:
+    """Return the NetCDF variable name for a given pipeline variable and source.
+
+    For sources whose NetCDF files use short CF variable names (e.g. HYRAS
+    stores temperature as ``"tas"`` rather than ``"2m_temperature"``), this
+    function translates the pipeline-level variable name to the name actually
+    present inside the file, as required by :func:`interpolate_netcdf`.
+
+    Falls back to *pipeline_variable* unchanged when the source has no
+    ``nc_variable_map`` or when the variable is not listed there.
+
+    Parameters
+    ----------
+    source_name : str
+        A key in :data:`SOURCE_REGISTRY`, e.g. ``"HYRAS"``.
+    pipeline_variable : str
+        Pipeline-level variable name, e.g. ``"2m_temperature"``.
+
+    Returns
+    -------
+    str
+        NetCDF variable name, e.g. ``"tas"`` for HYRAS temperature, or
+        *pipeline_variable* itself when no mapping is needed.
+    """
+    nc_var_map: dict[str, str] = SOURCE_REGISTRY.get(source_name, {}).get(
+        "nc_variable_map", {}
+    )
+    if nc_var_map:
+        # nc_variable_map is NC→pipeline; build the reverse (pipeline→NC) on
+        # the fly.  The reverse is a 1-to-1 mapping by construction.
+        pipeline_to_nc = {v: k for k, v in nc_var_map.items()}
+        return pipeline_to_nc.get(pipeline_variable, pipeline_variable)
+    return pipeline_variable
 
 
 def apply_conversion(

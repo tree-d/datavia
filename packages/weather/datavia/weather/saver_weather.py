@@ -28,6 +28,8 @@ from datavia.library.database.connection import session_local
 from datavia.library.database.query import check_weather_source_exists
 from datavia.library.formats import extract_netcdf_layer_metadata
 
+from .source_registry import SOURCE_REGISTRY
+
 logger = logging.getLogger(__name__)
 
 
@@ -517,7 +519,22 @@ def _resolve_variables(
         meta = extract_netcdf_layer_metadata(dest_path)
         nc_vars = meta.get("variables", [])
         if nc_vars:
-            return list(nc_vars)
+            # Some sources (e.g. HYRAS) store data under short CF variable
+            # names ("tas", "pr") that differ from the pipeline-level names
+            # ("2m_temperature", "total_precipitation").  Remap them using the
+            # nc_variable_map registered in SOURCE_REGISTRY so that the DB
+            # rows use the same names that the getter and callers expect.
+            nc_var_map: dict[str, str] = SOURCE_REGISTRY.get(source_name, {}).get(
+                "nc_variable_map", {}
+            )
+            if nc_var_map:
+                # Keep only data variables listed in nc_variable_map and
+                # translate CF names to pipeline names.  This also silently
+                # drops auxiliary CF variables (time_bnds, x_bnds, crs, etc.)
+                # that appear in ds.data_vars but are not observational data.
+                nc_vars = [nc_var_map[v] for v in nc_vars if v in nc_var_map]
+            if nc_vars:
+                return list(nc_vars)
         # Fallback: use source_name when metadata extraction fails.
         logger.warning(
             "Could not read variable names from NetCDF '%s'; "

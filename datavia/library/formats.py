@@ -348,9 +348,13 @@ def extract_netcdf_layer_metadata(filepath: str) -> dict[str, Any]:
                     f"POLYGON (({west} {south}, {east} {south}, "
                     f"{east} {north}, {west} {north}, {west} {south}))"
                 )
-                if len(lons) > 1:
+                # Guard against 2-D auxiliary coordinate arrays (e.g. HYRAS
+                # ETRS89-LAEA files store lat/lon as 2-D fields alongside the
+                # projected x/y dimensions).  Resolution is only meaningful for
+                # 1-D coordinate axes.
+                if lons.ndim == 1 and len(lons) > 1:
                     resolution_x = float(abs(lons[1] - lons[0]))
-                if len(lats) > 1:
+                if lats.ndim == 1 and len(lats) > 1:
                     resolution_y = float(abs(lats[1] - lats[0]))
 
             # ERA5 geographic-coordinate files carry a CF convention string

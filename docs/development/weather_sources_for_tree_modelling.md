@@ -312,11 +312,28 @@ pip install requests pandas xarray netCDF4
 
 ## Notes on Coordinates in HYRAS
 
-HYRAS files use a **rotated pole projection** (not WGS84 lat/lon directly).
-The `x` and `y` dimensions in the NetCDF refer to the rotated grid coordinates.
-When selecting by lat/lon, `xarray`'s `method="nearest"` handles this correctly
-if you pass the geographic coordinates to `x=LON, y=LAT`.
-For precise work, check the CRS via `ds.rio.crs` (requires `rioxarray`).
+HYRAS files use **ETRS89 LAEA Europe (EPSG:3035)** — not a rotated-pole projection
+and not WGS84 lat/lon.
+The `x` and `y` dimensions are in **metres** on that projected grid.
+Passing WGS84 longitude/latitude directly to `xarray.Dataset.interp()` or
+`sel(x=LON, y=LAT)` gives silently wrong results or a `ValueError`.
+
+To extract a value at a WGS84 point you must first reproject with `pyproj`:
+
+```python
+import pyproj, xarray as xr
+
+ds = xr.open_dataset("tas_hyras_1_2023_v6-1_de.nc")
+crs_file = pyproj.CRS.from_cf(ds["crs"].attrs)          # EPSG:3035
+transformer = pyproj.Transformer.from_crs(
+    "EPSG:4326", crs_file, always_xy=True
+)
+x_proj, y_proj = transformer.transform(lon_wgs84, lat_wgs84)
+value = ds["tas"].interp(x=x_proj, y=y_proj)
+```
+
+When using the `datavia` weather pipeline, `interpolate_netcdf` performs this
+reprojection automatically — no manual conversion is needed.
 
 ---
 

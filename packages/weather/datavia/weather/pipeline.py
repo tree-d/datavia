@@ -277,3 +277,38 @@ class WeatherPipeline(Pipeline):
             band=band,
             **kwargs,
         )
+
+    def sync_files_and_database(self) -> bool:
+        """Reconcile weather files on disk with the database, without downloading.
+
+        Scans the configured data directory for weather files that belong to
+        this pipeline's source and compares them against ``weather_layers`` DB
+        rows.  Two repairs are performed:
+
+        1. **Orphan DB rows** — rows whose ``uri`` points to a missing file are
+           deleted from ``weather_layers``.
+        2. **Orphan disk files** — files present on disk but absent from the
+           database are re-registered via :meth:`SaverWeather.save`.
+
+        This is useful after a database reset: it restores DB registration
+        from already-downloaded files so that :meth:`update_data` (and a
+        full re-download) is not necessary.
+
+        Usage::
+
+            pipe = WeatherPipeline(config={...})
+            pipe()  # or Datavia(pipelines=[pipe])()
+            pipe.sync_files_and_database()
+
+        Returns
+        -------
+        bool
+            ``True`` when synchronisation completed without errors.
+        """
+        if not self.saver:
+            self()
+
+        assert self.saver is not None
+        assert isinstance(self.saver, SaverWeather)
+
+        return self.saver.sync_files_and_database()

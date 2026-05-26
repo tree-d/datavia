@@ -29,7 +29,7 @@ from datavia.library.interpolation import (
     interpolate_netcdf,
     interpolate_station_parquet,
 )
-from .source_registry import apply_conversion
+from .source_registry import apply_conversion, get_nc_variable_name
 
 logger = logging.getLogger(__name__)
 
@@ -223,8 +223,13 @@ class GetterWeather(Getter):
 
             if nc_files:
                 try:
+                    # Translate the pipeline-level variable name to the name
+                    # actually stored inside the NetCDF file.  For ERA5 the
+                    # two names are identical; for HYRAS they differ
+                    # (e.g. "2m_temperature" → "tas").
+                    nc_variable = get_nc_variable_name(self.source_name, variable)
                     raw_gridded = interpolate_netcdf(
-                        nc_files[0], lat, lon, variable, datetime_utc
+                        nc_files[0], lat, lon, nc_variable, datetime_utc
                     )
                     # Apply source-aware unit conversion (e.g. K→°C for ERA5_land;
                     # HYRAS passes through unchanged as it is already in target units).
