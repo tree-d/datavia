@@ -42,12 +42,20 @@ import numpy as np
 # Initialise the pipeline
 pipeline = WeatherPipeline(config={
     "variables": ["2m_temperature", "total_precipitation"],
+    "source": "HYRAS",
+    "date_start": "2024-06-01",
+    "date_end": "2024-06-30",
+})
+
+pipeline2 = WeatherPipeline(config={
+    "variables": ["2m_temperature", "total_precipitation"],
+    "source": "ERA5-land",
     "date_start": "2024-06-01",
     "date_end": "2024-06-30",
 })
 
 # Wire up all components (downloader, saver, getter)
-dv = Datavia(pipelines=[pipeline])
+dv = Datavia(pipelines=[pipeline, pipeline2])
 dv()
 
 # Download ERA5-Land NetCDF and DWD station Parquet files
