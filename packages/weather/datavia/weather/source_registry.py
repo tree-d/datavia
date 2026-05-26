@@ -83,6 +83,13 @@ SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
             "total_precipitation": {"from": "m", "to": "mm"},
             "surface_solar_radiation_downwards": {"from": "J_m2", "to": "PAR"},
         },
+        # Maps ECMWF short variable names (as stored in ERA5-Land NetCDF files)
+        # to the pipeline variable names used throughout the datavia API.
+        "nc_variable_map": {
+            "t2m": "2m_temperature",
+            "tp": "total_precipitation",
+            "ssrd": "surface_solar_radiation_downwards",
+        },
     },
     "HYRAS": {
         # Populated with HYRASDownloader once Phase D is implemented.

@@ -596,7 +596,13 @@ class TestWeatherPipeline:
         assert pipe.getter is not None
 
     def test_update_data_splits_paths(self) -> None:
-        """update_data() calls saver.save() for each path in the combined string."""
+        """update_data() calls saver.save() for each path in the combined string.
+
+        Patches :class:`CoverageManager` to return one missing cell and
+        :class:`CompositeWeatherDownloader` so the per-cell downloader returns
+        two paths without any network access.
+        """
+        from datavia.weather.coverage_manager import CoverageCell
         from datavia.weather.pipeline import WeatherPipeline
 
         pipe = WeatherPipeline(
@@ -607,15 +613,32 @@ class TestWeatherPipeline:
                 "date_end": "2024-01-31",
             }
         )
+        # Pre-assign components so self() is not invoked during update_data().
         pipe.downloader = MagicMock()
-        pipe.downloader.download.return_value = "/tmp/era5.nc\n/tmp/dwd.parquet"
         pipe.saver = MagicMock()
         pipe.saver.save.return_value = True
         pipe.saver.list_managed_files.return_value = []
         pipe.getter = MagicMock()
         pipe.getter.get_registered_uris.return_value = set()
 
-        result = pipe.update_data()
+        fake_cell = CoverageCell(
+            bbox=(5.9, 47.3, 15.0, 55.1),
+            date_start="2024-01-01",
+            date_end="2024-01-31",
+        )
+        mock_cell_dl = MagicMock()
+        mock_cell_dl.download.return_value = "/tmp/era5.nc\n/tmp/dwd.parquet"
+
+        with (
+            patch("datavia.weather.pipeline.CoverageManager") as mock_cm_cls,
+            patch(
+                "datavia.weather.pipeline.CompositeWeatherDownloader",
+                return_value=mock_cell_dl,
+            ),
+            patch.object(pipe, "sync_files_and_database"),
+        ):
+            mock_cm_cls.return_value.missing_spatiotemporal.return_value = [fake_cell]
+            result = pipe.update_data()
 
         assert result is True
         assert pipe.saver.save.call_count == 2
@@ -624,7 +647,8 @@ class TestWeatherPipeline:
         assert "/tmp/dwd.parquet" in saved_paths
 
     def test_update_data_returns_false_on_download_failure(self) -> None:
-        """update_data() returns False when download() returns 'failed'."""
+        """update_data() returns False when the per-cell download() returns 'failed'."""
+        from datavia.weather.coverage_manager import CoverageCell
         from datavia.weather.pipeline import WeatherPipeline
 
         pipe = WeatherPipeline(
@@ -636,13 +660,31 @@ class TestWeatherPipeline:
             }
         )
         pipe.downloader = MagicMock()
-        pipe.downloader.download.return_value = "failed"
         pipe.saver = MagicMock()
         pipe.saver.list_managed_files.return_value = []
         pipe.getter = MagicMock()
         pipe.getter.get_registered_uris.return_value = set()
 
-        assert pipe.update_data() is False
+        fake_cell = CoverageCell(
+            bbox=(5.9, 47.3, 15.0, 55.1),
+            date_start="2024-01-01",
+            date_end="2024-01-31",
+        )
+        mock_cell_dl = MagicMock()
+        mock_cell_dl.download.return_value = "failed"
+
+        with (
+            patch("datavia.weather.pipeline.CoverageManager") as mock_cm_cls,
+            patch(
+                "datavia.weather.pipeline.CompositeWeatherDownloader",
+                return_value=mock_cell_dl,
+            ),
+            patch.object(pipe, "sync_files_and_database"),
+        ):
+            mock_cm_cls.return_value.missing_spatiotemporal.return_value = [fake_cell]
+            result = pipe.update_data()
+
+        assert result is False
         pipe.saver.save.assert_not_called()
 
     def test_update_data_returns_false_on_partial_save_failure(self) -> None:
@@ -658,14 +700,34 @@ class TestWeatherPipeline:
             }
         )
         pipe.downloader = MagicMock()
-        pipe.downloader.download.return_value = "/tmp/era5.nc\n/tmp/dwd.parquet"
         pipe.saver = MagicMock()
         pipe.saver.save.side_effect = [True, False]
         pipe.saver.list_managed_files.return_value = []
         pipe.getter = MagicMock()
         pipe.getter.get_registered_uris.return_value = set()
 
-        assert pipe.update_data() is False
+        from datavia.weather.coverage_manager import CoverageCell
+
+        fake_cell = CoverageCell(
+            bbox=(5.9, 47.3, 15.0, 55.1),
+            date_start="2024-01-01",
+            date_end="2024-01-31",
+        )
+        mock_cell_dl = MagicMock()
+        mock_cell_dl.download.return_value = "/tmp/era5.nc\n/tmp/dwd.parquet"
+
+        with (
+            patch("datavia.weather.pipeline.CoverageManager") as mock_cm_cls,
+            patch(
+                "datavia.weather.pipeline.CompositeWeatherDownloader",
+                return_value=mock_cell_dl,
+            ),
+            patch.object(pipe, "sync_files_and_database"),
+        ):
+            mock_cm_cls.return_value.missing_spatiotemporal.return_value = [fake_cell]
+            result = pipe.update_data()
+
+        assert result is False
 
 
 # ---------------------------------------------------------------------------
@@ -1789,3 +1851,274 @@ class TestTemporalResolution:
         assert mock_interp.call_args.kwargs.get("temporal_resolution") == "hourly", (
             "temporal_resolution was not forwarded to interpolate_netcdf"
         )
+
+
+# ---------------------------------------------------------------------------
+# TestCoverageManager
+# ---------------------------------------------------------------------------
+
+
+def _insert_coverage_cell(
+    source_name: str,
+    variable: str,
+    bbox: tuple[float, float, float, float],
+    date_start: str,
+    date_end: str,
+) -> None:
+    """Insert a ``weather_layers`` row with a WKT POLYGON bbox for coverage tests.
+
+    Parameters
+    ----------
+    source_name : str
+    variable : str
+    bbox : tuple[float, float, float, float]
+        ``(west, south, east, north)`` in EPSG:4326 degrees.
+    date_start : str
+        ISO date string ``YYYY-MM-DD``; used as ``valid_from``.
+    date_end : str
+        ISO date string ``YYYY-MM-DD``; used as ``valid_until`` (with
+        ``T23:59:59`` appended to match the saver convention).
+    """
+    from sqlalchemy import text
+
+    from datavia.library.database.connection import session_local
+
+    w, s, e, n = bbox
+    bbox_wkt = f"POLYGON (({w} {s}, {e} {s}, {e} {n}, {w} {n}, {w} {s}))"
+
+    session = session_local()
+    try:
+        session.execute(
+            text(
+                """
+                INSERT INTO weather_layers
+                    (layer_name, source_name, variable, file_format,
+                     valid_from, valid_until, uri, crs, bbox, metadata)
+                VALUES
+                    (:layer_name, :source_name, :variable, :file_format,
+                     :valid_from, :valid_until, :uri, 'EPSG:4326', :bbox, NULL)
+                """
+            ),
+            {
+                "layer_name": f"{source_name}_{variable}_{date_start}",
+                "source_name": source_name,
+                "variable": variable,
+                "file_format": "netcdf",
+                "valid_from": date_start,
+                "valid_until": f"{date_end}T23:59:59",
+                "uri": f"/fake/{source_name}_{variable}_{date_start}.nc",
+                "bbox": bbox_wkt,
+            },
+        )
+        session.commit()
+    finally:
+        session.close()
+
+
+class TestCoverageManager:
+    """Tests for :class:`~datavia.weather.coverage_manager.CoverageManager`.
+
+    All tests use the ``sqlite_db`` fixture so they run against an in-memory
+    database with no network access.  The 2-D subtraction algorithm is
+    exercised through five scenarios that collectively cover all branches of
+    :func:`~datavia.weather.coverage_manager._compute_missing`.
+    """
+
+    # Germany bounding box used as a representative large extent.
+    _GERMANY: ClassVar[tuple[float, float, float, float]] = (5.9, 47.3, 15.0, 55.1)
+    # Berlin inner-city approximate bounding box (fully inside Germany).
+    _BERLIN: ClassVar[tuple[float, float, float, float]] = (13.1, 52.3, 13.8, 52.7)
+    # East Germany bounding box (contains Berlin, inside Germany).
+    _EAST_GERMANY: ClassVar[tuple[float, float, float, float]] = (
+        10.0,
+        50.0,
+        15.0,
+        55.0,
+    )
+
+    def test_fully_covered_returns_empty(self, sqlite_db) -> None:
+        """Requesting a bbox and date range already in the DB returns an empty list.
+
+        Verifies the happy-path where all data is already registered and no
+        download is triggered.
+        """
+        from datavia.weather.coverage_manager import CoverageManager
+
+        _insert_coverage_cell(
+            "ERA5_land", "2m_temperature", self._GERMANY, "2024-01-01", "2024-12-31"
+        )
+        mgr = CoverageManager("ERA5_land", ["2m_temperature"])
+        result = mgr.missing_spatiotemporal(self._GERMANY, "2024-01-01", "2024-12-31")
+
+        assert result == [], (
+            f"Expected no missing cells when DB fully covers the request; got {result}"
+        )
+
+    def test_wider_time_range_returns_date_gaps(self, sqlite_db) -> None:
+        """A request wider in time than what is in the DB returns before/after gaps.
+
+        Existing: Germany 2024.  Requested: Germany 2023-2025.
+        Expected: two cells - one for 2023 and one for 2025.
+        """
+        from datavia.weather.coverage_manager import CoverageManager
+
+        _insert_coverage_cell(
+            "ERA5_land", "2m_temperature", self._GERMANY, "2024-01-01", "2024-12-31"
+        )
+        mgr = CoverageManager("ERA5_land", ["2m_temperature"])
+        result = mgr.missing_spatiotemporal(self._GERMANY, "2023-01-01", "2025-12-31")
+
+        assert len(result) == 2, (
+            f"Expected 2 temporal gap cells; got {len(result)}: {result}"
+        )
+
+        date_starts = {c.date_start for c in result}
+        date_ends = {c.date_end for c in result}
+        assert "2023-01-01" in date_starts, "Expected a cell starting 2023-01-01."
+        assert "2025-12-31" in date_ends, "Expected a cell ending 2025-12-31."
+        assert "2024-01-01" not in date_starts, (
+            "Cell starting on 2024-01-01 should not be missing."
+        )
+        # Both gap cells must span the full Germany bbox.
+        for cell in result:
+            assert cell.bbox == self._GERMANY, (
+                f"Temporal gap cell has unexpected bbox {cell.bbox!r}; "
+                f"expected {self._GERMANY!r}."
+            )
+
+    def test_wider_bbox_returns_spatial_strips(self, sqlite_db) -> None:
+        """A request wider in space than what is in the DB returns spatial strips.
+
+        Existing: western half of Germany for 2024.
+        Requested: full Germany for 2024.
+        Expected: the eastern strip is returned as a missing cell.
+        """
+        from datavia.weather.coverage_manager import CoverageManager
+
+        west_half = (5.9, 47.3, 10.45, 55.1)  # western half
+        _insert_coverage_cell(
+            "ERA5_land", "2m_temperature", west_half, "2024-01-01", "2024-12-31"
+        )
+
+        mgr = CoverageManager("ERA5_land", ["2m_temperature"])
+        result = mgr.missing_spatiotemporal(self._GERMANY, "2024-01-01", "2024-12-31")
+
+        # The right strip (east of the existing cell) must appear.
+        assert len(result) >= 1, "Expected at least one spatial strip."
+        # No cell should cover the western half (5.9 to 10.45 longitude).
+        for cell in result:
+            w, _s, e, _n = cell.bbox
+            assert not (w <= 8.0 <= e), (
+                f"Cell {cell} covers longitude 8.0° which is in the already-registered "
+                f"western half and should not be re-fetched."
+            )
+
+    def test_2d_overlap_berlin_east_germany(self, sqlite_db) -> None:
+        """2-D overlap: Berlin 1990-2000 on disk, East Germany 1980-2010 requested.
+
+        The existing Berlin/1990-2000 cell splits the request into:
+
+        - 1 temporal piece before 1990 (full East Germany bbox)
+        - 4 spatial strips during 1990-2000 (East Germany minus Berlin)
+        - 1 temporal piece after 2000 (full East Germany bbox)
+
+        Total: 6 cells.  Crucially, the Berlin area must not appear in any of
+        the 4 spatial strips that cover the 1990-2000 overlap period.
+        """
+        from datavia.weather.coverage_manager import CoverageManager
+
+        _insert_coverage_cell(
+            "ERA5_land", "2m_temperature", self._BERLIN, "1990-01-01", "2000-12-31"
+        )
+        mgr = CoverageManager("ERA5_land", ["2m_temperature"])
+        result = mgr.missing_spatiotemporal(
+            self._EAST_GERMANY, "1980-01-01", "2010-12-31"
+        )
+
+        assert len(result) == 6, (
+            f"Expected 6 cells (2 temporal + 4 spatial strips); got {len(result)}: "
+            f"{result}"
+        )
+
+        # The two temporal pieces must have the full East Germany bbox.
+        temporal_cells = [
+            c
+            for c in result
+            if c.date_end < "1990-01-01" or c.date_start > "2000-12-31"
+        ]
+        assert len(temporal_cells) == 2, (
+            f"Expected 2 temporal-only cells; got {len(temporal_cells)}: {temporal_cells}"
+        )
+        for cell in temporal_cells:
+            assert cell.bbox == self._EAST_GERMANY, (
+                f"Temporal cell has unexpected bbox {cell.bbox!r}."
+            )
+
+        # The 4 spatial strips must all lie in the 1990-2000 overlap period
+        # and none of them must cover the Berlin centroid (13.45, 52.5).
+        spatial_cells = [
+            c for c in result if "1990-01-01" <= c.date_start <= "2000-12-31"
+        ]
+        assert len(spatial_cells) == 4, (
+            f"Expected 4 spatial strip cells during 1990-2000; "
+            f"got {len(spatial_cells)}: {spatial_cells}"
+        )
+        berlin_lon, berlin_lat = 13.45, 52.5
+        for cell in spatial_cells:
+            w, s, e, n = cell.bbox
+            assert not (w <= berlin_lon <= e and s <= berlin_lat <= n), (
+                f"Spatial strip {cell} covers the Berlin centroid ({berlin_lon}, "
+                f"{berlin_lat}) — Berlin/1990-2000 must not be re-fetched."
+            )
+
+    def test_invalid_date_order_raises(self) -> None:
+        """date_start > date_end raises :exc:`ValueError`.
+
+        The error is raised before any DB access so no ``sqlite_db`` fixture
+        is needed.
+        """
+        from datavia.weather.coverage_manager import CoverageManager
+
+        with pytest.raises(ValueError, match="date_start"):
+            mgr = CoverageManager.__new__(CoverageManager)
+            mgr._source_name = "ERA5_land"
+            mgr._variables = ["2m_temperature"]
+            mgr._cells_per_variable = {"2m_temperature": []}
+            mgr.missing_spatiotemporal(self._GERMANY, "2024-12-31", "2024-01-01")
+
+    def test_update_data_skips_download_when_fully_covered(self, sqlite_db) -> None:
+        """``update_data()`` issues no downloader calls when data is already registered.
+
+        Pre-populates the DB with a cell that fully covers the pipeline's
+        request, then asserts that :class:`CompositeWeatherDownloader` is
+        never instantiated.
+        """
+        from datavia.weather.pipeline import WeatherPipeline
+
+        # Pre-populate DB: Germany for all of 2024, both variables.
+        for var in ["2m_temperature"]:
+            _insert_coverage_cell(
+                "ERA5_land", var, self._GERMANY, "2024-01-01", "2024-12-31"
+            )
+
+        pipe = WeatherPipeline(
+            config={
+                "source": "ERA5_land",
+                "variables": ["2m_temperature"],
+                "date_start": "2024-01-01",
+                "date_end": "2024-12-31",
+                "era5_bbox": [55.1, 5.9, 47.3, 15.0],  # [north, west, south, east]
+            }
+        )
+        pipe()  # Initialise components.
+
+        with (
+            patch(
+                "datavia.weather.pipeline.CompositeWeatherDownloader"
+            ) as mock_downloader_cls,
+            patch.object(pipe, "sync_files_and_database"),
+        ):
+            result = pipe.update_data()
+
+        mock_downloader_cls.assert_not_called()
+        assert result is True

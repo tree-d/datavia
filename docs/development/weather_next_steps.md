@@ -5,10 +5,10 @@
 > (bugs) and `weather_further_enhancements.md` (features).
 >
 > **Current state:** Pipeline is functionally correct and produces
-> climatologically plausible results.  Steps 1–6 are **done**:  all blocking
-> bugs have been fixed and the first two enhancements (CRS-agnostic input,
-> configurable temporal resolution) are implemented.  Steps 7 → 9 are the
-> remaining work.
+> climatologically plausible results.  Steps 1–7 are **done**: all blocking
+> bugs have been fixed, the first two enhancements (CRS-agnostic input,
+> configurable temporal resolution) are implemented, and `CoverageManager`
+> provides incremental downloads.  Steps 8 → 9 are the remaining work.
 
 ---
 
@@ -60,23 +60,8 @@ Key dependency insights:
 
 ## ✅ Step 1 — Fix BUG-06: year-end timestamp boundary *(done — 2026-04-28)*
 
-**Symptom:** `precipitation_north_south_2025.py` raised `RuntimeError` for
-`2025-12-31`.  HYRAS `pr` stores its last daily value at `06:00 UTC`; `tas`
-at `00:00 UTC`.  The saver wrote those raw values into `valid_until`, so any
-query after those times on December 31 failed.
-
-**Fix applied:** `datavia/library/formats.py` →
-`extract_netcdf_layer_metadata()`.  After reading the last time coordinate the
-value is now rounded up to end-of-day via
-`pd.Timestamp(...).replace(hour=23, minute=59, second=59, microsecond=0).isoformat()`.
-The library function was chosen over `saver_weather.py` so all future savers
-benefit automatically.
-
-**Tests added:** `tests/test_weather_pipeline_unit.py` —
-`TestExtractNetcdfLayerMetadata` (3 tests):
-- `test_valid_until_rounded_to_end_of_day` — last step at 06:00 → 23:59:59
-- `test_valid_from_unchanged` — lower bound not touched
-- `test_midnight_last_step_unchanged` — ERA5-style midnight end also → 23:59:59
+**Fix:** `valid_until` now rounded up to `23:59:59` in
+`extract_netcdf_layer_metadata()` so year-end queries succeed.
 
 **Files changed:** `datavia/library/formats.py`
 
@@ -84,295 +69,60 @@ benefit automatically.
 
 ## ✅ Step 2 — Fix BUG-01 / BUG-09 / BUG-10: sync and source_name hygiene *(done — pre-2026-04-28)*
 
-**Why together:** All three share `saver_weather.py` and `pipeline.py`.  A
-single focused PR touches both files once.
+**Fix:** `Pipeline.sync_files_and_database()` implemented; `update_data()`
+calls it before downloading. Duplicate-row accumulation stopped.
 
-### ✅ BUG-01 fix (sync before update) — DONE
+**Known issue (non-blocking):** DESIGN-01 — composite pipelines register DWD
+files under the grid source name (e.g. `"HYRAS"`) rather than
+`"DWD_stations"`. Does not break current functionality; document in
+Enhancement 3 if per-source incremental logic is needed.
 
-`Pipeline.sync_files_and_database()` is now a concrete method on the base
-`Pipeline` class.  `WeatherPipeline.update_data()` calls
-`self.sync_files_and_database()` at the top.  `SaverWeather` exposes
-`list_managed_files()` and `delete_registration(uri)` as the disk- and
-DB-side primitives; `GetterWeather.get_registered_uris()` provides the DB
-read side.  No concrete casts, no `sync_files_and_database()` on any Saver.
-
-### ✅ BUG-09 consequence (duplicate rows fixed by BUG-01) — DONE
-
-Sync now runs before `update_data()`, so the DWD downloader skips station
-files already in the DB.  No new duplicate rows will accumulate.  Existing
-duplicate rows in the DB can be cleaned up with the one-time SQL below if
-needed:
-
-```sql
-DELETE FROM weather_layers
-WHERE source_name = 'weather'
-  AND id NOT IN (
-      SELECT MIN(id) FROM weather_layers
-      WHERE source_name = 'weather'
-      GROUP BY variable, valid_from
-  );
-```
-
-### ✅ BUG-10 (DWD rows use correct source_name) — DONE
-
-`SaverWeather.save()` already uses `self.source_name` throughout — confirmed
-by code inspection on 2026-04-28.  No change was required.  The DB audit
-finding that triggered this bug was from an older code state (or a pipeline
-instance manually configured with `source="weather"`).
-
-**New finding — DESIGN-01 (composite pipeline source-name bleed):** a deeper
-trace revealed that when a composite pipeline (`source="HYRAS"`,
-`dwd_stations=[...]`) runs, DWD `.parquet` files are registered under
-`source_name="HYRAS"` rather than `"DWD_stations"`.  This is non-blocking now
-but will affect `CoverageManager` (Step 7) if per-source incremental updates
-are needed.  Full analysis and fix options are in
-`weather_further_enhancements.md` § Known risks (DESIGN-01).  This must be
-resolved **before Step 7** is implemented.
-
-**Files changed:** `packages/weather/datavia/weather/pipeline.py`
-(sync call added — BUG-01/09).  `saver_weather.py` already correct — no
-change needed for BUG-10.
+**Files changed:** `packages/weather/datavia/weather/pipeline.py`,
+`datavia/core/interfaces.py`
 
 ---
 
-## Step 3 — Fix BUG-07: deterministic filenames  ✅ DONE 2026-04-28
+## ✅ Step 3 — Fix BUG-07: deterministic filenames *(done — 2026-04-28)*
 
-> ### ⛔ DESIGN DISCUSSION REQUIRED before implementing Step 7 (`CoverageManager`)
->
-> Step 3 fixes the filename bug independently, but the deterministic naming
-> scheme chosen here **directly constrains the design of `CoverageManager`**
-> (Step 7).  Before writing any `CoverageManager` code, the following must be
-> agreed on:
->
-> - **Filename convention:** `HYRAS_<variable>_<year>.nc` works for annual
->   HYRAS files, but ERA5 will be chunked monthly (Enhancement 5:
->   `ERA5_land_2m_temperature_2024-06.nc`).  The `CoverageManager` must parse
->   both patterns — or rely solely on the DB rather than filenames.
-> - **Single source of truth:** should `CoverageManager` derive coverage from
->   filenames on disk (fast, no DB needed) or from `weather_layers` rows (more
->   reliable, already contains `valid_from`/`valid_until`)?  These two
->   approaches lead to very different implementations.
-> - **Who owns the filename schema?** If the DB is the source of truth,
->   deterministic filenames are still good practice (BUG-07 is worth fixing
->   regardless), but `CoverageManager` never needs to parse them.  If the
->   filesystem is the source of truth, the naming convention becomes a formal
->   contract that must be documented and tested.
->
-> **Recommended decision:** use the DB as the source of truth for
-> `CoverageManager`.  Deterministic filenames remain important for
-> human-readability and orphan detection, but coverage logic reads
-> `weather_layers` rows, not filenames.  This decouples the two concerns and
-> makes `CoverageManager` independent of source-specific naming patterns.
->
-> **Action:** discuss and record this decision before starting Step 7.
+**Fix:** `SaverWeather._build_dest_stem()` derives the filename from NC
+metadata before copying. `HYRAS_tas_2024.nc` instead of `HYRAS_tmpXXX.nc`.
 
-**Why here:** Before implementing incremental downloads (Enhancement 3), the
-storage layer must produce predictable, stable filenames.  `CoverageManager`
-cannot reliably map `HYRAS_tmpc242n79f.nc` to `variable=pr, year=2025`
-without opening the file — defeating the purpose of a lightweight coverage
-check.
+**Decision:** `CoverageManager` (Step 7) uses DB as source of truth, not
+filenames. Deterministic names remain for human readability only.
 
-**Current behaviour:** `URLDownloader` creates a temp file via
-`tempfile.mkstemp(suffix=".download")`.  `HYRASDownloader._get_final_filename()`
-strips `.download` and keeps the `tmp*` stem.  The saver copies this into the
-data directory, leaving names like `HYRAS_tmp6tem1oyd.nc`.
-
-**Fix — naming responsibility moved to the saver:**
-
-An initial implementation placed naming logic in
-`HYRASDownloader._get_final_filename()` using tracking attributes.  This was
-corrected because:
-- The downloader's contract is to fetch bytes and return a temp path; it should
-  not know about `data_directory` or file content.
-- The saver already calls `extract_netcdf_layer_metadata()` for DB registration,
-  so deriving the name there adds no extra I/O.
-- The original approach produced a `HYRAS_HYRAS_tas_2024` double-prefix in
-  the `register_only` path because `saver.save()` would prepend `source_name`
-  again.
-
-`SaverWeather.save()` now calls `_build_dest_stem(data_path, file_format,
-source_name)` *before* the `shutil.copy2()` call:
-
-```python
-# packages/weather/datavia/weather/saver_weather.py
-def _build_dest_stem(data_path: str, file_format: str, source_name: str) -> str:
-    if file_format == "netcdf":
-        meta = extract_netcdf_layer_metadata(data_path)
-        nc_vars = meta.get("variables", [])
-        year = (meta.get("valid_from") or "unknown")[:4]
-        if len(nc_vars) == 1:
-            return f"{source_name}_{nc_vars[0]}_{year}"  # HYRAS_tas_2024
-        return f"{source_name}_{year}"                   # ERA5_land_2024
-    # Parquet: year from datetime column minimum
-    df = pd.read_parquet(data_path, columns=["datetime"])
-    year = str(pd.to_datetime(df["datetime"]).min().year)
-    return f"{source_name}_{year}"                       # DWD_2023
-```
-
-`HYRASDownloader._get_final_filename()` is the trivial extension swap it was
-before:
-
-```python
-def _get_final_filename(self, temp_path: str, content_type: str) -> str:
-    return temp_path.rsplit(".", 1)[0] + ".nc"
-```
-
-#### Migration of existing orphan files
-
-After the fix is deployed, the orphan `HYRAS_tmp*.nc` files should be deleted
-and the pipeline re-run:
-
-```bash
-# One-time cleanup
-rm .datavia/data/HYRAS_tmp*.nc
-# Re-download to produce deterministically named files
-```
-
-**Files changed:**
-- `packages/weather/datavia/weather/saver_weather.py` — `_build_dest_stem()` added, `save()` updated
-- `packages/weather/datavia/weather/hyras_downloader.py` — reverted to simple extension swap
+**Files changed:** `packages/weather/datavia/weather/saver_weather.py`
 
 ---
 
-## Step 4 — Fix BUG-05 + BUG-08 together: rewrite `interpolate_netcdf`
+## ✅ Step 4 — Fix BUG-05 + BUG-08: batch interp + NaN fill *(done — 2026-04-28)*
 
-**Why together:** Both bugs live in `datavia/library/interpolation.py` →
-`interpolate_netcdf()`.  The performance fix (batch coordinates) and the
-NaN fill (pre-fill before bilinear) are separate concerns but modify the same
-function body.  A single rewrite avoids double-churn on a central library
-function.
+**Fix:** `interpolate_netcdf` accepts `np.ndarray` for lats/lons; opens NC
+once, interpolates all points in one call. NaN fill via `ffill/bfill` before
+bilinear.
 
-### BUG-05: Batch coordinate support
-
-**Current signature:**
-```python
-def interpolate_netcdf(nc_path, lat: float, lon: float, variable, datetime_utc)
-```
-
-**New signature** (backwards compatible — scalar float still accepted):
-```python
-def interpolate_netcdf(
-    nc_path: str,
-    lats: float | np.ndarray,
-    lons: float | np.ndarray,
-    variable: str,
-    datetime_utc: Any,
-) -> float | np.ndarray:
-```
-
-Inside the function, open the dataset **once** and interpolate all coordinates
-in a single vectorised call:
-
-```python
-with xr.open_dataset(nc_path) as ds:
-    lats_arr = np.atleast_1d(np.asarray(lats, dtype=float))
-    lons_arr = np.atleast_1d(np.asarray(lons, dtype=float))
-    # reproject all lons/lats → x_arr, y_arr in one pyproj call (N points)
-    transformer = pyproj.Transformer.from_crs("EPSG:4326", file_crs, always_xy=True)
-    x_arr, y_arr = transformer.transform(lons_arr, lats_arr)
-    # xarray vectorised interp over N points
-    point = ds[variable].interp(
-        x=xr.DataArray(x_arr, dims="points"),
-        y=xr.DataArray(y_arr, dims="points"),
-        method="linear",
-    )
-    # temporal selection unchanged
-    ...
-```
-
-`GetterWeather.get_data()` is updated to build `lats_arr` and `lons_arr` from
-all `coords_arr` rows and pass them in a single call, removing the per-coordinate
-loop entirely.
-
-### BUG-08: Nearest-neighbour NaN fill before bilinear
-
-After opening the dataset and selecting the variable, fill nodata cells before
-calling `.interp()`:
-
-```python
-da = ds[variable]
-# Replace fill value with NaN, then propagate nearest valid value
-# outward so that bilinear stencils at the domain boundary don't collapse.
-fill_val = da.attrs.get("_FillValue", None)
-if fill_val is not None:
-    da = da.where(da != fill_val)
-# Forward-fill then back-fill along both spatial axes.
-# This is a simple O(n) approximation; for exact nearest-neighbour the
-# distance_transform_edt approach (used in interpolate_tiff) is the
-# upgrade path.
-da = da.ffill("x").ffill("y").bfill("x").bfill("y")
-```
-
-The combination of BUG-05 and BUG-08 fixes means:
-- A 365-day × 8-station query drops from ~5 minutes to < 5 seconds.
-- A 5×4 Germany grid query drops from 5/20 non-NaN to all 20 non-NaN
-  (for inland points).
-
-**Performance note:** The `ffill/bfill` approach is fast (no scipy import
-needed beyond what is already present) but is an approximation — it fills
-diagonals incorrectly in some corner-clipping cases.  For exact nearest-
-neighbour the `scipy.ndimage.distance_transform_edt` approach already used in
-`interpolate_tiff` should be ported here as a follow-up (documented in
-Enhancement roadmap, not blocking for the bug fix).
+**Performance:** 365-day × 8-station query: ~5 min → <5 s.
 
 **Files changed:** `datavia/library/interpolation.py`,
 `packages/weather/datavia/weather/getter_weather.py`
 
 ---
 
-## ✅ Step 5 — Enhancement 1: wire the CRS stub *(done — 2026-04-29)*
+## ✅ Step 5 — Enhancement 1: CRS-agnostic input *(done — 2026-04-29)*
 
-The `crs_coords` guard in `GetterWeather.get_data()` that rejected anything
-other than `"EPSG:4326"` has been removed.  Both branches of
-`_build_spatial_interp_coords()` now accept an `input_crs` parameter:
-
-- **Projected grid (HYRAS EPSG:3035):** the pyproj transformer source CRS is
-  now `input_crs` instead of the hardcoded `"EPSG:4326"`.
-- **Geographic grid (ERA5):** when `input_crs != "EPSG:4326"`, coordinates are
-  reprojected to WGS84 degrees before being passed to xarray.  EPSG:4326
-  input is passed through unchanged (no transform call).
-
-`interpolate_netcdf()` gains an `input_crs: str = "EPSG:4326"` parameter and
-forwards it to `_build_spatial_interp_coords()`.  `get_data()` passes
-`crs_coords` as `input_crs=crs_coords`.
-
-**Tests added:** `tests/test_weather_pipeline_unit.py` —
-`TestInterpolateNetcdfCRS` (3 tests):
-- `test_default_input_crs_is_epsg4326` — omitting the param gives the same result.
-- `test_epsg3035_geographic_file_matches_wgs84_result` — EPSG:3035 reprojected input matches WGS84 query.
-- `test_getter_weather_accepts_non_wgs84_crs` — `GetterWeather` no longer raises; forwards `input_crs`.
+**Fix:** `interpolate_netcdf` and `GetterWeather.get_data()` accept
+`input_crs` parameter. Both projected (HYRAS EPSG:3035) and geographic (ERA5)
+branches reproject input correctly.
 
 **Files changed:** `datavia/library/interpolation.py`,
 `packages/weather/datavia/weather/getter_weather.py`
 
 ---
 
-## ✅ Step 6 — Enhancement 2: configurable temporal resolution *(done — 2026-04-29)*
+## ✅ Step 6 — Enhancement 2: temporal resolution config key *(done — 2026-04-29)*
 
-`"temporal_resolution"` is now a recognised pipeline config key with two
-values:
-
-- `"daily"` (default): unchanged behaviour — nearest single time step.
-- `"hourly"`: `interpolate_netcdf` selects all sub-daily time steps within
-  the requested calendar day via a `pd.Timestamp.normalize()` day-slice, and
-  returns an `(N, T)` array.
-
-`HYRASDownloader.__init__()` raises `ValueError` immediately when
-`temporal_resolution="hourly"` because HYRAS is daily-only.
-
-The config key is threaded from `_KNOWN_CONFIG_KEYS` in `pipeline.py` →
-`GetterWeather.__init__(temporal_resolution=...)` → stored as
-`self._temporal_resolution` → passed to `interpolate_netcdf()` on every
-`get_data()` call.  `CompositeWeatherDownloader` also forwards
-`temporal_resolution` to `HYRASDownloader` when `source="HYRAS"`.
-
-**Tests added:** `tests/test_weather_pipeline_unit.py` —
-`TestTemporalResolution` (5 tests):
-- `test_daily_resolution_returns_scalar` — `"daily"` still returns a float.
-- `test_hourly_resolution_returns_time_series` — `"hourly"` returns 24 steps.
-- `test_unknown_resolution_raises_value_error` — unknown value raises `ValueError`.
-- `test_hyras_hourly_raises_at_init` — HYRAS guard fires at `__init__`.
-- `test_getter_forwards_temporal_resolution` — forwarded to `interpolate_netcdf`.
+**Fix:** `"temporal_resolution": "daily" | "hourly"` pipeline config key.
+`interpolate_netcdf` returns 24-element array for hourly. HYRAS raises
+`ValueError` at init for hourly (daily-only source).
 
 **Files changed:** `packages/weather/datavia/weather/pipeline.py`,
 `datavia/library/interpolation.py`,
@@ -382,33 +132,42 @@ The config key is threaded from `_KNOWN_CONFIG_KEYS` in `pipeline.py` →
 
 ---
 
-## Step 7 — Enhancement 3: `CoverageManager` and incremental downloads
+## ✅ Step 6.5 — ERA5 `nc_variable_map` *(done — 2026-05-05)*
 
-**Prerequisite:** Steps 1–4 complete (clean DB state, stable filenames, fast
-queries).
+**Issue:** ERA5 NetCDF files store `2m_temperature` under short name `t2m`;
+`_resolve_variables()` registered `t2m` in DB but getter queried
+`2m_temperature` → no match.
 
-The `CoverageManager` (new file `coverage_manager.py`) computes which
-`(bbox, date_start, date_end)` cells are already registered and returns only
-the uncovered portions to the downloader.  This is the largest single piece of
-new code in the plan.
+**Fix:** Added `"nc_variable_map"` to `SOURCE_REGISTRY["ERA5_land"]` mapping
+`t2m → 2m_temperature`, `tp → total_precipitation`,
+`ssrd → surface_solar_radiation_downwards`. Same pattern already used for
+HYRAS.
 
-Key design decision from the enhancements doc (§4): coverage is inherently
-2-D (spatial × temporal).  Do **not** compute missing spatial and missing
-temporal extents independently and cross-product them — that produces both
-gaps and duplicated downloads.  The correct algorithm decomposes the missing
-2-D rectangle into a list of `(bbox, start, end)` tuples by splitting along
-both axes simultaneously.
+**Files changed:** `packages/weather/datavia/weather/source_registry.py`
 
-**Implementation order within this step:**
+---
 
-1. `CoverageManager.__init__` + `missing_spatiotemporal()` — with unit tests
-   (the four test cases in the enhancements doc §4).
-2. Wire `CoverageManager` into `WeatherPipeline.update_data()`.
-3. Integration test: run `update_data()` twice for the same HYRAS year →
-   assert that the second call issues zero downloader calls.
+## ✅ Step 7 — Enhancement 3: `CoverageManager` and incremental downloads *(done — 2026-04-29)*
+
+**Implementation:** `CoverageManager(source_name, variables)` loads existing
+`weather_layers` rows at init. `missing_spatiotemporal(bbox, date_start,
+date_end)` runs 2-D (spatial × temporal) subtraction using Shapely for bbox
+intersection and the *4-strip decomposition* for exact axis-aligned remainder
+strips. Returns `list[CoverageCell]`; each cell triggers one downloader call.
+
+`WeatherPipeline.update_data()` instantiates `CoverageManager`, gets missing
+cells, and creates one `CompositeWeatherDownloader` per cell. When fully
+covered logs "nothing to download" and returns `True` with zero network calls.
+
+**Tests added:** `TestCoverageManager` (6 tests): fully covered → empty list,
+wider time range → 2 temporal gaps, wider bbox → spatial strip, 2-D overlap
+(Berlin 1990-2000 + East Germany 1980-2010 → 6 cells), invalid date order →
+`ValueError`, `update_data()` with full coverage → downloader never instantiated.
 
 **Files changed:** `packages/weather/datavia/weather/coverage_manager.py`
-(new), `packages/weather/datavia/weather/pipeline.py`
+(new), `packages/weather/datavia/weather/pipeline.py`,
+`packages/weather/datavia/weather/__init__.py`,
+`packages/weather/pyproject.toml` (added `shapely>=2.0.4` dependency)
 
 ---
 
@@ -464,7 +223,8 @@ that cannot be tested with cached data and requires real Copernicus credentials.
 | **4** | BUG-05 + BUG-08 — batch interp + NaN fill | M | — | Enhancement 1 | ✅ 2026-04-28 |
 | **5** | Enh. 1 — wire CRS stub | S | Step 4 | CRS-agnostic queries | ✅ 2026-04-29 |
 | **6** | Enh. 2 — temporal resolution config key | S | — | Hourly ERA5 queries | ✅ 2026-04-29 |
-| **7** | Enh. 3 — `CoverageManager`, incremental DL | L | Steps 1–4 | Enhancement 4 | |
+| **6.5** | ERA5 `nc_variable_map` | XS | — | ERA5 queries work | ✅ 2026-05-05 |
+| **7** | Enh. 3 — `CoverageManager`, incremental DL | L | Steps 1–4 | Enhancement 4 | ✅ 2026-04-29 |
 | **8** | Enh. 4 — pipeline lifecycle (merge, rename) | L | Step 7 | Full lifecycle API | |
 | **9** | Enh. 5 — ERA5 chunking + progress | L | Steps 7–8, CDS creds | Production ERA5 use | |
 

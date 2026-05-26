@@ -221,9 +221,11 @@ python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 # Filter pyproj deprecation warnings - these come from pyproj internal code
+# Filter numpy 2.x ABI compatibility warnings from packages built against numpy 1.x
 filterwarnings = [
     "ignore::DeprecationWarning:pyproj.*",
     "ignore:Conversion of an array with ndim > 0 to a scalar is deprecated:DeprecationWarning",
+    "ignore:numpy.ndarray size changed:RuntimeWarning",
 ]
 
 # Security scanning configuration

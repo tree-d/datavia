@@ -46,10 +46,15 @@ import numpy as np
 from datavia.core.interfaces import Pipeline
 
 from .composite_downloader import CompositeWeatherDownloader
+from .coverage_manager import CoverageCell, CoverageManager
 from .getter_weather import GetterWeather
 from .saver_weather import SaverWeather
 
 logger = logging.getLogger(__name__)
+
+#: Default Germany bounding box as ``(west, south, east, north)`` in EPSG:4326.
+#: Used when the pipeline config contains no explicit ``era5_bbox``.
+_GERMANY_BBOX_WSNE: tuple[float, float, float, float] = (5.9, 47.3, 15.0, 55.1)
 
 #: Required keys that every WeatherPipeline config must contain.
 _REQUIRED_CONFIG_KEYS: frozenset[str] = frozenset(
@@ -190,21 +195,109 @@ class WeatherPipeline(Pipeline):
         # Reconcile disk with DB before checking what to download (BUG-01 fix).
         self.sync_files_and_database()
 
-        combined_paths = self.downloader.download()
-        if combined_paths == "failed":
-            logger.error("Weather download failed.")
-            return False
+        # Compute the uncovered (bbox, date_range) cells before issuing any
+        # requests.  This avoids redundant downloads on repeated update_data()
+        # calls and supports incremental spatial or temporal extension.
+        coverage_manager = CoverageManager(self.name, self._config["variables"])
+        req_bbox = self._get_request_bbox()
+        missing_cells = coverage_manager.missing_spatiotemporal(
+            req_bbox,
+            self._config["date_start"],
+            self._config["date_end"],
+        )
+
+        if not missing_cells:
+            logger.info(
+                "WeatherPipeline '%s': all requested data already registered. "
+                "Nothing to download.",
+                self.name,
+            )
+            return True
+
+        logger.info(
+            "WeatherPipeline '%s': %d cell(s) to download.",
+            self.name,
+            len(missing_cells),
+        )
 
         all_saved = True
-        for raw_path in combined_paths.splitlines():
-            file_path = raw_path.strip()
-            if file_path:
-                success = self.saver.save(file_path)
-                if not success:
-                    logger.error("Failed to save weather file: %s", file_path)
-                    all_saved = False
+        for cell in missing_cells:
+            cell_config = self._build_cell_config(cell)
+            cell_downloader = CompositeWeatherDownloader(config=cell_config)
+            combined_paths = cell_downloader.download()
+            if combined_paths == "failed":
+                logger.error(
+                    "WeatherPipeline '%s': download failed for cell %s.",
+                    self.name,
+                    cell,
+                )
+                all_saved = False
+                continue
+
+            for raw_path in combined_paths.splitlines():
+                file_path = raw_path.strip()
+                if file_path:
+                    success = self.saver.save(file_path)
+                    if not success:
+                        logger.error("Failed to save weather file: %s", file_path)
+                        all_saved = False
 
         return all_saved
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    def _get_request_bbox(self) -> tuple[float, float, float, float]:
+        """Return the configured bounding box as ``(west, south, east, north)``.
+
+        ERA5 stores the bbox in the config as ``[north, west, south, east]``
+        (CDS API convention).  This method converts it to the Shapely-standard
+        ``(west, south, east, north)`` tuple used by :class:`CoverageManager`.
+
+        For sources that do not declare an explicit bbox (HYRAS, DWD), the
+        Germany default :data:`_GERMANY_BBOX_WSNE` is returned.
+
+        Returns
+        -------
+        tuple[float, float, float, float]
+            Bounding box as ``(west, south, east, north)`` in EPSG:4326 degrees.
+        """
+        era5_bbox = self._config.get("era5_bbox")
+        if era5_bbox:
+            # era5_bbox is stored as [north, west, south, east] per CDS convention.
+            n, w, s, e = era5_bbox
+            return (w, s, e, n)
+        return _GERMANY_BBOX_WSNE
+
+    def _build_cell_config(self, cell: CoverageCell) -> dict[str, Any]:
+        """Build a per-cell download config from the pipeline config and a cell.
+
+        Copies the pipeline config and overrides ``date_start`` and
+        ``date_end`` with the cell's values.  For ``"ERA5_land"`` sources, also
+        overrides ``era5_bbox`` with the cell's bbox converted back to the CDS
+        API format ``[north, west, south, east]``.
+
+        Parameters
+        ----------
+        cell : CoverageCell
+            The coverage cell defining the spatial and temporal extent to
+            download.
+
+        Returns
+        -------
+        dict[str, Any]
+            Updated config dict suitable for
+            :class:`~datavia.weather.composite_downloader.CompositeWeatherDownloader`.
+        """
+        cell_config = dict(self._config)
+        cell_config["date_start"] = cell.date_start
+        cell_config["date_end"] = cell.date_end
+        if self._config.get("source") == "ERA5_land":
+            w, s, e, n = cell.bbox
+            # Convert back to CDS API convention: [north, west, south, east].
+            cell_config["era5_bbox"] = [n, w, s, e]
+        return cell_config
 
     def get_weather_data(
         self,
