@@ -1,26 +1,37 @@
 """
 WeatherPipeline — end-to-end weather data integration pipeline.
 
-Integrates ERA5 gridded reanalysis data (NetCDF) and DWD station observations
-(Parquet) from Germany into a single pipeline.  Downloads are orchestrated by
+Integrates gridded reanalysis data (ERA5-Land or HYRAS) and optionally DWD
+station observations (Parquet) from Germany into a single pipeline.  Downloads
+are orchestrated by
 :class:`~datavia.weather.composite_downloader.CompositeWeatherDownloader`,
-which delegates to :class:`~datavia.weather.era5_downloader.ERA5Downloader`
-and :class:`~datavia.weather.dwd_downloader.DWDStationDownloader`.
+which delegates to the appropriate grid downloader and optionally to
+:class:`~datavia.weather.dwd_downloader.DWDStationDownloader`.
 
 Files are registered in the ``weather_layers`` SQLite table via
 :class:`~datavia.weather.saver_weather.SaverWeather` and retrieved by
 :class:`~datavia.weather.getter_weather.GetterWeather`.
 
+The pipeline's ``name`` is taken from ``config["source"]`` so that two
+pipelines with different sources (e.g. ``"ERA5_land"`` and ``"HYRAS"``) write
+to separate ``source_name`` entries in the database and never shadow each
+other.
+
 Usage::
 
     from datavia.weather import WeatherPipeline
 
-    pipe = WeatherPipeline()
+    pipe = WeatherPipeline(config={
+        "source":     "ERA5_land",
+        "variables":  ["2m_temperature", "total_precipitation"],
+        "date_start": "2024-06-01",
+        "date_end":   "2024-06-30",
+    })
     pipe.update_data()
     value = pipe.get_weather_data(
         lat=52.5,
         lon=13.4,
-        variable="temperature_2m",
+        variable="2m_temperature",
         datetime_utc="2024-06-15T12:00:00",
     )
 """
@@ -40,8 +51,15 @@ from .saver_weather import SaverWeather
 
 logger = logging.getLogger(__name__)
 
-#: Pipeline source-name constant; matches the CLI route and DB prefix.
-_PIPELINE_NAME: str = "weather"
+#: Required keys that every WeatherPipeline config must contain.
+_REQUIRED_CONFIG_KEYS: frozenset[str] = frozenset(
+    {"source", "variables", "date_start", "date_end"}
+)
+
+#: All valid WeatherPipeline config keys (required + optional).
+_KNOWN_CONFIG_KEYS: frozenset[str] = _REQUIRED_CONFIG_KEYS | frozenset(
+    {"era5_bbox", "dwd_stations", "unit_conversions", "buffer_days"}
+)
 
 
 class WeatherPipeline(Pipeline):
@@ -52,36 +70,54 @@ class WeatherPipeline(Pipeline):
     :class:`~datavia.weather.getter_weather.GetterWeather` into a single
     object following the :class:`~datavia.core.interfaces.Pipeline` contract.
 
-    The pipeline name ``"weather"`` is used as a prefix for all database table
-    entries and data directory file names.
+    The pipeline name is taken from ``config["source"]`` and is used as the
+    ``source_name`` for all database entries, allowing multiple pipelines with
+    different sources to coexist without collision.
 
     Parameters
     ----------
-    config : dict[str, Any], optional
-        Configuration forwarded to
-        :class:`~datavia.weather.composite_downloader.CompositeWeatherDownloader`.
-        See :class:`~datavia.weather.composite_downloader.CompositeWeatherDownloader`
-        for accepted keys (``variables``, ``date_start``, ``date_end``, etc.).
+    config : dict[str, Any]
+        Pipeline configuration.  Required keys: ``source``, ``variables``,
+        ``date_start``, ``date_end``.  Optional keys: ``era5_bbox``,
+        ``dwd_stations``, ``unit_conversions``, ``buffer_days``.
     """
 
-    name: str = _PIPELINE_NAME
+    def __init__(self, config: dict[str, Any]) -> None:
+        """Initialise the pipeline, validate config, and set the source name.
 
-    def __init__(self, config: dict[str, Any] | None = None) -> None:
-        """Initialise the pipeline with optional downloader configuration.
+        Validates *config* against the required and known key sets before any
+        other logic runs, so callers see all validation errors in one
+        ``ValueError``.
 
         Parameters
         ----------
-        config : dict[str, Any], optional
-            Downloader configuration forwarded to
-            :class:`~datavia.weather.composite_downloader.CompositeWeatherDownloader`.
+        config : dict[str, Any]
+            Pipeline configuration dict.  Must contain ``source``,
+            ``variables``, ``date_start``, and ``date_end``.  The value of
+            ``source`` (e.g. ``"ERA5_land"``, ``"HYRAS"``) becomes the
+            pipeline's ``name`` and the ``source_name`` stored in the database.
+
+        Raises
+        ------
+        ValueError
+            If required keys are missing or unknown keys are present.
         """
+        # Validate before any attribute assignment so errors surface immediately.
+        Pipeline.validate_pipeline_config(
+            config,
+            required_keys=_REQUIRED_CONFIG_KEYS,
+            known_keys=_KNOWN_CONFIG_KEYS,
+            pipeline_name="WeatherPipeline",
+        )
+        # The source value becomes the pipeline name and DB source_name.
+        source_name: str = config["source"]
         super().__init__(
-            name=_PIPELINE_NAME,
+            name=source_name,
             downloader=CompositeWeatherDownloader,
             saver=SaverWeather,
             getter=GetterWeather,
         )
-        self._config: dict[str, Any] = config or {}
+        self._config: dict[str, Any] = config
 
     def __call__(self, *args: Any, **kwargs: Any) -> WeatherPipeline:
         """Instantiate the composite downloader, saver, and getter.

@@ -27,6 +27,14 @@ except ImportError:  # pragma: no cover - optional dependency
     pd = None  # type: ignore[assignment]
     PANDAS_AVAILABLE = False
 
+try:
+    import pyproj
+
+    PYPROJ_AVAILABLE = True
+except ImportError:  # pragma: no cover - optional dependency
+    pyproj = None  # type: ignore[assignment]
+    PYPROJ_AVAILABLE = False
+
 from .coordinate_transforms import transform_coordinates
 
 logger = logging.getLogger(__name__)
@@ -149,6 +157,73 @@ def spatial_interpolate(
         return result
 
 
+def _spatial_interp_kwargs(
+    ds: "xr.Dataset",
+    variable: str,
+    lat: float,
+    lon: float,
+) -> dict[str, float]:
+    """Build xarray.DataArray.interp() keyword arguments for a WGS84 point.
+
+    Detects whether the dataset uses geographic coordinates (ERA5-style
+    ``latitude``/``longitude``) or projected coordinates (HYRAS-style ``x``/``y``
+    with a CF ``grid_mapping`` attribute).  For projected files the WGS84 input
+    point is reprojected to the dataset's native CRS via ``pyproj`` before the
+    projected coordinates are returned as keyword arguments.
+
+    Parameters
+    ----------
+    ds : xr.Dataset
+        Open xarray dataset.
+    variable : str
+        Variable name; used to read the ``grid_mapping`` attribute.
+    lat : float
+        Geographic latitude in degrees North (EPSG:4326).
+    lon : float
+        Geographic longitude in degrees East (EPSG:4326).
+
+    Returns
+    -------
+    dict[str, float]
+        Keyword arguments suitable for ``ds[variable].interp(**kwargs)``,
+        e.g. ``{"latitude": 48.1, "longitude": 11.5}`` for ERA5 or
+        ``{"y": 2781634.7, "x": 4438345.7}`` for HYRAS.
+
+    Raises
+    ------
+    ImportError
+        If the dataset uses projected coordinates but ``pyproj`` is not
+        installed.
+    """
+    grid_mapping_name = ds[variable].attrs.get("grid_mapping")
+
+    # Projected grid (e.g. HYRAS EPSG:3035): dimensions are x/y in metres.
+    # The grid_mapping variable carries the full CRS definition in CF-compliant
+    # attributes.  We reproject the WGS84 input point to that CRS so that
+    # xarray.interp() can locate the correct grid cell.
+    if (
+        grid_mapping_name
+        and grid_mapping_name in ds
+        and "x" in ds.dims
+        and "y" in ds.dims
+    ):
+        if not PYPROJ_AVAILABLE:
+            raise ImportError(
+                "pyproj is required to interpolate projected NetCDF files "
+                "(e.g. HYRAS EPSG:3035). Install with `pip install pyproj`."
+            )
+        crs_file = pyproj.CRS.from_cf(ds[grid_mapping_name].attrs)
+        transformer = pyproj.Transformer.from_crs("EPSG:4326", crs_file, always_xy=True)
+        # always_xy=True means transformer.transform() expects (lon, lat) order.
+        x_proj, y_proj = transformer.transform(lon, lat)
+        return {"y": y_proj, "x": x_proj}
+
+    # Geographic grid (ERA5, ICON): dimensions are latitude/longitude in degrees.
+    lat_name = "latitude" if "latitude" in ds.coords else "lat"
+    lon_name = "longitude" if "longitude" in ds.coords else "lon"
+    return {lat_name: lat, lon_name: lon}
+
+
 def interpolate_netcdf(
     nc_path: str,
     lat: float,
@@ -164,6 +239,15 @@ def interpolate_netcdf(
     is returned; when it is a sequence an ``np.ndarray`` of shape ``(T,)`` is
     returned instead.
 
+    Supports both geographic coordinate files (ERA5: ``latitude``/``longitude``
+    dimensions in degrees) and projected coordinate files (HYRAS: ``x``/``y``
+    dimensions in metres with a CF ``grid_mapping`` attribute).  The correct
+    interpolation path is selected automatically; ``pyproj`` is used for
+    reprojection when the file carries a ``grid_mapping``.
+
+    ERA5 files produced by ``cdsapi >= 0.7`` name their time dimension
+    ``valid_time`` instead of ``time``; both names are handled transparently.
+
     Parameters
     ----------
     nc_path : str
@@ -173,7 +257,7 @@ def interpolate_netcdf(
     lon : float
         Geographic longitude in degrees East (EPSG:4326).
     variable : str
-        Name of the variable to sample, e.g. ``"temperature_2m"``.
+        Name of the variable to sample, e.g. ``"2m_temperature"``.
     datetime_utc : datetime-like or sequence of datetime-like
         One or more UTC timestamps.  Passed directly to
         ``xarray.Dataset.sel`` with ``method="nearest"``.
@@ -188,7 +272,8 @@ def interpolate_netcdf(
     Raises
     ------
     ImportError
-        If xarray is not installed.
+        If xarray is not installed, or if the file uses projected coordinates
+        and pyproj is not installed.
     KeyError
         If *variable* does not exist in the NetCDF file.
     """
@@ -205,20 +290,17 @@ def interpolate_netcdf(
                 f"Available variables: {list(ds.data_vars)}"
             )
 
-        # Detect coordinate names (ERA5 uses 'latitude'/'longitude',
-        # ICON may use 'lat'/'lon').
-        lat_name = "latitude" if "latitude" in ds.coords else "lat"
-        lon_name = "longitude" if "longitude" in ds.coords else "lon"
+        # Build spatial interp kwargs — auto-detects geographic vs projected CRS.
+        interp_kwargs = _spatial_interp_kwargs(ds, variable, lat, lon)
 
         # Bilinear spatial interpolation to the requested point.
-        point = ds[variable].interp(
-            {lat_name: lat, lon_name: lon},
-            method="linear",
-        )
+        point = ds[variable].interp(interp_kwargs, method="linear")
 
         # Temporal selection: nearest available time step.
-        if "time" in point.coords:
-            point = point.sel(time=datetime_utc, method="nearest")
+        # ERA5 files from cdsapi >= 0.7 use 'valid_time' instead of 'time'.
+        time_dim = "time" if "time" in point.coords else "valid_time"
+        if time_dim in point.coords:
+            point = point.sel({time_dim: datetime_utc}, method="nearest")
 
         values = point.values
 

@@ -518,7 +518,14 @@ class TestWeatherPipeline:
         """__call__ creates downloader, saver, and getter instances."""
         from datavia.weather.pipeline import WeatherPipeline
 
-        pipe = WeatherPipeline()
+        pipe = WeatherPipeline(
+            config={
+                "source": "ERA5_land",
+                "variables": ["2m_temperature"],
+                "date_start": "2024-01-01",
+                "date_end": "2024-01-31",
+            }
+        )
         pipe()
 
         assert pipe.downloader is not None
@@ -529,7 +536,14 @@ class TestWeatherPipeline:
         """update_data() calls saver.save() for each path in the combined string."""
         from datavia.weather.pipeline import WeatherPipeline
 
-        pipe = WeatherPipeline()
+        pipe = WeatherPipeline(
+            config={
+                "source": "ERA5_land",
+                "variables": ["2m_temperature"],
+                "date_start": "2024-01-01",
+                "date_end": "2024-01-31",
+            }
+        )
         pipe.downloader = MagicMock()
         pipe.downloader.download.return_value = "/tmp/era5.nc\n/tmp/dwd.parquet"
         pipe.saver = MagicMock()
@@ -547,7 +561,14 @@ class TestWeatherPipeline:
         """update_data() returns False when download() returns 'failed'."""
         from datavia.weather.pipeline import WeatherPipeline
 
-        pipe = WeatherPipeline()
+        pipe = WeatherPipeline(
+            config={
+                "source": "ERA5_land",
+                "variables": ["2m_temperature"],
+                "date_start": "2024-01-01",
+                "date_end": "2024-01-31",
+            }
+        )
         pipe.downloader = MagicMock()
         pipe.downloader.download.return_value = "failed"
         pipe.saver = MagicMock()
@@ -559,7 +580,14 @@ class TestWeatherPipeline:
         """update_data() returns False when at least one save() fails."""
         from datavia.weather.pipeline import WeatherPipeline
 
-        pipe = WeatherPipeline()
+        pipe = WeatherPipeline(
+            config={
+                "source": "ERA5_land",
+                "variables": ["2m_temperature"],
+                "date_start": "2024-01-01",
+                "date_end": "2024-01-31",
+            }
+        )
         pipe.downloader = MagicMock()
         pipe.downloader.download.return_value = "/tmp/era5.nc\n/tmp/dwd.parquet"
         pipe.saver = MagicMock()
