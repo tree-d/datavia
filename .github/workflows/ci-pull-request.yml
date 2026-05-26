@@ -159,23 +159,20 @@ jobs:
         run: pixi install -e dev
 
       - name: Build documentation
-        run: |
-          cd docs
-          pixi run sphinx-build -b html . _build/html -W
+        run: pixi run docs
 
       - name: Check documentation links
         run: |
-          cd docs
           # Run linkcheck but do not fail immediately on the Sphinx exit code.
           # Sphinx exits 1 for both broken links AND connection timeouts.
           # CI runners can be blocked from reaching certain external hosts
           # (e.g. govdata.de) causing spurious timeout failures.
           # We parse the output explicitly and fail only on [broken] links,
           # so genuinely dead URLs are still caught.
-          pixi run sphinx-build -b linkcheck . _build/linkcheck || true
-          if grep -q '\[broken\]' _build/linkcheck/output.txt 2>/dev/null; then
+          pixi run docs-linkcheck || true
+          if grep -q '\[broken\]' docs/_build/linkcheck/output.txt 2>/dev/null; then
             echo "Broken links found:"
-            grep '\[broken\]' _build/linkcheck/output.txt
+            grep '\[broken\]' docs/_build/linkcheck/output.txt
             exit 1
           fi
 
