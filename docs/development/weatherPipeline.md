@@ -13,6 +13,13 @@ station and gridded data at the requested coordinates.
 
 ## Implementation notes
 
+### Ideas for further steps
+
+- Look for some experience in copernicus project from BioDT
+- Create some Option to only download for single day/month/year
+- Create some self containing management for deletion and sorting of old data
+
+
 ### Design decisions made during implementation
 
 - `SaverWeather` and `GetterWeather` live in `packages/weather/` (not `datavia/core/`),
@@ -38,33 +45,13 @@ station and gridded data at the requested coordinates.
 
 `datavia/library/database/init.sql` — `weather_layers` table and index added:
 
-```sql
-CREATE TABLE IF NOT EXISTS weather_layers (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    layer_name TEXT NOT NULL,   -- e.g. era5_temperature_2m
-    source_name TEXT,           -- era5 | dwd_stations
-    variable TEXT,              -- e.g. temperature_2m, precipitation
-    file_format TEXT,           -- netcdf | parquet
-    valid_from TEXT,            -- ISO-8601 datetime
-    valid_until TEXT,           -- ISO-8601 datetime
-    uri TEXT,                   -- absolute path to .nc or .parquet
-    acquisition_time TEXT,
-    bbox TEXT,                  -- WKT footprint (NULL for station files)
-    crs TEXT,
-    metadata TEXT               -- JSON blob (grid resolution, station count, …)
-);
-CREATE INDEX IF NOT EXISTS idx_weather_source_variable_time
-    ON weather_layers (source_name, variable, valid_from, valid_until);
-```
-
 `datavia/library/database/start.py` — removed the `has_table("raster_layers")`
 guard that prevented `weather_layers` from being created on existing databases.
 All `CREATE TABLE/INDEX IF NOT EXISTS` statements now always run (idempotent).
 
 ### ✅ Weather query functions — `datavia/library/database/query.py`
 
-- `get_weather_paths(source_name, variable, from_dt, to_dt) → list[str]` — overlap
-  query: `valid_from ≤ to_dt AND valid_until ≥ from_dt`
+- `get_weather_paths(source_name, variable, from_dt, to_dt) → list[str]`
 - `get_weather_metadata(source_name, variable=None) → list[dict]`
 - `check_weather_source_exists(source_name, variable=None, from_dt=None, to_dt=None) → bool`
 
@@ -72,16 +59,8 @@ All `CREATE TABLE/INDEX IF NOT EXISTS` statements now always run (idempotent).
 
 **`datavia/library/interpolation.py`**
 
-- `interpolate_netcdf(nc_path, lat, lon, variable, datetime_utc)` — opens with
-  xarray, selects nearest time step, bilinear-interpolates to the coordinate.
-- `interpolate_station_parquet(parquet_path, lat, lon, variable, datetime_utc,
-  radius_km=50.0)` — loads station records within radius, inverse-distance-weighted
-  average.
-- `blend_gridded_and_station(gridded_value, station_value, station_weight=0.6)` —
-  weighted average (station data weighted higher where it exists).
-
-Both xarray and pandas imports are guarded with `try/except ImportError` to keep
-the core library importable without heavy optional deps.
+- `interpolate_netcdf(nc_path, lat, lon, variable, datetime_utc)`
+- `blend_gridded_and_station(gridded_value, station_value, station_weight=0.6)`
 
 **`datavia/library/formats.py`**
 
