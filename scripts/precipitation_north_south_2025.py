@@ -160,12 +160,17 @@ def monthly_totals(precip: np.ndarray) -> np.ndarray:
         when any day in the month is missing (safe-sums NaN-aware).
     """
     monthly = np.zeros((12, len(TRANSECT)))
+    has_nan = np.zeros((12, len(TRANSECT)), dtype=bool)
     for day_idx in range(_N_DAYS):
         query_date = _YEAR_START + timedelta(days=day_idx)
         month_idx = query_date.month - 1
         row = precip[day_idx]
-        # nansum treats NaN as 0; track separately so we know if data is missing
-        monthly[month_idx] += np.where(np.isnan(row), 0.0, row)
+        nan_mask = np.isnan(row)
+        has_nan[month_idx] |= nan_mask
+        monthly[month_idx] += np.where(nan_mask, 0.0, row)
+    # Propagate NaN for any month/station that had at least one missing day,
+    # so callers can distinguish a genuine zero from a data gap.
+    monthly[has_nan] = np.nan
     return monthly
 
 

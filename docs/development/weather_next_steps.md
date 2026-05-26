@@ -2,33 +2,38 @@
 
 > **Purpose:** Ordered action plan for remaining work.
 >
-> **Current state (2026-05-06):** Steps 1–7 are **done**.  Step 8 is
+> **Current state (2026-05-08):** Steps 1–7 are **done**.  Step 8 is
 > **partially done** (`get_config` / `reconfigure` implemented; `rename_all`
-> and `check_pipelines` deferred).  One open ERA5-specific bug (`valid_time`
-> dimension name) blocks real CDS end-to-end testing.  Step 9 (ERA5 request
-> chunking) is the highest-priority remaining item.
+> and `check_pipelines` deferred).  The ERA5 `valid_time` dimension bug is
+> **fixed**.  Step 9 (ERA5 request chunking) is the highest-priority remaining
+> item.
 
 ---
 
-## Open bug — ERA5 `valid_time` dimension (blocks Step 9 real-world testing)
+## Open bug — ERA5 `valid_time` dimension ~~(blocks Step 9 real-world testing)~~
 
-**Status:** confirmed, not yet fixed.
+**Status:** ✅ fixed 2026-05-08.
 
 ERA5 files retrieved via the CDS API and decoded with `cfgrib` use **`valid_time`**
 as the time dimension name, not `"time"`.  `extract_netcdf_layer_metadata()` in
-`datavia/library/formats.py` only checks `if "time" in ds.coords`, so ERA5
-files land with `valid_from = None`, `valid_until = None`, and a stem ending
-in `_unknown`.  Any time-range query against these rows returns nothing.
+`datavia/library/formats.py` only checked `if "time" in ds.coords`, so ERA5
+files landed with `valid_from = None`, `valid_until = None`, and a stem ending
+in `_unknown`.  Any time-range query against these rows returned nothing.
 
-**Fix required** in `datavia/library/formats.py`:
-- In `extract_netcdf_layer_metadata()` resolve the time coordinate as
-  `ds.coords.get("time") or ds.coords.get("valid_time")` before reading
-  `valid_from` / `valid_until`.
-- Same guard in `_build_dest_stem()` so the year suffix is extracted correctly.
-- Add a unit test: ERA5-shaped dataset with only `valid_time` → correct
-  `valid_from`, `valid_until`, and stem `ERA5_land_2m_temperature_2024`.
+**Fix applied** in `datavia/library/formats.py`:
+- `extract_netcdf_layer_metadata()` now resolves the time coordinate as
+  `ds.coords["time"] if "time" in ds.coords else ds.coords.get("valid_time")`,
+  so ERA5 `valid_time` files produce correct `valid_from` / `valid_until`.
+- `_build_dest_stem()` in `saver_weather.py` inherits the fix automatically
+  because it delegates entirely to `extract_netcdf_layer_metadata()`.
+- Two unit tests added to `TestExtractNetcdfLayerMetadata` in
+  `tests/test_weather_pipeline_unit.py`:
+  - `test_valid_time_coord_metadata` — ERA5-shaped dataset with only
+    `valid_time` → correct `valid_from` and `valid_until`.
+  - `test_valid_time_coord_stem` — same dataset → stem
+    `ERA5_land_2m_temperature_2024` (not `ERA5_land_2m_temperature_unknown`).
 
-**Files to change:** `datavia/library/formats.py`,
+**Files changed:** `datavia/library/formats.py`,
 `tests/test_weather_pipeline_unit.py`.
 
 ---
@@ -204,7 +209,7 @@ and update `WeatherPipeline.update_data()` to iterate the list directly.
 | Step | Item | Effort | Status |
 |---|---|---|---|
 | 1–7 | Bugs + Enhancements 1–3 | — | ✅ done |
-| ERA5 `valid_time` bug | `formats.py` time-coord fallback | S | open |
+| ERA5 `valid_time` bug | `formats.py` time-coord fallback | S | ✅ 2026-05-08 |
 | 8a | `get_config` + `reconfigure` | M | ✅ 2026-05-06 |
 | 8b | `rename_all` | M | deferred |
 | 8c | `check_pipelines` | M | deferred |

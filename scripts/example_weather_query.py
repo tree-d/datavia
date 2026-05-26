@@ -35,8 +35,6 @@ from datetime import date, timedelta
 import numpy as np
 
 from datavia import Datavia
-from datavia.config import get_config
-from datavia.library.database.start import initialize_database
 from datavia.weather import WeatherPipeline
 
 logging.basicConfig(

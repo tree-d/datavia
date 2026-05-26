@@ -326,10 +326,19 @@ def extract_netcdf_layer_metadata(filepath: str) -> dict[str, Any]:
     try:
         with xr.open_dataset(filepath) as ds:
             # --- Time bounds ---
+            # ERA5 files decoded with cfgrib use "valid_time" as the time
+            # dimension name instead of the CF-standard "time".  Prefer
+            # "time" when both coordinates are present so that standard
+            # CF-compliant files are unaffected.
             valid_from: str | None = None
             valid_until: str | None = None
-            if "time" in ds.coords:
-                time_vals = ds.coords["time"]
+            time_coord = (
+                ds.coords["time"]
+                if "time" in ds.coords
+                else ds.coords.get("valid_time")
+            )
+            if time_coord is not None:
+                time_vals = time_coord
                 valid_from = str(time_vals.min().values)
                 # Round the last time step up to end-of-day (23:59:59) so
                 # that annual queries succeed even when a variable's final

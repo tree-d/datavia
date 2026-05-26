@@ -1376,6 +1376,77 @@ class TestExtractNetcdfLayerMetadata:
 
         assert metadata["valid_until"] == "2024-12-31T23:59:59"
 
+    def test_valid_time_coord_metadata(self, tmp_path) -> None:
+        """ERA5 files that expose ``valid_time`` instead of ``time`` are handled.
+
+        ERA5 files decoded with ``cfgrib`` use ``valid_time`` as the time
+        dimension name.  Before the fix, these files produced
+        ``valid_from = None`` and ``valid_until = None``.
+
+        Parameters
+        ----------
+        tmp_path : pathlib.Path
+            pytest-provided temporary directory.
+        """
+        import numpy as np
+        import xarray as xr
+
+        from datavia.library.formats import extract_netcdf_layer_metadata
+
+        times = np.array(
+            ["2024-01-01T00:00:00", "2024-12-31T00:00:00"],
+            dtype="datetime64[ns]",
+        )
+        ds = xr.Dataset(
+            {"t2m": (["valid_time"], [280.0, 275.0])},
+            coords={"valid_time": times},
+        )
+        nc_file = tmp_path / "era5_t2m_valid_time.nc"
+        ds.to_netcdf(str(nc_file))
+
+        metadata = extract_netcdf_layer_metadata(str(nc_file))
+
+        assert metadata["valid_from"] == "2024-01-01T00:00:00.000000000", (
+            "valid_from must be extracted from the valid_time coordinate"
+        )
+        assert metadata["valid_until"] == "2024-12-31T23:59:59", (
+            "valid_until must be rounded to end-of-day from the valid_time coordinate"
+        )
+
+    def test_valid_time_coord_stem(self, tmp_path) -> None:
+        """``_build_dest_stem`` extracts the year from ``valid_time`` files.
+
+        When ``extract_netcdf_layer_metadata`` correctly resolves ``valid_from``
+        from the ``valid_time`` coordinate, the dest stem must end in the
+        correct year rather than ``_unknown``.
+
+        Parameters
+        ----------
+        tmp_path : pathlib.Path
+            pytest-provided temporary directory.
+        """
+        import numpy as np
+        import xarray as xr
+
+        from datavia.weather.saver_weather import _build_dest_stem
+
+        times = np.array(
+            ["2024-01-01T00:00:00", "2024-12-31T00:00:00"],
+            dtype="datetime64[ns]",
+        )
+        ds = xr.Dataset(
+            {"2m_temperature": (["valid_time"], [280.0, 275.0])},
+            coords={"valid_time": times},
+        )
+        nc_file = tmp_path / "era5_tmp_valid_time.nc"
+        ds.to_netcdf(str(nc_file))
+
+        stem = _build_dest_stem(str(nc_file), "netcdf", "ERA5_land")
+
+        assert stem == "ERA5_land_2m_temperature_2024", (
+            f"Expected 'ERA5_land_2m_temperature_2024', got '{stem}'"
+        )
+
 
 # ---------------------------------------------------------------------------
 # interpolate_netcdf — batch coordinates (BUG-05) + NaN pre-fill (BUG-08)
