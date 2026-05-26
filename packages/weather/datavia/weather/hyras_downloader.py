@@ -115,7 +115,9 @@ class HYRASDownloader(URLDownloader):
             Additional keyword arguments forwarded to
             :class:`~datavia.core.downloader_url.URLDownloader`.
         """
-        super().__init__(url=_HYRAS_BASE_URL, **kwargs)
+        # URLDownloader only accepts `url`; extra kwargs (e.g. bbox forwarded
+        # from CompositeWeatherDownloader) are intentionally not passed on.
+        super().__init__(url=_HYRAS_BASE_URL)
         self.variables: list[str] = variables or ["2m_temperature"]
         self.date_start: str = (
             str(date_start) if date_start is not None else str(date.today())
