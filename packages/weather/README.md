@@ -197,9 +197,62 @@ DATAVIA_E2E=1 pytest tests/test_weather_e2e.py::TestERA5E2E -v
 
 ---
 
+## Planned enhancements
+
+### Flexible output CRS in `get_data`
+
+`GetterWeather.get_data()` currently accepts `crs_coords="EPSG:4326"` for the
+*input* coordinates only, and always returns scalar values (no spatial
+reprojection of the output).  A future extension will allow callers to request
+output data in an arbitrary CRS — for example to receive values on the native
+HYRAS ETRS89-LAEA grid (EPSG:3035) or any other projection without having to
+reproject manually afterwards:
+
+```python
+# Proposed future API — not yet implemented
+values = pipeline.get_data(
+    coords=np.array([[4_438_345, 2_781_634]]),
+    crs_coords="EPSG:3035",          # input coordinates already in LAEA metres
+    variable="relative_humidity_2m",
+    datetime_utc="2024-06-15T12:00:00",
+)
+```
+
+This would let users work entirely in their preferred projection and avoid
+round-trip WGS84 conversions when the source data is natively in EPSG:3035.
+Tracked as a follow-up to Phase A3 (interpolation CRS auto-detection).
+
+### Configurable temporal resolution
+
+All sources currently return daily values (HYRAS is daily by definition; ERA5
+is downloaded at hourly intervals but queries return the nearest single time
+step).  A planned `"temporal_resolution"` config key would let users choose
+explicitly:
+
+```python
+# Proposed future API — not yet implemented
+WeatherPipeline(config={
+    "source":               "ERA5_land",
+    "variables":            ["2m_temperature"],
+    "date_start":           "2024-01-01",
+    "date_end":             "2024-12-31",
+    "temporal_resolution":  "hourly",   # or "daily" (default)
+})
+```
+
+- `"daily"` — one value per calendar day (noon or daily mean depending on the
+  variable); compatible with HYRAS, ERA5, and DWD station data.
+- `"hourly"` — one value per hour; ERA5 and DWD stations support this natively;
+  HYRAS is daily-only and would raise a `ValueError` if hourly is requested.
+
+---
+
 ## Data licensing
 
 - **ERA5-Land** — Copernicus Climate Change Service (C3S) / ECMWF.
   Licence: https://cds.climate.copernicus.eu/api/v2/terms/static/licence-to-use-copernicus-products.pdf
+- **HYRAS** — Deutscher Wetterdienst (DWD), gridded observation dataset for Germany.
+  Licence: Creative Commons Attribution 4.0 International (CC BY 4.0).
+  Attribution: Deutscher Wetterdienst (DWD), https://opendata.dwd.de/climate_environment/CDC/grids_germany/daily/hyras_de/
 - **DWD / Open-Meteo** — DWD Open Data, CC-BY 4.0.
   Attribution: https://open-meteo.com/en/docs/dwd-api
