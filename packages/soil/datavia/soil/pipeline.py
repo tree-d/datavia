@@ -655,7 +655,7 @@ class SoilPipeline(Pipeline):
         Computes the delta between the configured coverage IDs and those
         already present on disk and in the database. Only missing coverages
         are downloaded. Manually deleted files are detected by
-        :meth:`~datavia.core.saver_tiff.TiffSaver.sync_files_and_database`
+        :meth:`~datavia.core.interfaces.Pipeline.sync_files_and_database`
         before the delta is computed so they are re-downloaded automatically.
 
         Parameters
@@ -711,7 +711,7 @@ class SoilPipeline(Pipeline):
                 unrecognised,
             )
 
-        self.saver.sync_files_and_database()
+        self.sync_files_and_database()
 
         # --- Delta computation -------------------------------------------------
         # Pass effective values directly; get_coverage_ids() falls back to the

@@ -92,21 +92,14 @@ last time stamp `2025-12-31T06:00:00`; assert `valid_until` returned by
 **Why together:** All three share `saver_weather.py` and `pipeline.py`.  A
 single focused PR touches both files once.
 
-### BUG-01 short-term fix (call sync before update)
+### ✅ BUG-01 fix (sync before update) — DONE
 
-`WeatherPipeline.update_data()` does not call `sync_files_and_database()`
-before querying existing layers.  Add the call at the top:
-
-```python
-# packages/weather/datavia/weather/pipeline.py — update_data()
-def update_data(self) -> bool:
-    self.saver.sync_files_and_database()   # ← add this line
-    ...existing logic...
-```
-
-`SaverWeather.sync_files_and_database()` is already implemented (from the
-previous session's workaround).  The concrete cast in `WeatherPipeline` can
-now be removed; the base `Pipeline` override stays.
+`Pipeline.sync_files_and_database()` is now a concrete method on the base
+`Pipeline` class.  `WeatherPipeline.update_data()` calls
+`self.sync_files_and_database()` at the top.  `SaverWeather` exposes
+`list_managed_files()` and `delete_registration(uri)` as the disk- and
+DB-side primitives; `GetterWeather.get_registered_uris()` provides the DB
+read side.  No concrete casts, no `sync_files_and_database()` on any Saver.
 
 ### BUG-09 consequence (duplicate rows fixed by BUG-01)
 

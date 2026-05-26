@@ -71,6 +71,7 @@ class SaverWeather(Saver):
         reproject: bool = False,
         resolution_m: int | None = None,
         variable: str | None = None,
+        register_only: bool = False,
     ) -> bool:
         """Copy a weather file to the data directory and register it in the DB.
 
@@ -91,13 +92,22 @@ class SaverWeather(Saver):
         interface compatibility but are not applied to weather files (NetCDF
         and Parquet carry their own coordinate information).
 
+        When *register_only* is ``True`` the file-copy step is skipped and
+        only the database registration is performed.  Use this when the file
+        is already in the data directory, e.g. when re-registering an orphan
+        file discovered by
+        :meth:`~datavia.core.interfaces.Pipeline.sync_files_and_database`.
+
         Parameters
         ----------
         data_path : str
-            Absolute path to the downloaded file to save.
+            Absolute path to the downloaded file to save.  When
+            *register_only* is ``True`` this must already be the path
+            inside the data directory.
         reproject : bool, optional
-            Ignored for weather files; present for :class:`~datavia.core.interfaces.Saver`
-            interface compatibility. Defaults to ``False``.
+            Ignored for weather files; present for
+            :class:`~datavia.core.interfaces.Saver` interface compatibility.
+            Defaults to ``False``.
         resolution_m : int, optional
             Ignored for weather files. Defaults to ``None``.
         variable : str, optional
@@ -106,22 +116,28 @@ class SaverWeather(Saver):
             the file content (NetCDF: all data-variable names; Parquet: the
             source name).  Passing an explicit value is strongly preferred to
             avoid relying on temp-file stem conventions.
+        register_only : bool, optional
+            When ``True`` skip the file-copy step and only register metadata.
+            Defaults to ``False``.
 
         Returns
         -------
         bool
-            ``True`` when the file was copied and all DB rows were inserted
-            successfully, ``False`` on any error.
+            ``True`` when all DB rows were inserted successfully,
+            ``False`` on any error.
         """
         try:
             stem = os.path.splitext(os.path.basename(data_path))[0]
             ext = os.path.splitext(data_path)[1].lower()
             file_format = _infer_file_format(ext)
             layer_name = f"{self.source_name}_{stem}"
-            dest_path = os.path.join(self.data_dir, f"{layer_name}{ext}")
 
-            shutil.copy2(data_path, dest_path)
-            logger.info("Copied weather file to %s", dest_path)
+            if register_only:
+                dest_path = data_path
+            else:
+                dest_path = os.path.join(self.data_dir, f"{layer_name}{ext}")
+                shutil.copy2(data_path, dest_path)
+                logger.info("Copied weather file to %s", dest_path)
 
             # Resolve the list of variables to register for this file.
             # When an explicit variable is given, register exactly that one.
@@ -167,6 +183,38 @@ class SaverWeather(Saver):
             logger.error("Failed to save weather file %s: %s", data_path, exc)
             return False
 
+    def list_managed_files(self) -> list[str]:
+        """Return absolute paths of all weather files written by this saver.
+
+        Scans the data directory for files matching
+        ``<source_name>_*.nc`` and ``<source_name>_*.parquet``.  This is a
+        pure filesystem operation and must not access the database.
+
+        Returns
+        -------
+        list[str]
+            Absolute paths to every matching file currently on disk.
+            Returns an empty list when no files are found or the data
+            directory does not exist.
+        """
+        return self._list_weather_files()
+
+    def delete_registration(self, uri: str) -> None:
+        """Remove all database registrations for the given file URI.
+
+        Deletes every ``weather_layers`` row whose ``uri`` matches *uri*
+        for this source.  Covers multi-row cases where a single file
+        produces one row per variable (e.g. ERA5 multi-variable NetCDF).
+        The file itself is not touched.
+
+        Parameters
+        ----------
+        uri : str
+            Absolute path to the file whose registrations should be removed.
+        """
+        self._delete_db_rows_by_uri({uri})
+        logger.info("Removed database registration for URI: %s", uri)
+
     def check_data_exists(
         self,
         variable: str,
@@ -196,63 +244,6 @@ class SaverWeather(Saver):
             from_dt=from_dt,
             to_dt=to_dt,
         )
-
-    def sync_files_and_database(self) -> bool:
-        """Reconcile on-disk weather files with database records.
-
-        Scans the data directory for files matching
-        ``<source_name>_*.{nc,parquet}`` and performs two-way cleanup:
-
-        1. **Orphan DB rows** — rows whose URI points to a missing file are
-           deleted from ``weather_layers``.
-        2. **Orphan files** — files on disk without a corresponding DB row
-           are re-registered by calling :meth:`save` on each.
-
-        Returns
-        -------
-        bool
-            ``True`` when synchronisation completed without errors,
-            ``False`` when an error prevented full reconciliation.
-        """
-        try:
-            disk_files = self._list_weather_files()
-            db_rows = self._get_all_db_rows()
-
-            db_uris: set[str] = {row["uri"] for row in db_rows}
-            disk_uris: set[str] = set(disk_files)
-
-            # Remove DB rows pointing to missing files.
-            orphan_db = db_uris - disk_uris
-            if orphan_db:
-                logger.info(
-                    "Removing %d orphan DB row(s) for source '%s'",
-                    len(orphan_db),
-                    self.source_name,
-                )
-                self._delete_db_rows_by_uri(orphan_db)
-
-            # Re-register files that exist on disk but not in the DB.
-            orphan_disk = disk_uris - db_uris
-            for orphan_path in sorted(orphan_disk):
-                logger.info("Re-registering orphan file: %s", orphan_path)
-                self.save(orphan_path)
-
-            logger.info(
-                "sync_files_and_database complete for source '%s': "
-                "%d orphan DB rows removed, %d orphan files re-registered.",
-                self.source_name,
-                len(orphan_db),
-                len(orphan_disk),
-            )
-            return True
-
-        except Exception as exc:
-            logger.error(
-                "sync_files_and_database failed for source '%s': %s",
-                self.source_name,
-                exc,
-            )
-            return False
 
     # ------------------------------------------------------------------
     # Internal helpers

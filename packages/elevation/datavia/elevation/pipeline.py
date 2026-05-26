@@ -81,7 +81,10 @@ class ElevationPipeline(Pipeline):
         """Update elevation data by downloading and saving if not already stored.
 
         Follows the canonical pipeline flow:
-        1. Synchronise the filesystem and database (maintenance, Saver).
+        1. Synchronise the filesystem and database via
+           :meth:`~datavia.core.interfaces.Pipeline.sync_files_and_database`
+           (Pipeline base class).  Removes orphan DB rows for deleted files
+           and re-registers orphan disk files with no DB record.
         2. Ask the Getter which layers are already stored (DB read).
         3. Download and save only when no data exists yet.
 
@@ -107,7 +110,7 @@ class ElevationPipeline(Pipeline):
             self()
         logger.info("Checking elevation data...")
         # Maintenance step: reconcile filesystem with DB metadata.
-        self.saver.sync_files_and_database()
+        self.sync_files_and_database()
         existing_layers = self.getter.get_existing_layers()
         if existing_layers:
             logger.info("Elevation data already up to date.")

@@ -117,6 +117,27 @@ class GetterWeather(Getter):
         rows = get_weather_metadata(self.source_name)
         return {row["variable"] for row in rows if row.get("variable")}
 
+    def get_registered_uris(self) -> set[str]:
+        """Return the set of file URIs currently registered for this source.
+
+        Queries ``weather_layers`` for all distinct ``uri`` values belonging
+        to this source.  A single file may produce multiple rows (one per
+        variable), so distinct URIs are returned rather than row counts.
+
+        Used by
+        :meth:`~datavia.core.interfaces.Pipeline.sync_files_and_database`
+        to compare what the database knows about against what is on disk.
+
+        Returns
+        -------
+        set[str]
+            Absolute file paths registered for this source.  Returns an
+            empty set when nothing has been stored yet or the database is
+            unavailable.
+        """
+        rows = get_weather_metadata(self.source_name)
+        return {row["uri"] for row in rows if row.get("uri")}
+
     def get_data(
         self,
         coords: np.ndarray,

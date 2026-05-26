@@ -149,7 +149,15 @@ class WeatherPipeline(Pipeline):
     ) -> bool:
         """Download and register weather data.
 
-        Runs the composite downloader (ERA5 + DWD), splits the returned
+        First reconciles on-disk files with the database by calling
+        :meth:`~datavia.core.interfaces.Pipeline.sync_files_and_database`
+        (inherited from :class:`~datavia.core.interfaces.Pipeline`).  This
+        removes stale DB rows for deleted files and re-registers any files
+        that exist on disk but were not yet recorded, ensuring the DB
+        accurately reflects the current state before the download delta is
+        computed.
+
+        Then runs the composite downloader (ERA5 + DWD), splits the returned
         newline-joined paths, and calls :meth:`SaverWeather.save` for each
         individual file.
 
@@ -171,6 +179,9 @@ class WeatherPipeline(Pipeline):
 
         assert self.downloader is not None  # nosec B101
         assert self.saver is not None  # nosec B101
+
+        # Reconcile disk with DB before checking what to download (BUG-01 fix).
+        self.sync_files_and_database()
 
         combined_paths = self.downloader.download()
         if combined_paths == "failed":
@@ -277,38 +288,3 @@ class WeatherPipeline(Pipeline):
             band=band,
             **kwargs,
         )
-
-    def sync_files_and_database(self) -> bool:
-        """Reconcile weather files on disk with the database, without downloading.
-
-        Scans the configured data directory for weather files that belong to
-        this pipeline's source and compares them against ``weather_layers`` DB
-        rows.  Two repairs are performed:
-
-        1. **Orphan DB rows** — rows whose ``uri`` points to a missing file are
-           deleted from ``weather_layers``.
-        2. **Orphan disk files** — files present on disk but absent from the
-           database are re-registered via :meth:`SaverWeather.save`.
-
-        This is useful after a database reset: it restores DB registration
-        from already-downloaded files so that :meth:`update_data` (and a
-        full re-download) is not necessary.
-
-        Usage::
-
-            pipe = WeatherPipeline(config={...})
-            pipe()  # or Datavia(pipelines=[pipe])()
-            pipe.sync_files_and_database()
-
-        Returns
-        -------
-        bool
-            ``True`` when synchronisation completed without errors.
-        """
-        if not self.saver:
-            self()
-
-        assert self.saver is not None  # nosec B101
-        assert isinstance(self.saver, SaverWeather)  # nosec B101
-
-        return self.saver.sync_files_and_database()

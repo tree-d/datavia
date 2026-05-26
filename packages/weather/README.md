@@ -253,10 +253,13 @@ Key design decisions:
   human-readable units (°C, mm, µmol m⁻² s⁻¹) by
   `datavia.library.unit_conversions`.  HYRAS values are already in target
   units and no conversion is applied.
-- **Disk–DB reconciliation** — `SaverWeather.sync_files_and_database()` is
-  called at the start of `update_data()` to detect orphan DB rows (file
-  deleted) and orphan disk files (DB reset), ensuring the DB always reflects
-  what is actually on disk before the download delta is computed.
+- **Disk–DB reconciliation** — :meth:`Pipeline.sync_files_and_database` (Pipeline
+  base class) is called at the start of `update_data()` to detect orphan DB
+  rows (file deleted) and orphan disk files (DB reset), ensuring the DB always
+  reflects what is actually on disk before the download delta is computed.
+  `SaverWeather` supplies the disk-side primitive (`list_managed_files`) and
+  `GetterWeather` supplies the DB-side primitive (`get_registered_uris`);
+  reconciliation is coordinated by the Pipeline, not the Saver.
 - **Optional ERA5 dependency** — `cdsapi` is only required for ERA5 downloads
   (`datavia-weather[era5]`); HYRAS and DWD-only usage works without
   Copernicus credentials.

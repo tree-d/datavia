@@ -611,6 +611,9 @@ class TestWeatherPipeline:
         pipe.downloader.download.return_value = "/tmp/era5.nc\n/tmp/dwd.parquet"
         pipe.saver = MagicMock()
         pipe.saver.save.return_value = True
+        pipe.saver.list_managed_files.return_value = []
+        pipe.getter = MagicMock()
+        pipe.getter.get_registered_uris.return_value = set()
 
         result = pipe.update_data()
 
@@ -635,6 +638,9 @@ class TestWeatherPipeline:
         pipe.downloader = MagicMock()
         pipe.downloader.download.return_value = "failed"
         pipe.saver = MagicMock()
+        pipe.saver.list_managed_files.return_value = []
+        pipe.getter = MagicMock()
+        pipe.getter.get_registered_uris.return_value = set()
 
         assert pipe.update_data() is False
         pipe.saver.save.assert_not_called()
@@ -655,6 +661,9 @@ class TestWeatherPipeline:
         pipe.downloader.download.return_value = "/tmp/era5.nc\n/tmp/dwd.parquet"
         pipe.saver = MagicMock()
         pipe.saver.save.side_effect = [True, False]
+        pipe.saver.list_managed_files.return_value = []
+        pipe.getter = MagicMock()
+        pipe.getter.get_registered_uris.return_value = set()
 
         assert pipe.update_data() is False
 

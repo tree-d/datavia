@@ -144,6 +144,32 @@ class GetterTiff(Getter):
             )
             return set()
 
+    def get_registered_uris(self) -> set[str]:
+        """Return the set of file URIs currently registered for this source.
+
+        Queries the ``raster_layers`` table for all distinct ``uri`` values
+        belonging to this source.  Used by
+        :meth:`~datavia.core.interfaces.Pipeline.sync_files_and_database`
+        to compare what the database knows about against what is on disk.
+
+        Returns
+        -------
+        set[str]
+            Absolute file paths registered for this source.  Returns an
+            empty set when nothing has been stored yet or the database is
+            unavailable.
+        """
+        try:
+            metadata_list = get_raster_metadata(self.source_name)
+            return {m["uri"] for m in metadata_list if m.get("uri")}
+        except Exception as exc:
+            logger.warning(
+                "Could not retrieve registered URIs for source '%s': %s",
+                self.source_name,
+                exc,
+            )
+            return set()
+
     def get_band_mapping(self, layer_name: str | None = None) -> dict[str, int]:
         """Return a mapping from band description to band index for this source.
 

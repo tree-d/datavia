@@ -307,13 +307,19 @@ row exists, so later calls should be no-ops — but they are not, because each
 call uses `source_name='weather'` and `check_data_exists` is apparently not
 being called before the DWD downloader runs.
 
-**Root cause:** `WeatherPipeline.update_data()` calls the DWD downloader without
-first checking whether station data for the same date already exists.  This is
+**Root cause:** `WeatherPipeline.update_data()` called the DWD downloader without
+first checking whether station data for the same date already exists.  This was
 the same root cause as BUG-01 / the missing `sync_files_and_database()` call at
 the top of `update_data()`.
 
-**Files to change:** `packages/weather/datavia/weather/pipeline.py` (call
-`sync_files_and_database()` before the update loop).
+**✅ Fixed (April 2026):** `self.sync_files_and_database()` is now called at the
+top of `WeatherPipeline.update_data()` (Pipeline base-class method).  BUG-09
+new duplicate rows will no longer accumulate.  Any existing duplicate rows in
+the DB must be cleaned up with the one-time SQL in `weather_next_steps.md`
+Step 2.
+
+**Files changed:** `packages/weather/datavia/weather/pipeline.py` (sync before
+the update loop).
 
 ---
 
@@ -345,9 +351,9 @@ the actual source name when registering DWD Parquet files.
 | 5 | BUG-09 | 🟡 significant | Low | Resolved by BUG-01 fix (sync before update) |
 | 6 | BUG-10 | 🔵 informational | Low | Breaks DWD-only pipeline source isolation |
 
-BUG-01 (from the earlier design doc — `sync_files_and_database` at wrong
-abstraction level) remains the root cause of both BUG-04/BUG-09 and should
-be the first architectural fix.
+BUG-01 (disk↔DB reconciliation at wrong abstraction level) has been **fixed**
+(April 2026 Option B refactor).  It was the root cause of BUG-04/BUG-09 and
+the first architectural fix has been applied.
 
 ---
 
@@ -376,5 +382,5 @@ be the first architectural fix.
 | `packages/weather/datavia/weather/hyras_downloader.py` | BUG-07 (deterministic filenames) |
 | `datavia/core/downloader_url.py` | BUG-07 (expose `dest_dir`) |
 | `packages/weather/datavia/weather/getter_weather.py` | BUG-05 (pass coord array) |
-| `packages/weather/datavia/weather/saver_weather.py` | BUG-09, BUG-10 |
-| `packages/weather/datavia/weather/pipeline.py` | BUG-09 (sync before update) |
+| `packages/weather/datavia/weather/saver_weather.py` | BUG-10 |
+| `packages/weather/datavia/weather/pipeline.py` | ✅ BUG-09 (sync before update) — DONE |

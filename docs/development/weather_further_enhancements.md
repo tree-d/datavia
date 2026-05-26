@@ -754,7 +754,7 @@ not lost — only the timed-out chunk needs to be retried.
 | `packages/weather/datavia/weather/pipeline.py` | Add `temporal_resolution` config key; add `replace` param; add `get_config()`; add `reconfigure()` |
 | `packages/weather/datavia/weather/hyras_downloader.py` | Raise `ValueError` for `temporal_resolution="hourly"` |
 | `packages/weather/datavia/weather/coverage_manager.py` | **New file** — incremental download manager |
-| `packages/weather/datavia/weather/saver_weather.py` | Implement `sync_files_and_database()` (BUG-01); add `rename_all()` |
+| `packages/weather/datavia/weather/saver_weather.py` | ✅ `list_managed_files()` + `delete_registration()` implemented (BUG-01 done); add `rename_all()` |
 | `datavia/core/datavia.py` | Add `check_pipelines()` |
 | `packages/weather/datavia/weather/era5_downloader.py` | Add monthly chunking, queue-wait logging, `tqdm` transfer bar, `cds_queue_timeout` |
 | `packages/weather/datavia/weather/composite_downloader.py` | Handle `list[str]` return from sub-downloaders |
@@ -856,125 +856,29 @@ file) raises an exception, logs a warning, or returns a structured report.
 A structured report (`list[ConsistencyFinding]`) is the most flexible; raising
 on collisions and warning on orphaned files is a pragmatic default.
 
-### ⚠️ Design issue — disk↔DB reconciliation belongs in the Pipeline, not the Saver (systemic)
+### ✅ Design issue — disk↔DB reconciliation belongs in the Pipeline, not the Saver (RESOLVED)
 
-**Scope:** all pipelines and the core interface.  This is the root cause of
-BUG-01 and a latent design flaw in `TiffSaver`.
+**Previously:** a systemic contradiction across all pipelines and the core
+interface (root cause of BUG-01).
 
-#### The contradiction
+**Fixed in April 2026** via the Option B refactor.
 
-`datavia/core/interfaces.py` simultaneously:
+The component responsibility model is now enforced:
 
-- Declares `Saver.sync_files_and_database()` as an abstract method (forcing
-  every saver to implement disk+DB reconciliation).
-- States in `Getter.get_existing_layers()`: *"Only the Getter may read from
-  the database."*
+| Component | Responsibility | DB reads | DB writes |
+|---|---|---|---|
+| **Saver** | File writes + file inventory | never | INSERT/DELETE |
+| **Getter** | DB reads + file-data extraction | SELECT only | never |
+| **Pipeline** | Orchestration; disk↔DB reconciliation | via Getter | via Saver |
 
-These two rules cannot coexist.  Reconciliation requires reading the DB; the
-interface contract says only the Getter does that.  The `TiffSaver`
-implementation resolves the contradiction silently by ignoring the second rule.
+Key primitives added:
+- `Saver.list_managed_files()` — pure disk scan, no DB
+- `Saver.delete_registration(uri)` — DB DELETE only, no filesystem
+- `Saver.save(..., register_only=True)` — registers without copying
+- `Getter.get_registered_uris()` — DB SELECT returning file paths
+- `Pipeline.sync_files_and_database()` — coordinator (concrete, base class)
 
-#### Single-responsibility of each component
-
-| Component | Correct responsibility | What reconciliation currently forces it to do |
-|---|---|---|
-| **Downloader** | Fetch raw data from external sources | — |
-| **Saver** | Given a file path: copy to data dir + insert one DB row | List all its disk files AND query DB AND delete DB rows AND re-register files |
-| **Getter** | Given a query: read DB + file, return data | (untouched — `get_existing_layers()` is already correct) |
-| **Pipeline** | Orchestrate the three above | Currently bypassed — the Saver does its own coordination |
-
-The Saver currently crosses three boundaries: reads disk, reads DB, deletes DB
-rows, re-registers files.  Only reading disk (to list files it created) is
-legitimately within its domain.
-
-#### Proposed correct design
-
-Move reconciliation logic to the `Pipeline` base class, using two minimal
-primitives:
-
-```python
-# datavia/core/interfaces.py — proposed changes
-
-class Saver(ABC):
-    # Remove: sync_files_and_database()  (abstract method deleted)
-
-    @abstractmethod
-    def list_managed_files(self) -> list[str]:
-        """Return the paths of all files this saver has written to disk.
-
-        Pure filesystem listing — no database access.  The saver knows
-        its own naming convention (prefix, extension) and is the only
-        component that should apply it.
-        """
-        ...
-
-    @abstractmethod
-    def save(self, data_path: str, ...) -> bool: ...
-    # (unchanged)
-
-
-class Pipeline:
-    def sync_files_and_database(self) -> None:
-        """Reconcile on-disk files with database records.
-
-        Uses Saver.list_managed_files() for the disk state and
-        Getter.get_existing_layers() for the DB state.  The delta
-        is resolved here, in the pipeline layer, without the Saver
-        or Getter needing to know about each other.
-        """
-        disk_files  = set(self.saver.list_managed_files())
-        db_layers   = self.getter.get_existing_layers()
-
-        for orphan_layer in db_layers - disk_files:
-            # File was deleted; clean up the stale DB row.
-            _delete_layer_from_db(orphan_layer)
-
-        for new_file in disk_files - db_layers:
-            # File exists on disk but has no DB row; re-register it.
-            self.saver.save(new_file)
-```
-
-With this design:
-- `Saver` is write-only + one pure directory-listing primitive.
-- `Getter` is the sole DB reader (honouring the existing docstring contract).
-- `Pipeline` is the coordinator — it holds references to both and is the
-  natural place for cross-component logic.
-- No concrete-type casts anywhere.
-
-#### Impact on existing code
-
-| File | Required change |
-|---|---|
-| `datavia/core/interfaces.py` | Remove `Saver.sync_files_and_database()`; add `Saver.list_managed_files()`; rewrite `Pipeline.sync_files_and_database()` |
-| `datavia/core/saver_tiff.py` | Replace `sync_files_and_database()` + `check_data_exists()` with `list_managed_files()` (disk listing only); move `_delete_layer_metadata()` + `_delete_band_metadata()` to a DB utility or the pipeline base |
-| `packages/weather/datavia/weather/saver_weather.py` | Add `list_managed_files()` instead of `sync_files_and_database()` |
-| `packages/elevation/datavia/elevation/pipeline.py` | Call to `self.saver.sync_files_and_database()` → becomes `self.sync_files_and_database()` (no-op change if the base class provides it) |
-| `packages/soil/datavia/soil/pipeline.py` | Same as elevation |
-
-#### Open questions before implementing
-
-1. **Where does `_delete_layer_from_db` live?**  Options: a free function in
-   `datavia/library/database/`, a method on the `Pipeline` base, or a small
-   `DbCleaner` helper.  A free function in the DB library is cleanest.
-
-2. **Multi-band metadata.**  `TiffSaver` deletes both `raster_layers` and
-   `raster_band_metadata` rows.  The pipeline base must handle this generically
-   — either via a single overridable `_delete_layer(name)` hook, or by
-   accepting that multi-band cleanup is saver-specific and reverting to a
-   `Saver.delete_layer(name)` method (narrower than the full sync).
-
-3. **`save()` signature for re-registration.**  Re-registering an orphan file
-   calls `self.saver.save(new_file)`.  The existing `save()` signature copies
-   data from a *staging* path.  When the file is already in the data directory
-   (orphan case) the saver must not move or copy it — only insert the DB row.
-   Either add a `register_only=True` flag, or split `save()` into
-   `copy_to_data_dir()` + `register_in_db()`.
-
-#### Priority
-
-This is a non-trivial refactor across all three pipelines and the core
-interfaces.  It should be a dedicated task with its own branch — not bundled
-into any Enhancement 1–4.  The BUG-01 short-term workaround (implementing
-`sync_files_and_database()` on `SaverWeather`) should be applied first to
-unblock the weather pipeline, and this redesign tackled separately.
+`TiffSaver.check_data_exists()` is the only remaining legacy violation (it
+SELECT from `raster_layers`); it is marked deprecated and will be removed once
+all callers migrate to `Pipeline.sync_files_and_database()`.
 
