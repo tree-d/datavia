@@ -245,7 +245,8 @@ requires-pixi = ">=0.63"
 PYTHONPATH = "$PIXI_PROJECT_ROOT"
 
 [tool.pixi.tasks]
-docs = {cmd = "sphinx-build -E -b html docs docs/_build/html", default-environment = "dev"}
+docs = {cmd = "sphinx-build -E -b html docs docs/_build/html -W", default-environment = "dev"}
+docs-linkcheck = {cmd = "sphinx-build -b linkcheck docs docs/_build/linkcheck", default-environment = "dev"}
 test = {cmd = "pytest tests/ -v", default-environment = "dev"}
 test-docs = {cmd = "python scripts/test_docs_modern.py --format sphinx", default-environment = "dev"}
 test-docs-verbose = {cmd = "DATAVIA_DOCTEST_IO=0 python scripts/test_docs_modern.py --format sphinx --verbose", default-environment = "dev"}

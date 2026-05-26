@@ -81,10 +81,8 @@ jobs:
 
       - name: Build documentation
         run: |
-          cd docs
-          # Update version in docs
           echo "Building docs for commit $(git rev-parse --short HEAD)"
-          pixi run sphinx-build -b html . _build/html -W
+          pixi run docs
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
