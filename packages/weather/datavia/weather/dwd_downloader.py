@@ -14,6 +14,9 @@ import tempfile
 from datetime import date
 from typing import Any
 
+import pandas as pd
+import requests
+
 from datavia.core.downloader_api import APIDownloader
 
 logger = logging.getLogger(__name__)
@@ -97,14 +100,6 @@ class DWDStationDownloader(APIDownloader):
         RuntimeError
             If the API request for any station fails with a non-200 status.
         """
-        try:
-            import pandas as pd
-            import requests
-        except ImportError as exc:
-            raise ImportError(
-                "requests and pandas/pyarrow are required for DWD downloads."
-            ) from exc
-
         records: list[dict[str, Any]] = []
 
         try:

@@ -19,6 +19,7 @@ Public API
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 from datavia.library.unit_conversions import (
@@ -39,13 +40,15 @@ from .era5_downloader import ERA5Downloader
 if TYPE_CHECKING:
     from datavia.core.interfaces import Downloader
 
+logger = logging.getLogger(__name__)
+
 # ---------------------------------------------------------------------------
 # Conversion dispatch map
 # ---------------------------------------------------------------------------
 
 #: Maps ``(from_unit, to_unit)`` string pairs to the conversion callable.
 #: Extend this table when new sources with different raw units are added.
-FROM_TO_CONVERSION_MAP: dict[tuple[str, str], Any] = {
+_FROM_TO_CONVERSION_MAP: dict[tuple[str, str], Any] = {
     ("K", "degC"): kelvin_to_celsius,
     ("m", "mm"): precipitation_m_to_mm,
     ("J_m2", "PAR"): ssrd_to_par,
@@ -240,13 +243,11 @@ def apply_conversion(
 
     from_unit = conversion_spec["from"]
     to_unit = conversion_spec["to"]
-    conversion_fn = FROM_TO_CONVERSION_MAP.get((from_unit, to_unit))
+    conversion_fn = _FROM_TO_CONVERSION_MAP.get((from_unit, to_unit))
 
     if conversion_fn is None:
         # Spec exists but no matching function — return unchanged and log.
-        import logging
-
-        logging.getLogger(__name__).warning(
+        logger.warning(
             "No conversion function found for (%s → %s) "
             "(source=%s, variable=%s). Returning raw value.",
             from_unit,

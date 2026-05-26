@@ -297,8 +297,16 @@ class WeatherPipeline(Pipeline):
         if not self.downloader or not self.saver:
             self()
 
-        assert self.downloader is not None  # nosec B101
-        assert self.saver is not None  # nosec B101
+        if self.downloader is None:
+            raise RuntimeError(
+                "WeatherPipeline.update_data: downloader was not initialised. "
+                "Call the pipeline instance (pipe()) before update_data()."
+            )
+        if self.saver is None:
+            raise RuntimeError(
+                "WeatherPipeline.update_data: saver was not initialised. "
+                "Call the pipeline instance (pipe()) before update_data()."
+            )
 
         # Reconcile disk with DB before checking what to download (BUG-01 fix).
         self.sync_files_and_database()
@@ -442,8 +450,14 @@ class WeatherPipeline(Pipeline):
         if not self.getter:
             self()
 
-        assert self.getter is not None  # nosec B101
-        assert isinstance(self.getter, GetterWeather)  # nosec B101
+        if self.getter is None:
+            raise RuntimeError(
+                "WeatherPipeline.get_weather_data: getter was not initialised."
+            )
+        if not isinstance(self.getter, GetterWeather):
+            raise RuntimeError(
+                "WeatherPipeline.get_weather_data: getter is not a GetterWeather instance."
+            )
 
         return self.getter.get_weather_data(
             lat=lat,
@@ -487,7 +501,8 @@ class WeatherPipeline(Pipeline):
         if not self.getter:
             self()
 
-        assert self.getter is not None  # nosec B101
+        if self.getter is None:
+            raise RuntimeError("WeatherPipeline.get_data: getter was not initialised.")
 
         return self.getter.get_data(
             coords=coords,

@@ -21,6 +21,8 @@ import logging
 import os
 import shutil
 
+import pandas as pd
+import pyarrow.parquet as pq
 from sqlalchemy import text
 
 from datavia.config import get_config
@@ -32,6 +34,12 @@ from datavia.library.formats import extract_netcdf_layer_metadata
 from .source_registry import SOURCE_REGISTRY
 
 logger = logging.getLogger(__name__)
+
+#: Parquet metadata columns that are not weather observation variables.
+#: Used by :func:`_resolve_variables` to identify observation columns.
+_PARQUET_METADATA_COLS: frozenset[str] = frozenset(
+    {"station_id", "latitude", "longitude", "datetime"}
+)
 
 
 class SaverWeather(Saver):
@@ -516,8 +524,6 @@ def _build_dest_stem(
     # the filename is descriptive rather than random.  Falls back to the temp
     # stem only when the datetime column cannot be read.
     try:
-        import pandas as pd
-
         df = pd.read_parquet(data_path, columns=["datetime"])
         df["datetime"] = pd.to_datetime(df["datetime"])
         year = str(df["datetime"].min().year)
@@ -525,34 +531,6 @@ def _build_dest_stem(
     except Exception:
         stem = os.path.splitext(os.path.basename(data_path))[0]
         return f"{source_name}_{stem}"
-
-
-def _extract_variable_from_stem(stem: str, source_name: str) -> str:
-    """Extract the variable name from a file stem by stripping the source prefix.
-
-    Convention: ``<source_name>_<variable>[_<date_suffix>]``.
-    The date suffix (if any) is a trailing eight-digit token (YYYYMMDD).
-
-    Parameters
-    ----------
-    stem : str
-        File stem without extension, e.g. ``"era5_temperature_2m_20240101"``.
-    source_name : str
-        Source prefix to strip, e.g. ``"era5"``.
-
-    Returns
-    -------
-    str
-        Variable name, e.g. ``"temperature_2m"``.
-    """
-    prefix = f"{source_name}_"
-    remainder = stem[len(prefix) :] if stem.startswith(prefix) else stem
-
-    # Strip trailing date suffix YYYYMMDD if present.
-    parts = remainder.rsplit("_", 1)
-    if len(parts) == 2 and parts[1].isdigit() and len(parts[1]) == 8:
-        return parts[0]
-    return remainder
 
 
 def _resolve_variables(
@@ -625,12 +603,7 @@ def _resolve_variables(
     # Parquet: read the schema to find observation columns.
     # DWD Parquet files always carry metadata columns (station_id, latitude,
     # longitude, datetime); every other column is an observation variable.
-    _PARQUET_METADATA_COLS: frozenset[str] = frozenset(
-        {"station_id", "latitude", "longitude", "datetime"}
-    )
     try:
-        import pyarrow.parquet as pq
-
         schema = pq.read_schema(dest_path)
         obs_vars = [name for name in schema.names if name not in _PARQUET_METADATA_COLS]
         if obs_vars:
@@ -678,8 +651,6 @@ def _read_temporal_metadata(
 
     # Parquet: infer time range from the datetime column.
     try:
-        import pandas as pd
-
         df = pd.read_parquet(path, columns=["datetime"])
         df["datetime"] = pd.to_datetime(df["datetime"])
         valid_from = df["datetime"].min().isoformat()

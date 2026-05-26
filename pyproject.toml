@@ -327,4 +327,4 @@ soilgrids = "==0.1.0"
 datavia = { path = ".", editable = true }
 datavia-soil = { path = "./packages/soil/", editable = true }
 datavia-elevation = { path = "./packages/elevation/", editable = true }
-datavia-weather = { path = "./packages/weather/", editable = true }
+datavia-weather = { path = "./packages/weather/", editable = true, extras = ["era5"] }

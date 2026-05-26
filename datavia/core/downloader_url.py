@@ -14,6 +14,7 @@ from typing import Any
 import requests
 from requests.adapters import HTTPAdapter
 from requests.exceptions import ChunkedEncodingError
+from tqdm import tqdm
 from urllib3.exceptions import ProtocolError
 from urllib3.util.retry import Retry
 
@@ -168,19 +169,15 @@ class URLDownloader(Downloader):
         total_bytes = (
             int(content_length) if content_length and content_length.isdigit() else None
         )
-        try:
-            from tqdm import tqdm  # type: ignore[import]
 
-            progress: tqdm | None = tqdm(
-                total=total_bytes,
-                unit="B",
-                unit_scale=True,
-                unit_divisor=1024,
-                desc="Downloading",
-                initial=0,
-            )
-        except ImportError:
-            progress = None
+        progress: tqdm | None = tqdm(
+            total=total_bytes,
+            unit="B",
+            unit_scale=True,
+            unit_divisor=1024,
+            desc="Downloading",
+            initial=0,
+        )
 
         try:
             while retry_count < self.max_retries:

@@ -2286,7 +2286,7 @@ class TestWeatherPipelineLifecycle:
         After reconfiguration the pipeline's ``downloader`` attribute must be
         a fresh :class:`CompositeWeatherDownloader` instance, not the old one.
         """
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import patch
 
         from datavia.weather.pipeline import WeatherPipeline
 
@@ -2479,7 +2479,7 @@ class TestERA5DownloaderDownloadMocked:
 
         client_mock = MagicMock()
 
-        def fake_retrieve(dataset, request):  # noqa: ANN001 — test helper
+        def fake_retrieve(dataset, request):
             fd, path = tempfile.mkstemp(suffix=".nc", dir=str(tmp_path), prefix="era5_")
             import os
 
@@ -2606,7 +2606,7 @@ class TestERA5DownloaderDownloadMocked:
 
         client_mock = MagicMock()
 
-        def fake_retrieve_queued(dataset, request):  # noqa: ANN001
+        def fake_retrieve_queued(dataset, request):
             job = MagicMock()
             job.reply = {"status": "queued", "request_id": "timeout-job"}
             job.update = MagicMock()
@@ -2942,7 +2942,6 @@ class TestERA5DownloaderChunkBy:
     @patch("datavia.weather.era5_downloader.cdsapi")
     def test_chunk_by_none_produces_one_cds_job(self, mock_cdsapi: MagicMock) -> None:
         """download() with chunk_by='none' submits exactly one CDS job."""
-        import tempfile
 
         from datavia.weather.era5_downloader import ERA5Downloader
 

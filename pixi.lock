@@ -2433,7 +2433,6 @@ packages:
   - netcdf4>=1.7,<2
   - pyarrow>=14.0
   - pandas>=2.2.0,<3
-  - cdsapi>=0.7.7,<0.8
   - shapely>=2.0.4,<3.0
   - tqdm>=4.66,<5
   - cdsapi>=0.7 ; extra == 'era5'

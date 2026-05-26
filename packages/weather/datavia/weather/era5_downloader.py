@@ -15,7 +15,7 @@ when the CDS queue is fast.  Supported values:
 
 - ``"monthly"`` (default) — one job per calendar month.
 - ``"quarterly"`` — one job per calendar quarter (Q1 Jan-Mar, Q2 Apr-Jun,
-  Q3 Jul-Sep, Q4 Oct-Dec).  Reduces the job count by 3× vs monthly.
+  Q3 Jul-Sep, Q4 Oct-Dec).  Reduces the job count by 3x vs monthly.
 - ``"yearly"`` — one job per calendar year.  Best when the CDS queue is
   fast and the date range is short.
 - ``"none"`` — a single job for the entire date range.  Matches the
@@ -40,8 +40,10 @@ transfer bar is provided by the ``cdsapi`` client itself (unchanged).
 from __future__ import annotations
 
 import calendar
+import contextlib
 import datetime
 import logging
+import math
 import tempfile
 import time
 from datetime import date, timedelta
@@ -56,7 +58,7 @@ logger = logging.getLogger(__name__)
 # in tests.  The module attribute is ``None`` when cdsapi is not installed;
 # the :meth:`ERA5Downloader.download` method checks and raises ImportError.
 try:
-    import cdsapi as cdsapi  # type: ignore[import]
+    import cdsapi  # type: ignore[import]
 except ImportError:
     cdsapi = None  # type: ignore[assignment]
 
@@ -65,19 +67,6 @@ _GERMANY_BBOX: list[float] = [55.1, 5.9, 47.3, 15.0]
 
 #: ERA5 CDS API endpoint.
 _CDS_URL: str = "https://cds.climate.copernicus.eu/api"
-
-
-class ERA5Downloader(APIDownloader):
-    """Download ERA5 hourly reanalysis data from the Copernicus CDS.
-
-    Uses the ``cdsapi`` Python library to submit an asynchronous retrieval
-    request for the specified variables and date range.  The resulting NetCDF
-    file is written to a system temporary file and its path is returned.
-
-    Authentication is read from ``~/.cdsapirc``; the file must contain a
-    valid UID and API key (see https://cds.climate.copernicus.eu/how-to-api).
-    """
-
 
 #: Valid values for the ``chunk_by`` parameter.
 _VALID_CHUNK_BY: frozenset[str] = frozenset({"monthly", "quarterly", "yearly", "none"})
@@ -188,8 +177,6 @@ class ERA5Downloader(APIDownloader):
             and east edges are rounded up (``ceil``) and south and west edges
             are rounded down (``floor``) to the nearest 0.1\u00b0.
         """
-        import math
-
         grid_step = 0.1
         north, west, south, east = bbox
         snapped_north = math.ceil(round(north / grid_step, 10)) * grid_step
@@ -335,7 +322,7 @@ class ERA5Downloader(APIDownloader):
                 f"date_end ({date_end}) must not be earlier than date_start ({date_start})."
             )
 
-        #: (first_month, last_month) for each quarter.
+        # (first_month, last_month) for each quarter.
         quarter_ranges: list[tuple[int, int]] = [(1, 3), (4, 6), (7, 9), (10, 12)]
 
         chunks: list[tuple[str, str]] = []
@@ -458,10 +445,8 @@ class ERA5Downloader(APIDownloader):
                     self.cds_queue_timeout is not None
                     and elapsed >= self.cds_queue_timeout
                 ):
-                    try:
+                    with contextlib.suppress(Exception):
                         job.delete()
-                    except Exception:
-                        pass
                     raise TimeoutError(
                         f"ERA5Downloader: CDS job {job_id} exceeded queue timeout "
                         f"of {self.cds_queue_timeout} s."
