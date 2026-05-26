@@ -129,6 +129,14 @@ def convert_era5_variable(
 ) -> np.ndarray | float:
     """Dispatch a unit conversion by ERA5 variable name.
 
+    .. deprecated::
+        ``convert_era5_variable`` is superseded by
+        :func:`datavia.weather.source_registry.apply_conversion`, which is
+        source-aware and handles HYRAS, ERA5-Land, and future sources
+        correctly.  This function is kept for backward compatibility with
+        external callers and existing tests but is no longer called from
+        :class:`~datavia.weather.getter_weather.GetterWeather`.
+
     Looks up *variable* in :data:`_CONVERSION_MAP` and applies the
     corresponding function.  Variables that do not require conversion (e.g.
     wind components, relative humidity) are returned unchanged.

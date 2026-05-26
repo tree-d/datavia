@@ -326,7 +326,7 @@ class TestGetterWeather:
         """Returns an empty set when the database contains no rows."""
         from datavia.weather.getter_weather import GetterWeather
 
-        getter = GetterWeather("era5")
+        getter = GetterWeather("ERA5_land")
         assert getter.get_existing_layers() == set()
 
     def test_get_existing_layers_after_insert(self, sqlite_db: None) -> None:
@@ -334,22 +334,22 @@ class TestGetterWeather:
         from datavia.weather.getter_weather import GetterWeather
 
         _insert_weather_layer(
-            source_name="era5",
-            layer_name="era5_temperature_2m",
+            source_name="ERA5_land",
+            layer_name="ERA5_land_temperature_2m",
             variable="temperature_2m",
             file_format="netcdf",
             valid_from="2024-01-01T00:00:00",
             valid_until="2024-01-31T23:00:00",
-            uri="/data/era5_temperature_2m.nc",
+            uri="/data/ERA5_land_temperature_2m.nc",
         )
-        getter = GetterWeather("era5")
+        getter = GetterWeather("ERA5_land")
         assert getter.get_existing_layers() == {"temperature_2m"}
 
     def test_get_data_missing_variable_raises(self, sqlite_db: None) -> None:
         """ValueError is raised when 'variable' is not supplied."""
         from datavia.weather.getter_weather import GetterWeather
 
-        getter = GetterWeather("era5")
+        getter = GetterWeather("ERA5_land")
         coords = np.array([[13.4, 52.5]])
         with pytest.raises(ValueError, match="variable"):
             getter.get_data(coords, datetime_utc="2024-01-15T12:00:00")
@@ -358,7 +358,7 @@ class TestGetterWeather:
         """ValueError is raised when 'datetime_utc' is not supplied."""
         from datavia.weather.getter_weather import GetterWeather
 
-        getter = GetterWeather("era5")
+        getter = GetterWeather("ERA5_land")
         coords = np.array([[13.4, 52.5]])
         with pytest.raises(ValueError, match="datetime_utc"):
             getter.get_data(coords, variable="temperature_2m")
@@ -367,7 +367,7 @@ class TestGetterWeather:
         """RuntimeError is raised when no matching weather files exist."""
         from datavia.weather.getter_weather import GetterWeather
 
-        getter = GetterWeather("era5")
+        getter = GetterWeather("ERA5_land")
         coords = np.array([[13.4, 52.5]])
         with pytest.raises(RuntimeError, match="No weather files found"):
             getter.get_data(
@@ -381,8 +381,8 @@ class TestGetterWeather:
         from datavia.weather.getter_weather import GetterWeather
 
         _insert_weather_layer(
-            source_name="era5",
-            layer_name="era5_temperature_2m",
+            source_name="ERA5_land",
+            layer_name="ERA5_land_temperature_2m",
             variable="temperature_2m",
             file_format="netcdf",
             valid_from="2024-01-01T00:00:00",
@@ -390,7 +390,7 @@ class TestGetterWeather:
             uri="/data/era5_temperature_2m.nc",
         )
 
-        getter = GetterWeather("era5")
+        getter = GetterWeather("ERA5_land")
         coords = np.array([[13.4, 52.5]])
 
         with (
@@ -418,8 +418,8 @@ class TestGetterWeather:
         from datavia.weather.getter_weather import GetterWeather
 
         _insert_weather_layer(
-            source_name="era5",
-            layer_name="era5_temperature_2m",
+            source_name="ERA5_land",
+            layer_name="ERA5_land_temperature_2m",
             variable="temperature_2m",
             file_format="netcdf",
             valid_from="2024-01-01T00:00:00",
@@ -427,7 +427,7 @@ class TestGetterWeather:
             uri="/data/era5_temperature_2m.nc",
         )
 
-        getter = GetterWeather("era5")
+        getter = GetterWeather("ERA5_land")
         with patch(
             "datavia.weather.getter_weather.interpolate_netcdf",
             return_value=7.1,

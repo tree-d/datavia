@@ -134,7 +134,12 @@ class WeatherPipeline(Pipeline):
         """
         self.downloader = CompositeWeatherDownloader(config=self._config)
         self.saver = SaverWeather(self.name)
-        self.getter = GetterWeather(self.name)
+        # Forward any user-provided unit conversion overrides so the getter
+        # can pass them to apply_conversion for each variable.
+        self.getter = GetterWeather(
+            self.name,
+            unit_overrides=self._config.get("unit_conversions"),
+        )
         return self
 
     def update_data(

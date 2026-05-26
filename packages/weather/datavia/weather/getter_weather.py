@@ -5,7 +5,12 @@ Retrieves interpolated weather values at requested coordinates and datetimes
 by querying the ``weather_layers`` database table for relevant files and
 delegating to the library interpolation functions.
 
-When both gridded (NetCDF / ERA5) and station (Parquet / DWD) files cover the
+Unit conversions are source-aware: each source (``ERA5_land``, ``HYRAS``,
+etc.) has its own conversion rules in the source registry.  HYRAS data is
+already in target units and passes through unchanged.  ERA5 raw values
+(Kelvin, metres, J m⁻²) are converted automatically.
+
+When both gridded (NetCDF) and station (Parquet / DWD) files cover the
 requested time window the results are blended via
 :func:`datavia.library.interpolation.blend_gridded_and_station`.
 """
@@ -24,7 +29,7 @@ from datavia.library.interpolation import (
     interpolate_netcdf,
     interpolate_station_parquet,
 )
-from datavia.library.unit_conversions import convert_era5_variable
+from .source_registry import apply_conversion
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +53,11 @@ class GetterWeather(Getter):
     3. **Both** — blended result via
        :func:`~datavia.library.interpolation.blend_gridded_and_station`.
 
+    After gridded interpolation, source-aware unit conversions are applied
+    via :func:`~datavia.weather.source_registry.apply_conversion`.  ERA5
+    raw values (Kelvin, metres, J m⁻²) are converted to target units;
+    HYRAS values (already in °C / mm / W m⁻²) pass through unchanged.
+
     The :meth:`get_data` method accepts coordinates as a ``(N, 2)`` array of
     ``[lon, lat]`` pairs (EPSG:4326) in line with the base
     :class:`~datavia.core.interfaces.Getter` contract.  Pass ``variable`` and
@@ -55,24 +65,36 @@ class GetterWeather(Getter):
 
     .. code-block:: python
 
-        getter = GetterWeather("era5")
+        getter = GetterWeather("ERA5_land")
         values = getter.get_data(
             coords=np.array([[13.4, 52.5]]),
-            variable="temperature_2m",
+            variable="2m_temperature",
             datetime_utc="2024-06-15T12:00:00",
         )
     """
 
-    def __init__(self, source_name: str) -> None:
-        """Initialise getter with the source identifier.
+    def __init__(
+        self,
+        source_name: str,
+        unit_overrides: dict[str, dict[str, str]] | None = None,
+    ) -> None:
+        """Initialise getter with the source identifier and optional unit overrides.
 
         Parameters
         ----------
         source_name : str
-            Unique source identifier, e.g. ``"era5"`` or ``"dwd_stations"``
-            or the composite ``"weather"`` used by :class:`WeatherPipeline`.
+            Unique source identifier matching a key in
+            :data:`~datavia.weather.source_registry.SOURCE_REGISTRY`, e.g.
+            ``"ERA5_land"`` or ``"HYRAS"``.
+        unit_overrides : dict[str, dict[str, str]], optional
+            Per-variable conversion overrides in the form
+            ``{"2m_temperature": {"from": "K", "to": "degC"}}``.  Takes
+            precedence over the registry defaults for matched variable names.
+            Forwarded from ``config["unit_conversions"]`` by
+            :class:`WeatherPipeline`.
         """
         self.source_name: str = source_name
+        self._unit_overrides: dict[str, dict[str, str]] | None = unit_overrides
 
     # ------------------------------------------------------------------
     # Getter interface
@@ -204,8 +226,16 @@ class GetterWeather(Getter):
                     raw_gridded = interpolate_netcdf(
                         nc_files[0], lat, lon, variable, datetime_utc
                     )
-                    # Apply ERA5 unit conversions (K→°C, m→mm, SSRD→PAR).
-                    gridded_val = float(convert_era5_variable(raw_gridded, variable))
+                    # Apply source-aware unit conversion (e.g. K→°C for ERA5_land;
+                    # HYRAS passes through unchanged as it is already in target units).
+                    gridded_val = float(
+                        apply_conversion(
+                            self.source_name,
+                            variable,
+                            raw_gridded,
+                            self._unit_overrides,
+                        )
+                    )
                 except Exception as exc:
                     logger.warning(
                         "NetCDF interpolation failed for (%.4f, %.4f): %s",
