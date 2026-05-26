@@ -38,7 +38,9 @@ class URLDownloader(Downloader):
 
         # Configuration from legacy proven approach
         self.max_retries = 5
-        self.chunk_size = 4096  # Reduced chunk size for better handling of large files
+        self.chunk_size = (
+            65536  # 64 KB — aligns with typical TCP window sizes for streaming HTTP
+        )
 
         # Retry strategy for both HTTP and connection errors
         self.retry_strategy = Retry(
