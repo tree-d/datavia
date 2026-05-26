@@ -2435,6 +2435,7 @@ packages:
   - pandas>=2.2.0,<3
   - cdsapi>=0.7.7,<0.8
   - shapely>=2.0.4,<3.0
+  - tqdm>=4.66,<5
   - cdsapi>=0.7 ; extra == 'era5'
   requires_python: '>=3.12'
 - pypi: https://files.pythonhosted.org/packages/01/be/72532be3da7acc5fdfbccdb95215cd04f995a0886532a5b423f929cda4cc/uvicorn-0.48.0-py3-none-any.whl

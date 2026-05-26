@@ -36,6 +36,43 @@ pip install -e packages/weather
 ERA5 downloads require a free Copernicus account and a `~/.cdsapirc` file.
 See https://cds.climate.copernicus.eu/how-to-api for setup instructions.
 
+### CDS per-request size limit
+
+The Copernicus CDS enforces a maximum size per API request.  A single request
+for 5 variables over one full quarter at 0.1° resolution over Germany already
+exceeds it (`403 Forbidden — cost limits exceeded`).
+
+The default `chunk_by="monthly"` keeps each request to one variable-set ×
+one calendar month, which stays well within the limit.  For coarser chunking
+(`"quarterly"` or `"yearly"`) you must submit **one variable per job** by
+calling `ERA5Downloader` (or the pipeline config key `chunk_by`) in a loop
+over variables — see `scripts/benchmark_era5_chunking.py` for a working
+example using the `quarterly_1var` and `yearly_1var` strategies.
+
+### Long-running downloads (ERA5)
+
+ERA5 requests are queued on Copernicus servers and can take 20–60 minutes per
+job depending on load.  To avoid an interrupted download if your terminal
+closes or your laptop sleeps, run inside a `tmux` session.
+
+Install tmux if not already present (Ubuntu/Debian):
+
+```bash
+sudo apt install tmux
+```
+
+Then run your script inside a named session:
+
+```bash
+tmux new -s era5
+pixi run python your_script.py   # or however you invoke the pipeline
+# Ctrl+B, D  — detach (download keeps running in the background)
+tmux attach -t era5              # reattach later to check progress
+```
+
+Pressing Ctrl+C inside the session cancels the active CDS job on the
+Copernicus server automatically before exiting.
+
 ---
 
 ## Quick start

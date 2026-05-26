@@ -5,8 +5,7 @@
 > **Current state (2026-05-08):** Steps 1–7 are **done**.  Step 8 is
 > **partially done** (`get_config` / `reconfigure` implemented; `rename_all`
 > and `check_pipelines` deferred).  The ERA5 `valid_time` dimension bug is
-> **fixed**.  Step 9 (ERA5 request chunking) is the highest-priority remaining
-> item.
+> **fixed**.  Step 9 (ERA5 request chunking) is **done**.
 
 ---
 
@@ -116,10 +115,80 @@ Read-only orchestrator audit.  Raises `DataviaConsistencyError` on:
 
 ---
 
-## Step 9 — Enhancement 5: ERA5 request chunking and progress *(highest priority)*
+## Step 9 — Enhancement 5: ERA5 request chunking and progress *(done 2026-05-08)*
 
-**Prerequisite:** `valid_time` bug fix (above).  Real testing also requires
-CDS credentials.
+**Prerequisite:** `valid_time` bug fix (done).
+
+### What was implemented
+
+**1. `ERA5Downloader._iter_monthly_chunks(date_start, date_end)`**
+
+Static method that splits a date range into `(chunk_start, chunk_end)` pairs,
+one per calendar month, clipping the first and last months to the requested
+boundaries.  Returns a sorted list.
+
+**2. Monthly chunking in `ERA5Downloader.download()`**
+
+`download()` now:
+- Applies `buffer_days` to the effective start before chunking.
+- Iterates monthly chunks with a `tqdm` outer bar (`[N/total months]`) when
+  `tqdm` is installed; falls back silently to a plain iterator if not.
+- Submits one `reanalysis-era5-land` CDS job per chunk.
+- Returns a **newline-joined string of all produced paths** (one per month),
+  which is the same multi-path convention already used by
+  `CompositeWeatherDownloader`, so `WeatherPipeline.update_data()` needs no
+  changes.
+
+**3. Queue-wait logging via `ERA5Downloader._wait_for_cds_job(job)`**
+
+Polls the job every 60 s while `status == "queued"`, logging:
+```
+ERA5Downloader: job 922cc8da queued — waiting 60 s (total 0:01:00)
+```
+When the job transitions to `"running"` that is logged once, then control
+returns to the caller for the file download.
+
+**4. `cds_queue_timeout` config key**
+
+Optional integer (seconds).  When the CDS queue wait for a single chunk
+exceeds the limit, the job is cancelled and `TimeoutError` is raised with
+the job ID.  Added to `_KNOWN_CONFIG_KEYS` in `pipeline.py` and forwarded
+through `CompositeWeatherDownloader` to `ERA5Downloader`.
+
+**5. Module-level `cdsapi` import**
+
+`cdsapi` is now imported at module level (with a graceful `None` fallback if
+not installed) so that `unittest.mock.patch` can replace it in tests without
+`ImportError`.
+
+**6. `tqdm` added to `packages/weather/pyproject.toml`**
+
+```toml
+"tqdm>=4.66,<5",
+```
+
+### Files changed
+
+| File | What changed |
+|---|---|
+| `packages/weather/datavia/weather/era5_downloader.py` | Monthly chunking, queue logging, tqdm, timeout, module-level `cdsapi` |
+| `packages/weather/datavia/weather/composite_downloader.py` | Forward `cds_queue_timeout`; update docstring for multi-path ERA5 |
+| `packages/weather/datavia/weather/pipeline.py` | Add `cds_queue_timeout` to `_KNOWN_CONFIG_KEYS` |
+| `packages/weather/pyproject.toml` | Add `tqdm>=4.66,<5` dependency |
+| `tests/test_weather_pipeline_unit.py` | 16 new tests across 3 new test classes |
+
+### New test classes (all pass without CDS credentials)
+
+- `TestERA5DownloaderMonthlyChunking` (9 tests) — chunking logic for all
+  boundary conditions, year crossings, leap years, and single days.
+- `TestERA5DownloaderDownloadMocked` (5 tests) — mocked `cdsapi.Client`
+  verifying job count, multi-path return, buffer-day month expansion, and
+  `TimeoutError` on queue timeout.
+- `TestWeatherPipelineCdsQueueTimeout` (2 tests) — config key acceptance and
+  forwarding to the grid downloader.
+
+---
+
 
 ### Why this matters
 
@@ -213,7 +282,7 @@ and update `WeatherPipeline.update_data()` to iterate the list directly.
 | 8a | `get_config` + `reconfigure` | M | ✅ 2026-05-06 |
 | 8b | `rename_all` | M | deferred |
 | 8c | `check_pipelines` | M | deferred |
-| **9** | **ERA5 chunking + progress** | **L** | **next** |
+| **9** | **ERA5 chunking + progress** | **L** | **✅ 2026-05-08** |
 
 **Effort key:** S = hours · M = 1–2 days · L = 3–5 days
 

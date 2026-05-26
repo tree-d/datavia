@@ -8,9 +8,11 @@ to select the appropriate grid downloader (e.g.
 :class:`~datavia.weather.era5_downloader.ERA5Downloader` or
 :class:`~datavia.weather.hyras_downloader.HYRASDownloader`) and optionally
 instantiates :class:`~datavia.weather.dwd_downloader.DWDStationDownloader`
-when station data is requested.  All output paths are returned as a
-newline-joined string so the pipeline can hand them to
-``SaverWeather.save()`` one at a time.
+when station data is requested.  All output paths are returned as a newline-joined string so the pipeline
+can hand them to ``SaverWeather.save()`` one at a time.  ERA5 monthly
+chunking means a single ERA5 download may contribute multiple paths (one
+per calendar-month chunk); they are incorporated into the flat newline-
+joined string transparently.
 
 The multi-path string convention is an internal protocol between
 ``CompositeWeatherDownloader`` and ``WeatherPipeline``; callers outside the
@@ -102,6 +104,11 @@ class CompositeWeatherDownloader(CompositeDownloader):
             if source == "ERA5_land":
                 grid_kwargs["bbox"] = cfg.get("era5_bbox")
                 grid_kwargs["buffer_days"] = cfg.get("buffer_days", 1)
+                # Forward optional ERA5-specific tuning parameters.
+                if "cds_queue_timeout" in cfg:
+                    grid_kwargs["cds_queue_timeout"] = cfg["cds_queue_timeout"]
+                if "chunk_by" in cfg:
+                    grid_kwargs["chunk_by"] = cfg["chunk_by"]
             elif source == "HYRAS":
                 grid_kwargs["temporal_resolution"] = cfg.get(
                     "temporal_resolution", "daily"
@@ -151,10 +158,15 @@ class CompositeWeatherDownloader(CompositeDownloader):
     def download(self) -> str:
         """Run all active sub-downloads and return their output paths.
 
-        Each sub-downloader writes its result to a separate temporary file.
+        Each sub-downloader writes its result(s) to temporary file(s).
         The absolute paths are returned as a newline-joined string so
         ``WeatherPipeline`` can split and pass them individually to
         ``SaverWeather.save()``.
+
+        ERA5 monthly chunking means the grid downloader may return a
+        newline-joined string containing multiple paths (one per calendar
+        month).  These are incorporated directly — the final return value
+        is a flat newline-joined list of all paths from all sub-downloaders.
 
         Returns
         -------
@@ -171,6 +183,10 @@ class CompositeWeatherDownloader(CompositeDownloader):
         RuntimeError
             If the DWD download raises an unexpected exception (logged and
             re-raised so the pipeline can mark the update as failed).
+        TimeoutError
+            Propagated unchanged from
+            :class:`~datavia.weather.era5_downloader.ERA5Downloader` when
+            ``cds_queue_timeout`` is exceeded.
         """
         paths: list[str] = []
 

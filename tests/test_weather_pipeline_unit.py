@@ -2354,3 +2354,746 @@ class TestWeatherPipelineLifecycle:
             "WeatherPipeline must store a copy; mutating the caller's dict "
             "must not change the pipeline state."
         )
+
+
+# ---------------------------------------------------------------------------
+# ERA5Downloader — monthly chunking (Step 9)
+# ---------------------------------------------------------------------------
+
+
+class TestERA5DownloaderMonthlyChunking:
+    """Tests for :meth:`ERA5Downloader._iter_monthly_chunks`.
+
+    Verifies the chunking logic independently of CDS access.  All tests are
+    purely computational — no network or ``cdsapi`` interaction.
+    """
+
+    def test_single_month_produces_one_chunk(self) -> None:
+        """A range within one calendar month yields exactly one chunk."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        chunks = ERA5Downloader._iter_monthly_chunks("2024-01-05", "2024-01-20")
+        assert len(chunks) == 1
+        assert chunks[0] == ("2024-01-05", "2024-01-20")
+
+    def test_full_month_boundaries(self) -> None:
+        """A range covering exactly one full month yields the full-month chunk."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        chunks = ERA5Downloader._iter_monthly_chunks("2024-02-01", "2024-02-29")
+        assert chunks == [("2024-02-01", "2024-02-29")]
+
+    def test_three_month_range_produces_three_chunks(self) -> None:
+        """A range spanning January to March 2024 yields exactly three chunks."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        chunks = ERA5Downloader._iter_monthly_chunks("2024-01-01", "2024-03-31")
+        assert len(chunks) == 3
+        assert chunks[0] == ("2024-01-01", "2024-01-31")
+        assert chunks[1] == ("2024-02-01", "2024-02-29")
+        assert chunks[2] == ("2024-03-01", "2024-03-31")
+
+    def test_partial_first_and_last_months(self) -> None:
+        """Partial start and end months are clipped to the requested range."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        chunks = ERA5Downloader._iter_monthly_chunks("2024-01-15", "2024-03-10")
+        assert len(chunks) == 3
+        assert chunks[0] == ("2024-01-15", "2024-01-31")
+        assert chunks[1] == ("2024-02-01", "2024-02-29")
+        assert chunks[2] == ("2024-03-01", "2024-03-10")
+
+    def test_year_boundary_chunk_count(self) -> None:
+        """A range crossing a year boundary produces the correct number of chunks."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        chunks = ERA5Downloader._iter_monthly_chunks("2023-11-01", "2024-02-28")
+        # Nov-2023, Dec-2023, Jan-2024, Feb-2024 → 4 chunks.
+        assert len(chunks) == 4
+        assert chunks[0][0] == "2023-11-01"
+        assert chunks[-1][1] == "2024-02-28"
+
+    def test_single_day_range(self) -> None:
+        """A single-day range produces one chunk with equal start and end."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        chunks = ERA5Downloader._iter_monthly_chunks("2024-06-15", "2024-06-15")
+        assert chunks == [("2024-06-15", "2024-06-15")]
+
+    def test_end_before_start_raises(self) -> None:
+        """ValueError is raised when date_end precedes date_start."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        with pytest.raises(ValueError, match="date_end"):
+            ERA5Downloader._iter_monthly_chunks("2024-03-01", "2024-02-01")
+
+    def test_chunks_are_sorted(self) -> None:
+        """The returned chunk list is sorted by start date."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        chunks = ERA5Downloader._iter_monthly_chunks("2024-01-01", "2024-12-31")
+        start_dates = [c[0] for c in chunks]
+        assert start_dates == sorted(start_dates)
+
+    def test_full_year_produces_twelve_chunks(self) -> None:
+        """A full calendar year produces exactly 12 monthly chunks."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        chunks = ERA5Downloader._iter_monthly_chunks("2024-01-01", "2024-12-31")
+        assert len(chunks) == 12
+
+
+# ---------------------------------------------------------------------------
+# ERA5Downloader — download() with mocked CDS client (Step 9)
+# ---------------------------------------------------------------------------
+
+
+class TestERA5DownloaderDownloadMocked:
+    """Tests for :meth:`ERA5Downloader.download` with a mocked CDS client.
+
+    All tests replace ``cdsapi.Client`` with a mock so no network access is
+    required.  The mock records how many ``retrieve()`` calls were made, which
+    verifies the monthly-chunking logic end-to-end.
+    """
+
+    @staticmethod
+    def _make_mock_client(tmp_path) -> MagicMock:
+        """Return a ``cdsapi.Client`` mock whose ``retrieve`` writes a stub file.
+
+        The mock's ``retrieve`` side-effect creates a real temporary file so
+        that the caller can check that paths are produced.
+
+        Parameters
+        ----------
+        tmp_path : pathlib.Path
+            Directory used for stub output files.
+
+        Returns
+        -------
+        MagicMock
+            Configured mock with a ``retrieve`` method that returns a job-like
+            object with a ``download`` method.
+        """
+        import tempfile
+
+        client_mock = MagicMock()
+
+        def fake_retrieve(dataset, request):  # noqa: ANN001 — test helper
+            fd, path = tempfile.mkstemp(suffix=".nc", dir=str(tmp_path), prefix="era5_")
+            import os
+
+            os.close(fd)
+            job = MagicMock()
+            job.reply = {"status": "completed", "request_id": "test-job"}
+            job.download = MagicMock(side_effect=lambda p: None)
+            # The saver reads the path we pass to download(), so record it.
+            job._out_path = path
+            # Capture what path was used in the outer download() call.
+            client_mock._last_out_path = path
+            return job
+
+        client_mock.retrieve = MagicMock(side_effect=fake_retrieve)
+        return client_mock
+
+    def test_three_month_range_submits_three_jobs(self, tmp_path) -> None:
+        """A three-month range triggers exactly three CDS retrieve() calls.
+
+        Parameters
+        ----------
+        tmp_path : pathlib.Path
+            pytest-provided temporary directory.
+        """
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        downloader = ERA5Downloader(
+            variables=["2m_temperature"],
+            date_start="2024-01-01",
+            date_end="2024-03-31",
+            buffer_days=0,
+        )
+        client_mock = self._make_mock_client(tmp_path)
+
+        with patch("datavia.weather.era5_downloader.cdsapi") as mock_cdsapi:
+            mock_cdsapi.Client.return_value = client_mock
+            result = downloader.download()
+
+        assert client_mock.retrieve.call_count == 3, (
+            f"Expected 3 CDS retrieve() calls for a 3-month range, "
+            f"got {client_mock.retrieve.call_count}"
+        )
+        # Result must be a newline-joined string of 3 paths.
+        paths = result.splitlines()
+        assert len(paths) == 3
+
+    def test_single_month_submits_one_job(self, tmp_path) -> None:
+        """A range within one calendar month triggers exactly one retrieve() call.
+
+        Parameters
+        ----------
+        tmp_path : pathlib.Path
+            pytest-provided temporary directory.
+        """
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        downloader = ERA5Downloader(
+            variables=["2m_temperature"],
+            date_start="2024-06-01",
+            date_end="2024-06-30",
+            buffer_days=0,
+        )
+        client_mock = self._make_mock_client(tmp_path)
+
+        with patch("datavia.weather.era5_downloader.cdsapi") as mock_cdsapi:
+            mock_cdsapi.Client.return_value = client_mock
+            result = downloader.download()
+
+        assert client_mock.retrieve.call_count == 1
+        assert len(result.splitlines()) == 1
+
+    def test_buffer_days_extends_first_chunk_into_prior_month(self, tmp_path) -> None:
+        """buffer_days=1 starting on 2024-02-01 stretches the first chunk into January.
+
+        The effective start becomes 2024-01-31, so the chunking produces two
+        jobs: one for January (single day) and one for February.
+
+        Parameters
+        ----------
+        tmp_path : pathlib.Path
+            pytest-provided temporary directory.
+        """
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        downloader = ERA5Downloader(
+            variables=["2m_temperature"],
+            date_start="2024-02-01",
+            date_end="2024-02-29",
+            buffer_days=1,
+        )
+        client_mock = self._make_mock_client(tmp_path)
+
+        with patch("datavia.weather.era5_downloader.cdsapi") as mock_cdsapi:
+            mock_cdsapi.Client.return_value = client_mock
+            result = downloader.download()
+
+        # Effective start = 2024-01-31 → Jan chunk + Feb chunk = 2 jobs.
+        assert client_mock.retrieve.call_count == 2, (
+            f"Expected 2 jobs when buffer_days spans into previous month, "
+            f"got {client_mock.retrieve.call_count}"
+        )
+        assert len(result.splitlines()) == 2
+
+    def test_cds_queue_timeout_raises_timeout_error(self, tmp_path) -> None:
+        """TimeoutError is raised when a queued job exceeds cds_queue_timeout.
+
+        The mock job stays in ``"queued"`` state indefinitely.  With
+        ``cds_queue_timeout=0`` the timeout is triggered on the first poll.
+
+        Parameters
+        ----------
+        tmp_path : pathlib.Path
+            pytest-provided temporary directory.
+        """
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        downloader = ERA5Downloader(
+            variables=["2m_temperature"],
+            date_start="2024-01-01",
+            date_end="2024-01-31",
+            buffer_days=0,
+            cds_queue_timeout=0,
+        )
+
+        client_mock = MagicMock()
+
+        def fake_retrieve_queued(dataset, request):  # noqa: ANN001
+            job = MagicMock()
+            job.reply = {"status": "queued", "request_id": "timeout-job"}
+            job.update = MagicMock()
+            job.delete = MagicMock()
+            return job
+
+        client_mock.retrieve = MagicMock(side_effect=fake_retrieve_queued)
+
+        with (
+            patch("datavia.weather.era5_downloader.cdsapi") as mock_cdsapi,
+            patch("datavia.weather.era5_downloader.time.sleep"),
+        ):
+            mock_cdsapi.Client.return_value = client_mock
+            with pytest.raises(TimeoutError, match="timeout-job"):
+                downloader.download()
+
+    def test_composite_downloader_collects_multi_path_era5_result(
+        self, tmp_path
+    ) -> None:
+        """CompositeWeatherDownloader.download() flattens multi-path ERA5 results.
+
+        When ERA5Downloader returns a newline-joined 3-path string,
+        CompositeWeatherDownloader must pass all three paths through so that
+        WeatherPipeline can call SaverWeather.save() on each.
+
+        Parameters
+        ----------
+        tmp_path : pathlib.Path
+            pytest-provided temporary directory.
+        """
+        from datavia.weather.composite_downloader import CompositeWeatherDownloader
+
+        multi_path_result = "/tmp/era5_jan.nc\n/tmp/era5_feb.nc\n/tmp/era5_mar.nc"
+
+        with patch(
+            "datavia.weather.composite_downloader.get_grid_downloader_class"
+        ) as mock_registry:
+            mock_grid_class = MagicMock()
+            mock_grid_instance = MagicMock()
+            mock_grid_instance.download.return_value = multi_path_result
+            mock_grid_class.return_value = mock_grid_instance
+            mock_registry.return_value = mock_grid_class
+
+            composite = CompositeWeatherDownloader(
+                config={
+                    "source": "ERA5_land",
+                    "variables": ["2m_temperature"],
+                    "date_start": "2024-01-01",
+                    "date_end": "2024-03-31",
+                }
+            )
+            result = composite.download()
+
+        paths = [p for p in result.splitlines() if p]
+        assert len(paths) == 3
+        assert "/tmp/era5_jan.nc" in paths
+        assert "/tmp/era5_feb.nc" in paths
+        assert "/tmp/era5_mar.nc" in paths
+
+
+# ---------------------------------------------------------------------------
+# WeatherPipeline — cds_queue_timeout in known config keys (Step 9)
+# ---------------------------------------------------------------------------
+
+
+class TestWeatherPipelineCdsQueueTimeout:
+    """Tests that ``cds_queue_timeout`` is accepted as a valid config key."""
+
+    _BASE_CONFIG: ClassVar[dict] = {
+        "source": "ERA5_land",
+        "variables": ["2m_temperature"],
+        "date_start": "2024-01-01",
+        "date_end": "2024-12-31",
+    }
+
+    def test_cds_queue_timeout_accepted_in_config(self) -> None:
+        """WeatherPipeline accepts ``cds_queue_timeout`` without raising ValueError."""
+        from datavia.weather.pipeline import WeatherPipeline
+
+        config = {**self._BASE_CONFIG, "cds_queue_timeout": 1800}
+        # Must not raise.
+        pipe = WeatherPipeline(config=config)
+        assert pipe.get_config()["cds_queue_timeout"] == 1800
+
+    def test_cds_queue_timeout_forwarded_to_composite(self) -> None:
+        """``cds_queue_timeout`` is forwarded to ``CompositeWeatherDownloader``."""
+        from datavia.weather.composite_downloader import CompositeWeatherDownloader
+
+        config = {
+            "source": "ERA5_land",
+            "variables": ["2m_temperature"],
+            "date_start": "2024-01-01",
+            "date_end": "2024-01-31",
+            "cds_queue_timeout": 600,
+        }
+
+        with patch(
+            "datavia.weather.composite_downloader.get_grid_downloader_class"
+        ) as mock_registry:
+            mock_grid_class = MagicMock()
+            mock_grid_class.return_value = MagicMock()
+            mock_registry.return_value = mock_grid_class
+
+            CompositeWeatherDownloader(config=config)
+
+        # The grid class must have been called with cds_queue_timeout=600.
+        call_kwargs = mock_grid_class.call_args[1]
+        assert call_kwargs.get("cds_queue_timeout") == 600, (
+            f"Expected cds_queue_timeout=600 forwarded to grid downloader, "
+            f"got {call_kwargs}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# ERA5Downloader — quarterly chunking
+# ---------------------------------------------------------------------------
+
+
+class TestERA5DownloaderQuarterlyChunking:
+    """Unit tests for :meth:`ERA5Downloader._iter_quarterly_chunks`."""
+
+    def test_full_year_produces_four_quarters(self) -> None:
+        """A full calendar year produces exactly four quarterly chunks."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        chunks = ERA5Downloader._iter_quarterly_chunks("2023-01-01", "2023-12-31")
+        assert len(chunks) == 4
+        assert chunks[0] == ("2023-01-01", "2023-03-31")
+        assert chunks[1] == ("2023-04-01", "2023-06-30")
+        assert chunks[2] == ("2023-07-01", "2023-09-30")
+        assert chunks[3] == ("2023-10-01", "2023-12-31")
+
+    def test_two_full_years_produce_eight_quarters(self) -> None:
+        """Two full calendar years produce eight quarterly chunks."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        chunks = ERA5Downloader._iter_quarterly_chunks("2022-01-01", "2023-12-31")
+        assert len(chunks) == 8
+
+    def test_partial_first_quarter_clipped(self) -> None:
+        """A range starting mid-quarter clips the first chunk correctly."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        chunks = ERA5Downloader._iter_quarterly_chunks("2023-02-15", "2023-06-30")
+        # Q1 clipped: starts 2023-02-15
+        assert chunks[0] == ("2023-02-15", "2023-03-31")
+        # Q2 is full
+        assert chunks[1] == ("2023-04-01", "2023-06-30")
+
+    def test_partial_last_quarter_clipped(self) -> None:
+        """A range ending mid-quarter clips the last chunk correctly."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        chunks = ERA5Downloader._iter_quarterly_chunks("2023-07-01", "2023-11-15")
+        assert chunks[-1] == ("2023-10-01", "2023-11-15")
+
+    def test_single_day_produces_one_chunk(self) -> None:
+        """A one-day range produces a single quarterly chunk."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        chunks = ERA5Downloader._iter_quarterly_chunks("2023-05-20", "2023-05-20")
+        assert len(chunks) == 1
+        assert chunks[0] == ("2023-05-20", "2023-05-20")
+
+    def test_invalid_range_raises(self) -> None:
+        """date_end < date_start raises ValueError."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        with pytest.raises(ValueError, match="date_end"):
+            ERA5Downloader._iter_quarterly_chunks("2023-06-01", "2023-01-01")
+
+    def test_cross_year_boundary_quarterly(self) -> None:
+        """A range spanning a year boundary (Q4 → Q1) produces correct chunks."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        chunks = ERA5Downloader._iter_quarterly_chunks("2022-11-01", "2023-03-31")
+        # Q4 2022 clipped
+        assert chunks[0] == ("2022-11-01", "2022-12-31")
+        # Q1 2023 full
+        assert chunks[1] == ("2023-01-01", "2023-03-31")
+        assert len(chunks) == 2
+
+    def test_leap_year_q1_end(self) -> None:
+        """Q1 of a leap year ends on Feb 29 when the range includes it."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        chunks = ERA5Downloader._iter_quarterly_chunks("2024-01-01", "2024-06-30")
+        # Q1 must end on 2024-03-31 (not Feb 29 — quarters end on month boundaries)
+        assert chunks[0] == ("2024-01-01", "2024-03-31")
+
+
+# ---------------------------------------------------------------------------
+# ERA5Downloader — yearly chunking
+# ---------------------------------------------------------------------------
+
+
+class TestERA5DownloaderYearlyChunking:
+    """Unit tests for :meth:`ERA5Downloader._iter_yearly_chunks`."""
+
+    def test_full_year_produces_one_chunk(self) -> None:
+        """A full calendar year produces exactly one yearly chunk."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        chunks = ERA5Downloader._iter_yearly_chunks("2023-01-01", "2023-12-31")
+        assert len(chunks) == 1
+        assert chunks[0] == ("2023-01-01", "2023-12-31")
+
+    def test_three_years_produces_three_chunks(self) -> None:
+        """Three calendar years produce exactly three yearly chunks."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        chunks = ERA5Downloader._iter_yearly_chunks("2022-01-01", "2024-12-31")
+        assert len(chunks) == 3
+        assert chunks[0] == ("2022-01-01", "2022-12-31")
+        assert chunks[1] == ("2023-01-01", "2023-12-31")
+        assert chunks[2] == ("2024-01-01", "2024-12-31")
+
+    def test_partial_first_year_clipped(self) -> None:
+        """A range starting mid-year clips the first yearly chunk."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        chunks = ERA5Downloader._iter_yearly_chunks("2023-06-01", "2024-12-31")
+        assert chunks[0] == ("2023-06-01", "2023-12-31")
+        assert chunks[1] == ("2024-01-01", "2024-12-31")
+
+    def test_partial_last_year_clipped(self) -> None:
+        """A range ending mid-year clips the last yearly chunk."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        chunks = ERA5Downloader._iter_yearly_chunks("2022-01-01", "2023-09-30")
+        assert chunks[-1] == ("2023-01-01", "2023-09-30")
+
+    def test_single_day_produces_one_chunk(self) -> None:
+        """A one-day range produces a single yearly chunk."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        chunks = ERA5Downloader._iter_yearly_chunks("2023-07-04", "2023-07-04")
+        assert len(chunks) == 1
+        assert chunks[0] == ("2023-07-04", "2023-07-04")
+
+    def test_invalid_range_raises(self) -> None:
+        """date_end < date_start raises ValueError."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        with pytest.raises(ValueError, match="date_end"):
+            ERA5Downloader._iter_yearly_chunks("2023-12-01", "2023-01-01")
+
+
+# ---------------------------------------------------------------------------
+# ERA5Downloader — chunk_by parameter validation and dispatch
+# ---------------------------------------------------------------------------
+
+
+class TestERA5DownloaderChunkBy:
+    """Unit tests for the ``chunk_by`` parameter on ERA5Downloader."""
+
+    def test_invalid_chunk_by_raises(self) -> None:
+        """Passing an unknown chunk_by value raises ValueError at construction."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        with pytest.raises(ValueError, match="chunk_by"):
+            ERA5Downloader(
+                variables=["2m_temperature"],
+                date_start="2024-01-01",
+                date_end="2024-12-31",
+                chunk_by="weekly",  # Not a valid value.
+            )
+
+    def test_default_chunk_by_is_monthly(self) -> None:
+        """The default chunk_by value is 'monthly'."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        dl = ERA5Downloader(
+            variables=["2m_temperature"],
+            date_start="2024-01-01",
+            date_end="2024-12-31",
+        )
+        assert dl.chunk_by == "monthly"
+
+    def test_get_chunks_monthly_dispatch(self) -> None:
+        """_get_chunks with chunk_by='monthly' returns one chunk per month."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        dl = ERA5Downloader(
+            variables=["2m_temperature"],
+            date_start="2024-01-01",
+            date_end="2024-03-31",
+            chunk_by="monthly",
+        )
+        chunks = dl._get_chunks("2024-01-01")
+        assert len(chunks) == 3  # Jan, Feb, Mar
+
+    def test_get_chunks_quarterly_dispatch(self) -> None:
+        """_get_chunks with chunk_by='quarterly' returns one chunk per quarter."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        dl = ERA5Downloader(
+            variables=["2m_temperature"],
+            date_start="2024-01-01",
+            date_end="2024-12-31",
+            chunk_by="quarterly",
+        )
+        chunks = dl._get_chunks("2024-01-01")
+        assert len(chunks) == 4
+
+    def test_get_chunks_yearly_dispatch(self) -> None:
+        """_get_chunks with chunk_by='yearly' returns one chunk per year."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        dl = ERA5Downloader(
+            variables=["2m_temperature"],
+            date_start="2023-01-01",
+            date_end="2024-12-31",
+            chunk_by="yearly",
+        )
+        chunks = dl._get_chunks("2023-01-01")
+        assert len(chunks) == 2
+
+    def test_get_chunks_none_dispatch(self) -> None:
+        """_get_chunks with chunk_by='none' returns a single chunk."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        dl = ERA5Downloader(
+            variables=["2m_temperature"],
+            date_start="2024-01-01",
+            date_end="2024-12-31",
+            chunk_by="none",
+        )
+        chunks = dl._get_chunks("2024-01-01")
+        assert len(chunks) == 1
+        assert chunks[0] == ("2024-01-01", "2024-12-31")
+
+    @patch("datavia.weather.era5_downloader.cdsapi")
+    def test_chunk_by_none_produces_one_cds_job(self, mock_cdsapi: MagicMock) -> None:
+        """download() with chunk_by='none' submits exactly one CDS job."""
+        import tempfile
+
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        mock_client = MagicMock()
+        mock_cdsapi.Client.return_value = mock_client
+
+        # Simulate a job that downloads an empty temp file.
+        def fake_download(path: str) -> None:
+            with open(path, "wb"):
+                pass
+
+        mock_job = MagicMock()
+        mock_job.reply = {"status": "completed", "request_id": "test-none"}
+        mock_job.download.side_effect = fake_download
+        mock_client.retrieve.return_value = mock_job
+
+        dl = ERA5Downloader(
+            variables=["2m_temperature"],
+            date_start="2024-01-01",
+            date_end="2024-12-31",
+            chunk_by="none",
+            buffer_days=0,
+        )
+        dl.download()
+
+        assert mock_client.retrieve.call_count == 1, (
+            f"Expected 1 CDS job for chunk_by='none', got {mock_client.retrieve.call_count}"
+        )
+
+    @patch("datavia.weather.era5_downloader.cdsapi")
+    def test_chunk_by_quarterly_two_years_produces_eight_jobs(
+        self, mock_cdsapi: MagicMock
+    ) -> None:
+        """download() with chunk_by='quarterly' over 2 years submits 8 CDS jobs."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        mock_client = MagicMock()
+        mock_cdsapi.Client.return_value = mock_client
+
+        def fake_download(path: str) -> None:
+            with open(path, "wb"):
+                pass
+
+        mock_job = MagicMock()
+        mock_job.reply = {"status": "completed", "request_id": "test-quarterly"}
+        mock_job.download.side_effect = fake_download
+        mock_client.retrieve.return_value = mock_job
+
+        dl = ERA5Downloader(
+            variables=["2m_temperature"],
+            date_start="2022-01-01",
+            date_end="2023-12-31",
+            chunk_by="quarterly",
+            buffer_days=0,
+        )
+        dl.download()
+
+        assert mock_client.retrieve.call_count == 8, (
+            f"Expected 8 CDS jobs for 2 years quarterly, got {mock_client.retrieve.call_count}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# CompositeWeatherDownloader — chunk_by forwarding
+# ---------------------------------------------------------------------------
+
+
+class TestCompositeDownloaderChunkByForwarding:
+    """Tests that ``chunk_by`` is forwarded from config to the grid downloader."""
+
+    def test_chunk_by_forwarded_to_grid_downloader(self) -> None:
+        """CompositeWeatherDownloader forwards chunk_by to the ERA5 grid downloader."""
+        from datavia.weather.composite_downloader import CompositeWeatherDownloader
+
+        config = {
+            "source": "ERA5_land",
+            "variables": ["2m_temperature"],
+            "date_start": "2024-01-01",
+            "date_end": "2024-01-31",
+            "chunk_by": "quarterly",
+        }
+
+        with patch(
+            "datavia.weather.composite_downloader.get_grid_downloader_class"
+        ) as mock_registry:
+            mock_grid_class = MagicMock()
+            mock_grid_class.return_value = MagicMock()
+            mock_registry.return_value = mock_grid_class
+
+            CompositeWeatherDownloader(config=config)
+
+        call_kwargs = mock_grid_class.call_args[1]
+        assert call_kwargs.get("chunk_by") == "quarterly", (
+            f"Expected chunk_by='quarterly' forwarded to grid downloader, "
+            f"got {call_kwargs}"
+        )
+
+    def test_chunk_by_absent_not_forwarded(self) -> None:
+        """When chunk_by is not in config, it is not passed to the grid downloader."""
+        from datavia.weather.composite_downloader import CompositeWeatherDownloader
+
+        config = {
+            "source": "ERA5_land",
+            "variables": ["2m_temperature"],
+            "date_start": "2024-01-01",
+            "date_end": "2024-01-31",
+        }
+
+        with patch(
+            "datavia.weather.composite_downloader.get_grid_downloader_class"
+        ) as mock_registry:
+            mock_grid_class = MagicMock()
+            mock_grid_class.return_value = MagicMock()
+            mock_registry.return_value = mock_grid_class
+
+            CompositeWeatherDownloader(config=config)
+
+        call_kwargs = mock_grid_class.call_args[1]
+        assert "chunk_by" not in call_kwargs, (
+            f"chunk_by must not be forwarded when absent from config, got {call_kwargs}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# WeatherPipeline — chunk_by config key acceptance
+# ---------------------------------------------------------------------------
+
+
+class TestWeatherPipelineChunkByConfig:
+    """Tests that ``chunk_by`` is accepted as a valid WeatherPipeline config key."""
+
+    _BASE_CONFIG: ClassVar[dict] = {
+        "source": "ERA5_land",
+        "variables": ["2m_temperature"],
+        "date_start": "2024-01-01",
+        "date_end": "2024-12-31",
+    }
+
+    def test_chunk_by_accepted_in_pipeline_config(self) -> None:
+        """WeatherPipeline accepts chunk_by without raising ValueError."""
+        from datavia.weather.pipeline import WeatherPipeline
+
+        config = {**self._BASE_CONFIG, "chunk_by": "quarterly"}
+        pipe = WeatherPipeline(config=config)
+        assert pipe.get_config()["chunk_by"] == "quarterly"
+
+    def test_chunk_by_all_valid_values_accepted(self) -> None:
+        """WeatherPipeline accepts all four valid chunk_by values."""
+        from datavia.weather.pipeline import WeatherPipeline
+
+        for value in ("monthly", "quarterly", "yearly", "none"):
+            config = {**self._BASE_CONFIG, "chunk_by": value}
+            # Must not raise.
+            pipe = WeatherPipeline(config=config)
+            assert pipe.get_config()["chunk_by"] == value

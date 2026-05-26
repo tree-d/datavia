@@ -69,6 +69,8 @@ _KNOWN_CONFIG_KEYS: frozenset[str] = _REQUIRED_CONFIG_KEYS | frozenset(
         "unit_conversions",
         "buffer_days",
         "temporal_resolution",
+        "cds_queue_timeout",
+        "chunk_by",
     }
 )
 
