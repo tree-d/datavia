@@ -14,13 +14,16 @@ class Downloader(ABC):
     """
 
     @abstractmethod
-    def __init__(self, url: str) -> None:
-        """Initialize downloader with data source URL.
+    def __init__(self, url: str = "") -> None:
+        """Initialize downloader with data source URL or endpoint.
 
         Parameters
         ----------
-        url : str
-            URL or endpoint to download data from
+        url : str, optional
+            URL or API endpoint to download data from.  Composite
+            downloaders that aggregate multiple sub-downloaders may pass an
+            empty string (the default) because they have no single
+            canonical URL.
         """
         self.url = url
 
@@ -41,6 +44,60 @@ class Downloader(ABC):
             If download fails
         """
         raise NotImplementedError("Download method must be implemented by subclasses.")
+
+
+class CompositeDownloader(Downloader, ABC):
+    """Abstract base class for downloaders that aggregate multiple sub-downloaders.
+
+    A ``CompositeDownloader`` presents the same :class:`Downloader` interface
+    to the rest of the pipeline while internally delegating to two or more
+    specialised sub-downloaders.  This lets a :class:`Pipeline` remain
+    unaware of the underlying split.
+
+    Subclasses *must* implement :attr:`downloaders` (returning the list of
+    component :class:`Downloader` instances) and :meth:`download` (which
+    orchestrates and delegates to those components).
+
+    Composite downloaders have no single canonical URL, so the inherited
+    ``url`` attribute is set to an empty string.
+
+    Examples
+    --------
+    A two-source composite::
+
+        class MyComposite(CompositeDownloader):
+            def __init__(self) -> None:
+                super().__init__()
+                self._source_a = DownloaderA(url="https://a.example.com")
+                self._source_b = DownloaderB(url="https://b.example.com")
+
+            @property
+            def downloaders(self) -> list[Downloader]:
+                return [self._source_a, self._source_b]
+
+            def download(self) -> str:
+                path_a = self._source_a.download()
+                path_b = self._source_b.download()
+                return path_a  # or combine / return folder
+    """
+
+    def __init__(self) -> None:
+        """Initialise with an empty URL (composites have no single endpoint)."""
+        super().__init__(url="")
+
+    @property
+    @abstractmethod
+    def downloaders(self) -> list[Downloader]:
+        """Return the list of component sub-downloaders.
+
+        Returns
+        -------
+        list[Downloader]
+            All sub-downloaders managed by this composite.
+        """
+        raise NotImplementedError(
+            "downloaders property must be implemented by subclasses."
+        )
 
 
 class Saver(ABC):

@@ -1,108 +1,212 @@
-# Plan B: Weather Pipeline
-TL;DR
-The weather pipeline follows the same three-part pattern as elevation and soil (Downloader → Saver → Getter) but uses NetCDF for gridded ERA5/ICON data and Parquet for DWD station time series, since neither is a static spatial raster. A new weather_layers table in the shared SQLite DB tracks every downloaded file with temporal valid_from/valid_until columns. At query time, GetterWeather blends station and gridded data at the requested coordinates.
+# Weather Pipeline
+
+The weather pipeline follows the same three-part pattern as elevation and soil
+(Downloader → Saver → Getter) but uses NetCDF for gridded ERA5 data and Parquet
+for DWD station time series, since neither is a static spatial raster. A new
+`weather_layers` table in the shared SQLite DB tracks every downloaded file with
+temporal `valid_from`/`valid_until` columns. At query time `GetterWeather` blends
+station and gridded data at the requested coordinates.
+
+**Status: core implementation complete — E2E tests and CLI smoke-test open.**
+
+---
+
+## Implementation notes
+
+### Design decisions made during implementation
+
+- `SaverWeather` and `GetterWeather` live in `packages/weather/` (not `datavia/core/`),
+  because no other package needs them. Same reasoning as `TiffSaver`/`GetterTiff`
+  being in `datavia/core/` only because two packages share them.
+- `cdsapi` is an **optional** dependency (`datavia-weather[era5]`) because DWD-only
+  usage does not need Copernicus credentials.
+- DWD station data is fetched via the **Open-Meteo HTTP API** (no auth required,
+  no `wetterdienst` dependency needed).
+- `formats.py` exposes `extract_netcdf_layer_metadata()` (not `read_netcdf_metadata`
+  as originally planned) — it reads metadata from an already-downloaded file and
+  returns `{valid_from, valid_until, variables, crs, bbox, resolution_x, resolution_y}`.
+- A `CompositeDownloader(Downloader, ABC)` abstract base class was added to
+  `datavia/core/interfaces.py`. Both `CompositeWeatherDownloader` and
+  `packages/soil/datavia/soil/composite_downloader.py` now extend it and implement
+  the required `downloaders` property.
+
+---
 
 ## Steps
 
-### Database layer
+### ✅ Database layer
 
-Extend init.sql with a new weather_layers table:
+`datavia/library/database/init.sql` — `weather_layers` table and index added:
+
 ```sql
-id INTEGER PRIMARY KEY AUTOINCREMENT
-layer_name TEXT NOT NULL — e.g. era5_temperature_2m
-source_name TEXT — era5, dwd_stations, dwd_icon, etc.
-variable TEXT — e.g. temperature_2m, precipitation, wind_speed_10m
-file_format TEXT — netcdf or parquet
-valid_from TEXT (ISO-8601 datetime)
-valid_until TEXT (ISO-8601 datetime)
-uri TEXT — absolute path to the .nc or .parquet file
-acquisition_time TEXT
-bbox TEXT — WKT footprint (Germany bounding box for gridded; NULL for station files)
-crs TEXT
-metadata TEXT — JSON blob for extra fields (grid resolution, station count, etc.)
-Index on (source_name, variable, valid_from, valid_until)
+CREATE TABLE IF NOT EXISTS weather_layers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    layer_name TEXT NOT NULL,   -- e.g. era5_temperature_2m
+    source_name TEXT,           -- era5 | dwd_stations
+    variable TEXT,              -- e.g. temperature_2m, precipitation
+    file_format TEXT,           -- netcdf | parquet
+    valid_from TEXT,            -- ISO-8601 datetime
+    valid_until TEXT,           -- ISO-8601 datetime
+    uri TEXT,                   -- absolute path to .nc or .parquet
+    acquisition_time TEXT,
+    bbox TEXT,                  -- WKT footprint (NULL for station files)
+    crs TEXT,
+    metadata TEXT               -- JSON blob (grid resolution, station count, …)
+);
+CREATE INDEX IF NOT EXISTS idx_weather_source_variable_time
+    ON weather_layers (source_name, variable, valid_from, valid_until);
 ```
 
-### Add weather query functions to query.py:
+`datavia/library/database/start.py` — removed the `has_table("raster_layers")`
+guard that prevented `weather_layers` from being created on existing databases.
+All `CREATE TABLE/INDEX IF NOT EXISTS` statements now always run (idempotent).
 
-get_weather_paths(source_name, variable, from_dt, to_dt) → list of uri where valid_from ≤ to_dt AND valid_until ≥ from_dt
-get_weather_metadata(source_name, variable) → list of metadata dicts
-check_weather_source_exists(source_name, variable) → bool
+### ✅ Weather query functions — `datavia/library/database/query.py`
 
-### Core library additions
+- `get_weather_paths(source_name, variable, from_dt, to_dt) → list[str]` — overlap
+  query: `valid_from ≤ to_dt AND valid_until ≥ from_dt`
+- `get_weather_metadata(source_name, variable=None) → list[dict]`
+- `check_weather_source_exists(source_name, variable=None, from_dt=None, to_dt=None) → bool`
 
-Create datavia/library/weather/ directory with:
-__init__.py
-interpolation.py:
-interpolate_netcdf(nc_path, lat, lon, variable, datetime_utc) → scalar or array — opens with xarray, selects nearest time step, bilinear-interpolates to the coordinate
-interpolate_station_parquet(parquet_path, lat, lon, variable, datetime_utc, radius_km) → scalar — loads station records within a radius, inverse-distance-weighted average
-blend_gridded_and_station(gridded_value, station_value, station_weight) → scalar — simple weighted average (station data is typically higher quality near coords where it exists)
-formats.py:
-read_netcdf_metadata(nc_path) → dict of {valid_from, valid_until, variables, crs, bbox, resolution_x, resolution_y} — reads CF conventions metadata from the NetCDF file without loading the full array
-write_parquet(records, path) — writes a list of station observation dicts to a Parquet file via pandas.DataFrame.to_parquet()
-read_parquet_time_range(path, variable, from_dt, to_dt) → DataFrame
+### ✅ Core library additions
 
-### Core interface implementations
+**`datavia/library/interpolation.py`**
 
-#### Create datavia/core/saver_weather.py implementing Saver:
+- `interpolate_netcdf(nc_path, lat, lon, variable, datetime_utc)` — opens with
+  xarray, selects nearest time step, bilinear-interpolates to the coordinate.
+- `interpolate_station_parquet(parquet_path, lat, lon, variable, datetime_utc,
+  radius_km=50.0)` — loads station records within radius, inverse-distance-weighted
+  average.
+- `blend_gridded_and_station(gridded_value, station_value, station_weight=0.6)` —
+  weighted average (station data weighted higher where it exists).
 
-SaverWeather(source_name, data_dir)
-save(raw_path, file_format) — copies file to data/{source_name}_{stem}.{ext}, reads temporal metadata via formats.read_netcdf_metadata() or infers it from Parquet contents, inserts a row into weather_layers
-check_data_exists(variable, from_dt, to_dt) → bool — calls check_weather_source_exists() narrowed by time range
-sync_files_and_database() — scans data/{source_name}_*.nc and data/{source_name}_*.parquet, reconciles against DB rows (same orphan-removal pattern as TiffSaver.sync_files_and_database())
+Both xarray and pandas imports are guarded with `try/except ImportError` to keep
+the core library importable without heavy optional deps.
 
-#### Create datavia/core/getter_weather.py implementing Getter:
+**`datavia/library/formats.py`**
 
-GetterWeather(source_name)
-get_existing_layers() → calls get_weather_metadata(source_name)
-get_data(lat, lon, variable, datetime_utc) → float | np.ndarray:
-Queries get_weather_paths(source_name, variable, ...) to find relevant files
-If NetCDF files found: calls interpolate_netcdf()
-If Parquet files found: calls interpolate_station_parquet()
-If both: blends with blend_gridded_and_station()
-Returns a float for a single datetime or np.ndarray for a list
+- `extract_netcdf_layer_metadata(filepath) → dict` — returns
+  `{valid_from, valid_until, variables, crs, bbox, resolution_x, resolution_y}`.
+- `write_parquet(records, path)` — writes a list of dicts to Parquet via pandas.
+- `read_parquet_time_range(path, variable, from_dt, to_dt) → DataFrame`
 
-### Package scaffold
+### ✅ `CompositeDownloader` ABC — `datavia/core/interfaces.py`
 
-**Create packages/weather/ following the same namespace-package pattern as elevation and soil:**
-packages/weather/pyproject.toml — declares datavia-weather, deps: datavia>=1.0.0.dev0, xarray>=2025.0, netCDF4>=1.7, pyarrow>=19.0, cdsapi>=0.7 (ERA5), pandas>=2.2
-packages/weather/datavia/weather/__init__.py
-packages/weather/datavia/weather/pipeline.py — WeatherPipeline(Pipeline) composing downloader + saver + getter, with a name = "weather" attribute
-packages/weather/datavia/weather/era5_downloader.py — ERA5Downloader(Downloader): uses cdsapi.Client to request hourly ERA5 data for Germany bounding box for a date range; saves as .nc; requires ~/.cdsapirc credentials (document this)
-packages/weather/datavia/weather/dwd_downloader.py — DWDStationDownloader(Downloader): fetches DWD station observations (temperature, precipitation etc.) using the open-meteo or wetterdienst Python library; saves as .parquet
-packages/weather/datavia/weather/composite_downloader.py — CompositeWeatherDownloader: orchestrates ERA5 + DWD downloads in sequence, same pattern as soil's CompositeDownloader
+New abstract base class `CompositeDownloader(Downloader, ABC)`:
+- Sets `url=""` (no single canonical endpoint).
+- Requires subclasses to implement `@property downloaders() → list[Downloader]`.
+- Used by both weather and soil composite downloaders.
 
-### Main package wiring
+### ✅ Interface implementations — `packages/weather/datavia/weather/`
 
-Add xarray, netCDF4, pyarrow to pyproject.toml under [project.optional-dependencies] key weather, alongside datavia-weather
-Wire up the weather CLI path in cli.py: the existing --weather update command already calls update_pipeline("weather", ...) — it will work once datavia-weather is installed
-Update pixi.toml to add xarray, netCDF4, pyarrow to the dev environment
+**`saver_weather.py`** — `SaverWeather(Saver)`:
+- `save(data_path, …) → bool` — copies file to `data/{source_name}_{stem}.{ext}`,
+  infers format from extension, extracts temporal metadata, inserts into `weather_layers`.
+- `check_data_exists(variable, from_dt, to_dt) → bool`
+- `sync_files_and_database() → bool` — reconciles files on disk with DB rows
+  (same orphan-removal pattern as `TiffSaver`).
 
-### Tests
+**`getter_weather.py`** — `GetterWeather(Getter)`:
+- `get_existing_layers() → set[str]`
+- `get_data(coords, …, **kwargs) → np.ndarray` — pipeline interface.
+- `get_weather_data(lat, lon, variable, datetime_utc, …) → float` — dispatches to
+  `interpolate_netcdf`, `interpolate_station_parquet`, or blends both.
 
-Create tests/test_weather_pipeline_unit.py (mirroring test_soil_pipeline_unit.py):
+### ✅ Package scaffold — `packages/weather/`
 
-Test SaverWeather.save() with a mock NetCDF file and verify weather_layers DB insert (using sqlite:///:memory: fixture from conftest.py)
-Test GetterWeather.get_data() with a pre-seeded DB row and a mock interpolate_netcdf() call
-Test blend_gridded_and_station() directly with known values
-Create tests/test_weather_e2e.py (gated by DATAVIA_E2E=1, mirroring test_soil_e2e.py):
+Follows the same namespace-package pattern (PEP 420) as elevation and soil.
 
-Live ERA5 download for a small bounding box and short date range
-Live DWD station download for Germany
-Point query for a known coordinate + datetime, verify result is a finite float in a realistic range
+- `pyproject.toml` — `datavia-weather`; core deps: `xarray`, `netCDF4`, `pyarrow`,
+  `pandas`; optional `[era5]` extra: `cdsapi>=0.7`.
+- `datavia/weather/__init__.py` — exports `WeatherPipeline`, `ERA5Downloader`,
+  `DWDStationDownloader`, `CompositeWeatherDownloader`, `SaverWeather`, `GetterWeather`.
+- `pipeline.py` — `WeatherPipeline(Pipeline)`, `name = "weather"`.
+- `era5_downloader.py` — `ERA5Downloader(APIDownloader)`: calls
+  `cdsapi.Client().retrieve(…)`, writes `.nc` to a temp file. Requires
+  `~/.cdsapirc`. Note: date range is currently simplified — see open items.
+- `dwd_downloader.py` — `DWDStationDownloader(APIDownloader)`: fetches from
+  Open-Meteo (`https://api.open-meteo.com`), combines station records, writes
+  `.parquet`.
+- `composite_downloader.py` — `CompositeWeatherDownloader(CompositeDownloader)`:
+  runs ERA5 then DWD, returns newline-joined file paths.
 
-### New dependencies introduced
+### ✅ Main package wiring
 
-Package	Purpose	Where
-xarray	Read/slice NetCDF along time + space dimensions	datavia-weather + dev env
-netCDF4	xarray NetCDF backend	datavia-weather + dev env
-pyarrow	Parquet read/write backend for pandas	datavia-weather + dev env
-cdsapi	ERA5 downloads from Copernicus CDS	datavia-weather
-wetterdienst or Open-Meteo HTTP	DWD station data	datavia-weather
+- `pyproject.toml` (root) — `weather` optional-dep group includes `xarray`,
+  `netCDF4`, `pyarrow`, `datavia-weather`.
+- `packages/weather/pyproject.toml` — `cdsapi` moved to `[era5]` optional extra.
+- `pixi.toml` — `xarray`, `netcdf4`, `pyarrow` added to conda deps; `datavia-weather`
+  added as editable PyPI dep. `pixi install` completed successfully.
 
-### Verification
+### ✅ Unit tests — `tests/test_weather_pipeline_unit.py`
 
-pytest tests/test_weather_pipeline_unit.py -v — passes without internet
-DATAVIA_E2E=1 pytest tests/test_weather_e2e.py -v — passes with valid ~/.cdsapirc
-datavia update weather produces data/era5_temperature_2m.nc, data/dwd_stations.parquet, and rows in data/datavia.db under weather_layers
-GetterWeather.get_data(lat=52.5, lon=13.4, variable="temperature_2m", datetime_utc=...) returns a float (Berlin)
+26 tests across 6 classes, all passing without network access:
+
+| Class | Tests |
+|---|---|
+| `TestBlendGriddedAndStation` | 5 — blending math and boundary conditions |
+| `TestWeatherQueryHelpers` | 4 — DB round-trip with `sqlite_db` in-memory fixture |
+| `TestSaverWeather` | 3 — save / idempotency / `check_data_exists` |
+| `TestGetterWeather` | 6 — layers, error cases, NetCDF dispatch, scalar result |
+| `TestCompositeWeatherDownloader` | 3 — `downloaders` property, path joining, error |
+| `TestWeatherPipeline` | 4 — init, path splitting, failure modes |
+
+Run with: `pytest tests/test_weather_pipeline_unit.py -v`
+
+### ✅ Soil `CompositeDownloader` migration
+
+`packages/soil/datavia/soil/composite_downloader.py` updated to extend
+`CompositeDownloaderABC` (imported alias for `datavia.core.interfaces.CompositeDownloader`).
+`super().__init__()` and the `downloaders` property implemented — now consistent with
+the weather composite.
+
+---
+
+## Open items
+
+### ⬜ E2E tests — `tests/test_weather_e2e.py`
+
+Gated by `DATAVIA_E2E=1`, mirroring `test_soil_e2e.py`:
+
+- Live ERA5 download for a small bounding box and short date range (requires
+  valid `~/.cdsapirc`).
+- Live DWD station download for Germany via Open-Meteo (no auth needed).
+- Point query for a known coordinate + datetime:
+  `GetterWeather.get_data(lat=52.5, lon=13.4, variable="temperature_2m", datetime_utc=…)`
+  should return a finite float in a realistic range.
+
+### ⬜ ERA5 date-range generation
+
+`ERA5Downloader.download()` currently passes simplified year/month/day values to
+`cdsapi`. For production use, generate proper lists from `date_start` to `date_end`
+using `datetime.date` ranges, e.g.:
+
+```python
+days = [
+    d.strftime("%Y-%m-%d")
+    for d in (date_start + timedelta(n) for n in range((date_end - date_start).days + 1))
+]
+```
+
+### ⬜ CLI smoke-test
+
+The existing `datavia update weather` route calls `update_pipeline("weather", …)`
+which should work once `datavia-weather` is installed. Verify end-to-end:
+
+```bash
+datavia update weather
+# expect: data/era5_*.nc, data/dwd_stations*.parquet, rows in data/datavia.db
+```
+
+---
+
+## Dependencies introduced
+
+| Package | Purpose | Where |
+|---|---|---|
+| `xarray>=2024.0` | Read/slice NetCDF along time + space | `datavia-weather` + dev env |
+| `netCDF4>=1.7` | xarray NetCDF backend | `datavia-weather` + dev env |
+| `pyarrow>=14.0` | Parquet read/write for pandas | `datavia-weather` + dev env |
+| `pandas>=2.2` | Station data manipulation | `datavia-weather` |
+| `cdsapi>=0.7` | ERA5 downloads from Copernicus CDS | `datavia-weather[era5]` (optional) |
+| Open-Meteo HTTP | DWD station observations | `datavia-weather` (stdlib `urllib`) |

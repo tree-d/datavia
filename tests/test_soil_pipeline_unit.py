@@ -366,7 +366,7 @@ class TestSoilPipelineGetData:
             pipeline.getter = getter_mock
             return pipeline
 
-        with patch.object(pipeline, "__call__", side_effect=fake_call):
+        with patch.object(SoilPipeline, "__call__", side_effect=fake_call):
             result = pipeline.get_data(self._COORDS)
 
         assert result == {}

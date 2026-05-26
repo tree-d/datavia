@@ -1,7 +1,7 @@
 """Spatial and temporal interpolation methods for pipeline use."""
 
 import logging
-from typing import Literal
+from typing import Any, Literal
 
 import numpy as np
 
@@ -10,6 +10,22 @@ try:
 except ImportError:  # pragma: no cover - optional dependency
     rasterio = None
 from scipy.ndimage import distance_transform_edt, map_coordinates
+
+try:
+    import xarray as xr
+
+    XARRAY_AVAILABLE = True
+except ImportError:  # pragma: no cover - optional dependency
+    xr = None  # type: ignore[assignment]
+    XARRAY_AVAILABLE = False
+
+try:
+    import pandas as pd
+
+    PANDAS_AVAILABLE = True
+except ImportError:  # pragma: no cover - optional dependency
+    pd = None  # type: ignore[assignment]
+    PANDAS_AVAILABLE = False
 
 from .coordinate_transforms import transform_coordinates
 
@@ -131,3 +147,215 @@ def spatial_interpolate(
         result = np.asarray(interpolated_values)
 
         return result
+
+
+def interpolate_netcdf(
+    nc_path: str,
+    lat: float,
+    lon: float,
+    variable: str,
+    datetime_utc: Any,
+) -> float | np.ndarray:
+    r"""Sample a NetCDF variable at a geographic point for one or more time steps.
+
+    Opens the file with xarray, selects the nearest time step(s) to
+    *datetime_utc*, and bilinearly interpolates the variable to (*lat*, *lon*).
+    When *datetime_utc* is a single ``datetime``-like object a scalar ``float``
+    is returned; when it is a sequence an ``np.ndarray`` of shape ``(T,)`` is
+    returned instead.
+
+    Parameters
+    ----------
+    nc_path : str
+        Absolute path to the NetCDF file (``*.nc``).
+    lat : float
+        Geographic latitude in degrees North (EPSG:4326).
+    lon : float
+        Geographic longitude in degrees East (EPSG:4326).
+    variable : str
+        Name of the variable to sample, e.g. ``"temperature_2m"``.
+    datetime_utc : datetime-like or sequence of datetime-like
+        One or more UTC timestamps.  Passed directly to
+        ``xarray.Dataset.sel`` with ``method="nearest"``.
+
+    Returns
+    -------
+    float
+        Interpolated scalar value when a single timestamp is provided.
+    np.ndarray
+        Array of shape ``(T,)`` when a sequence of timestamps is provided.
+
+    Raises
+    ------
+    ImportError
+        If xarray is not installed.
+    KeyError
+        If *variable* does not exist in the NetCDF file.
+    """
+    if not XARRAY_AVAILABLE:
+        raise ImportError(
+            "xarray is required for NetCDF interpolation. "
+            "Install datavia-weather or run `pip install xarray netCDF4`."
+        )
+
+    with xr.open_dataset(nc_path) as ds:
+        if variable not in ds.data_vars:
+            raise KeyError(
+                f"Variable '{variable}' not found in '{nc_path}'. "
+                f"Available variables: {list(ds.data_vars)}"
+            )
+
+        # Detect coordinate names (ERA5 uses 'latitude'/'longitude',
+        # ICON may use 'lat'/'lon').
+        lat_name = "latitude" if "latitude" in ds.coords else "lat"
+        lon_name = "longitude" if "longitude" in ds.coords else "lon"
+
+        # Bilinear spatial interpolation to the requested point.
+        point = ds[variable].interp(
+            {lat_name: lat, lon_name: lon},
+            method="linear",
+        )
+
+        # Temporal selection: nearest available time step.
+        if "time" in point.coords:
+            point = point.sel(time=datetime_utc, method="nearest")
+
+        values = point.values
+
+    if values.ndim == 0:
+        return float(values)
+    return np.asarray(values, dtype=float)
+
+
+def interpolate_station_parquet(
+    parquet_path: str,
+    lat: float,
+    lon: float,
+    variable: str,
+    datetime_utc: Any,
+    radius_km: float = 50.0,
+) -> float:
+    """Estimate a weather variable at a point using nearby station observations.
+
+    Loads station records within *radius_km* of the target coordinate from a
+    Parquet file, filters to the nearest time step, and computes an
+    inverse-distance-weighted (IDW) average across all matched stations.
+
+    Parameters
+    ----------
+    parquet_path : str
+        Absolute path to the Parquet file containing station observations.
+        Expected columns: ``latitude``, ``longitude``, ``datetime``,
+        ``<variable>``.
+    lat : float
+        Target geographic latitude in degrees North.
+    lon : float
+        Target geographic longitude in degrees East.
+    variable : str
+        Name of the observation column to aggregate.
+    datetime_utc : datetime-like
+        Target UTC timestamp; the nearest available timestamp is used.
+    radius_km : float, optional
+        Search radius in kilometres.  Defaults to 50 km.
+
+    Returns
+    -------
+    float
+        IDW-weighted average of station observations at the target point.
+        Returns ``float("nan")`` when no stations are found within the radius.
+
+    Raises
+    ------
+    ImportError
+        If pandas is not installed.
+    KeyError
+        If *variable* column is missing in the Parquet file.
+    """
+    if not PANDAS_AVAILABLE:
+        raise ImportError(
+            "pandas is required for station Parquet interpolation. "
+            "Install datavia-weather or run `pip install pandas pyarrow`."
+        )
+
+    df: Any = pd.read_parquet(parquet_path)
+
+    if variable not in df.columns:
+        raise KeyError(
+            f"Variable column '{variable}' not found in '{parquet_path}'. "
+            f"Available columns: {list(df.columns)}"
+        )
+
+    # --- Radius filter via equirectangular approximation (fast, sufficient
+    #     for the ~50 km radii used here; error <0.5 % at German latitudes). ---
+    lat_rad = np.radians(lat)
+    earth_radius_km = 6371.0
+    dlat = np.radians(df["latitude"].values - lat)
+    dlon = np.radians(df["longitude"].values - lon)
+    dist_km: np.ndarray = earth_radius_km * np.sqrt(
+        dlat**2 + (np.cos(lat_rad) * dlon) ** 2
+    )
+    df = df[dist_km <= radius_km].copy()
+    dist_km = dist_km[dist_km <= radius_km]
+
+    if df.empty:
+        logger.warning(
+            "No stations found within %.1f km of (%.4f, %.4f) in '%s'",
+            radius_km,
+            lat,
+            lon,
+            parquet_path,
+        )
+        return float("nan")
+
+    # Nearest time step selection.
+    df["datetime"] = pd.to_datetime(df["datetime"])
+    target = pd.Timestamp(datetime_utc)
+    nearest_ts = df["datetime"].iloc[(df["datetime"] - target).abs().argmin()]
+    df = df[df["datetime"] == nearest_ts]
+
+    values = df[variable].values.astype(float)
+    distances: np.ndarray = dist_km[df.index]
+
+    # Avoid division by zero for coincident stations.
+    distances = np.where(distances < 1e-9, 1e-9, distances)
+    weights = 1.0 / distances
+    return float(np.average(values, weights=weights))
+
+
+def blend_gridded_and_station(
+    gridded_value: float,
+    station_value: float,
+    station_weight: float = 0.6,
+) -> float:
+    """Blend a gridded model value with a station-derived estimate.
+
+    Performs a simple weighted average.  Station data are typically of higher
+    quality near measured locations, so *station_weight* defaults to 0.6.
+    The gridded weight is computed as ``1 - station_weight``.
+
+    Parameters
+    ----------
+    gridded_value : float
+        Value obtained from a gridded model file (e.g. ERA5 NetCDF).
+    station_value : float
+        Value estimated from nearby station observations.
+    station_weight : float, optional
+        Weight assigned to the station estimate. Must be in ``[0, 1]``.
+        Defaults to ``0.6``.
+
+    Returns
+    -------
+    float
+        Weighted blend of *gridded_value* and *station_value*.
+
+    Raises
+    ------
+    ValueError
+        If *station_weight* is outside ``[0, 1]``.
+    """
+    if not 0.0 <= station_weight <= 1.0:
+        raise ValueError(
+            f"station_weight must be between 0 and 1, got {station_weight}."
+        )
+    gridded_weight = 1.0 - station_weight
+    return float(gridded_weight * gridded_value + station_weight * station_value)
