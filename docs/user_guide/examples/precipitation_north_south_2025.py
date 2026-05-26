@@ -22,7 +22,7 @@ a single on-disk NetCDF file; no network access is required.
 
 Run::
 
-    python scripts/precipitation_north_south_2025.py
+    pixi run python docs/user_guide/examples/precipitation_north_south_2025.py
 """
 
 from __future__ import annotations

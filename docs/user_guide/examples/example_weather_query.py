@@ -14,11 +14,11 @@ Demonstrates a realistic crop-monitoring workflow that:
 
 Run::
 
-    python scripts/example_weather_query.py
+    pixi run python docs/user_guide/examples/example_weather_query.py
 
 To also include DWD station blending, set the environment variable::
 
-    USE_DWD_STATIONS=1 python scripts/example_weather_query.py
+    USE_DWD_STATIONS=1 pixi run python docs/user_guide/examples/example_weather_query.py
 
 ERA5 support is documented at the bottom of ``main()`` but commented out
 because it requires a free Copernicus CDS account (``~/.cdsapirc``).
@@ -306,7 +306,7 @@ def main() -> None:
 
     To enable DWD station blending::
 
-        USE_DWD_STATIONS=1 python scripts/example_weather_query.py
+        USE_DWD_STATIONS=1 pixi run python docs/user_guide/examples/example_weather_query.py
 
     ERA5 example (commented out — requires ``~/.cdsapirc``)::
 

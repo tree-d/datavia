@@ -19,7 +19,7 @@ front passage, or validating model output against gridded observations.
 
 Run (no network access required — uses cached 2025 HYRAS files)::
 
-    python scripts/grid_snapshot_germany_2025.py
+    pixi run python docs/user_guide/examples/grid_snapshot_germany_2025.py
 """
 
 from __future__ import annotations

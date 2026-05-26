@@ -312,16 +312,19 @@ that are not.
 
 ---
 
-### ⚠️ `scripts/` directory role unclear
+### ✅ `scripts/` directory role resolved
 
 **Directory:** `scripts/`
 
-`version.sh` and `build_packages.sh` are used in CI and must stay.
-`benchmark_era5_chunking.py`, `example_weather_query.py`, and the annual
-analysis scripts (`grid_snapshot_germany_2025.py`, `heat_days_germany_2025.py`,
-`precipitation_north_south_2025.py`) are usage examples or one-off analyses.
-Decide whether to move example scripts to `docs/user_guide/` as executable
-notebooks or keep them in `scripts/` with a clear README.
+`version.sh` and `build_packages.sh` remain in `scripts/` — they are used by CI and must stay.
+`test_docs_modern.py` and `test_docs_with_io.py` also stay in `scripts/` because doc-build
+tests should not run alongside the main test suite.
+
+The four weather example scripts (`example_weather_query.py`,
+`grid_snapshot_germany_2025.py`, `heat_days_germany_2025.py`,
+`precipitation_north_south_2025.py`) have been moved to
+`docs/user_guide/examples/` and are referenced from `docs/user_guide/examples.rst`
+via `literalinclude` directives (Examples 4–7).
 
 ---
 

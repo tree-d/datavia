@@ -18,7 +18,7 @@ number of hot days as a proxy for heat-related illness risk.
 
 Run (no downloads — data must already be present for 2025)::
 
-    python scripts/heat_days_germany_2025.py
+    pixi run python docs/user_guide/examples/heat_days_germany_2025.py
 
 The script relies only on data already downloaded by
 ``example_weather_query.py`` and will **not** trigger any additional

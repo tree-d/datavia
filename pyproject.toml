@@ -286,6 +286,9 @@ test-e2e = {cmd = "DATAVIA_E2E=1 pytest tests/ -v --cov=datavia --cov-report=xml
 ci-check = [{task = "format-check"}, {task = "lint"}, {task = "type-check"}, {task = "test-light"}]
 ci-pr-check = [{task = "ci-check"}, {task = "docs"}, {task = "test-docs-verbose"}, {task = "security-scan"}]
 
+check-examples = {cmd = "python docs/user_guide/examples/example_weather_query.py && python docs/user_guide/examples/grid_snapshot_germany_2025.py && python docs/user_guide/examples/heat_days_germany_2025.py && python docs/user_guide/examples/precipitation_north_south_2025.py"}
+
+
 
 # Development feature for CI/CD tools
 [tool.pixi.feature.dev.pypi-dependencies]
