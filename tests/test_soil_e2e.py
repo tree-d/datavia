@@ -336,5 +336,6 @@ def test_configure_then_update_downloads_new_coverage(live_database) -> None:
     second_result = pipeline.update_data()
 
     assert second_result is True, (
-        "update_data() after reconfigure() returned False. sand coverage download failed."
+        "update_data() after reconfigure() returned False. "
+        "sand coverage download failed."
     )

@@ -155,7 +155,7 @@ class SoilPipeline(Pipeline):
     constants instead of defining their own inline mappings.
     """
 
-    #: Maps all API property names (SoilGrids + HiHydroSoil) to canonical pipeline names.
+    #: Maps API property names (SoilGrids + HiHydroSoil) to canonical names.
     _API_TO_PIPELINE: ClassVar[dict[str, str]] = {
         # SoilGrids
         "phh2o": "ph",
@@ -613,7 +613,7 @@ class SoilPipeline(Pipeline):
             return None
 
     def _normalize_coverage_id(self, coverage_id: str) -> str:
-        """Return *coverage_id* with any API property name replaced by its pipeline alias.
+        """Return *coverage_id* with API property names replaced by pipeline aliases.
 
         Stored coverage IDs may use either an API service name
         (e.g. ``"soc_0-5cm_mean"``, ``"WCpF2_0-5cm_mean"``) or the

@@ -754,7 +754,7 @@ class TestSoilPipelineUpdateDataReprojectParams:
         assert call_kwargs.get("resolution_m") == 250
 
     def test_default_call_passes_reproject_false(self, pipeline: SoilPipeline) -> None:
-        """By default saver.save is called with reproject=False and resolution_m=None."""
+        """By default saver.save gets reproject=False and resolution_m=None."""
         self._setup_pipeline_for_download(pipeline)
         with (
             patch("datavia.soil.pipeline.get_config") as mock_cfg,

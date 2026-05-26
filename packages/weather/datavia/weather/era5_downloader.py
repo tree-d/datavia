@@ -225,7 +225,8 @@ class ERA5Downloader(APIDownloader):
         end = date.fromisoformat(date_end)
         if end < start:
             raise ValueError(
-                f"date_end ({date_end}) must not be earlier than date_start ({date_start})."
+                f"date_end ({date_end}) must not be earlier "
+                f"than date_start ({date_start})."
             )
         n_days = (end - start).days + 1
         all_dates = [start + timedelta(days=n) for n in range(n_days)]
@@ -239,7 +240,7 @@ class ERA5Downloader(APIDownloader):
         date_start: str,
         date_end: str,
     ) -> list[tuple[str, str]]:
-        """Split a date range into one ``(chunk_start, chunk_end)`` pair per calendar month.
+        """Split a range into one chunk per calendar month.
 
         Each element covers exactly the days within that calendar month that
         fall inside ``[date_start, date_end]``.  The list is sorted by start
@@ -268,7 +269,8 @@ class ERA5Downloader(APIDownloader):
         end = date.fromisoformat(date_end)
         if end < start:
             raise ValueError(
-                f"date_end ({date_end}) must not be earlier than date_start ({date_start})."
+                f"date_end ({date_end}) must not be earlier "
+                f"than date_start ({date_start})."
             )
 
         chunks: list[tuple[str, str]] = []
@@ -291,7 +293,7 @@ class ERA5Downloader(APIDownloader):
         date_start: str,
         date_end: str,
     ) -> list[tuple[str, str]]:
-        """Split a date range into one ``(chunk_start, chunk_end)`` pair per calendar quarter.
+        """Split a range into one chunk per calendar quarter.
 
         Quarter boundaries are fixed: Q1 = Jan-Mar, Q2 = Apr-Jun,
         Q3 = Jul-Sep, Q4 = Oct-Dec.  The first and last quarters are clipped
@@ -319,7 +321,8 @@ class ERA5Downloader(APIDownloader):
         end = date.fromisoformat(date_end)
         if end < start:
             raise ValueError(
-                f"date_end ({date_end}) must not be earlier than date_start ({date_start})."
+                f"date_end ({date_end}) must not be earlier "
+                f"than date_start ({date_start})."
             )
 
         # (first_month, last_month) for each quarter.
@@ -342,7 +345,7 @@ class ERA5Downloader(APIDownloader):
         date_start: str,
         date_end: str,
     ) -> list[tuple[str, str]]:
-        """Split a date range into one ``(chunk_start, chunk_end)`` pair per calendar year.
+        """Split a range into one chunk per calendar year.
 
         The first and last years are clipped to ``[date_start, date_end]``
         so partial years at the boundaries are handled correctly.
@@ -369,7 +372,8 @@ class ERA5Downloader(APIDownloader):
         end = date.fromisoformat(date_end)
         if end < start:
             raise ValueError(
-                f"date_end ({date_end}) must not be earlier than date_start ({date_start})."
+                f"date_end ({date_end}) must not be earlier "
+                f"than date_start ({date_start})."
             )
 
         chunks: list[tuple[str, str]] = []
@@ -590,7 +594,8 @@ class ERA5Downloader(APIDownloader):
                         "(era5_bbox)."
                     ) from exc
                 raise RuntimeError(
-                    f"CDS retrieval failed for chunk {chunk_start} to {chunk_end}: {exc}"
+                    "CDS retrieval failed for chunk "
+                    f"{chunk_start} to {chunk_end}: {exc}"
                 ) from exc
 
             job_elapsed = time.monotonic() - job_wall_start

@@ -581,7 +581,7 @@ class TestWeatherSyncAdventure:
 
 
 class TestDataviaControllerSync:
-    """Verify that sync_files_and_database() is accessible through the Datavia controller.
+    """Verify sync_files_and_database() through the Datavia controller.
 
     These tests do not test the full Datavia initialisation flow (which
     requires real config / pipelines) but confirm that the controller passes
@@ -589,7 +589,7 @@ class TestDataviaControllerSync:
     """
 
     def test_sync_called_via_controller(self, sqlite_db: None, tmp_path: Path) -> None:
-        """Pipeline sync is reachable through datavia.<pipeline_name>.sync_files_and_database().
+        """Pipeline sync is reachable through controller pipeline attributes.
 
         Builds a minimal Datavia instance backed by an ElevationPipeline
         with a temporary data directory and confirms that calling

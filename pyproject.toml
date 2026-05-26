@@ -167,11 +167,6 @@ select = [
     "D104", # missing docstring in public package
     "D107", # missing docstring in __init__
 ]
-ignore = [
-    "E501", # line too long (handled by ruff format)
-    "B008", # do not perform function calls in argument defaults
-    "N999", # invalid module name (for packages)
-]
 
 [tool.ruff.lint.per-file-ignores]
 # Test method/function names are self-describing per the naming standards (AC1+);
@@ -181,7 +176,7 @@ ignore = [
 # coupling and to keep individual test failures isolated.
 # I001: import ordering inside test methods is intentionally left as written for
 # readability (subject-under-test import last, helpers first).
-"tests/**" = ["D102", "D103", "PLC0415", "I001"]
+"tests/**" = ["D102", "PLC0415", "I001"]
 # Optional-dependency lazy imports inside try/except blocks are a deliberate
 # pattern for keeping heavy / credentialled packages truly optional.
 "packages/**" = ["PLC0415"]

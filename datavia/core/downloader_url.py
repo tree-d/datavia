@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 class URLDownloader(Downloader):
-    """Downloader implementation for URL-based file downloads with robust error handling."""
+    """Downloader for URL-based file downloads with robust error handling."""
 
     def __init__(self, url: str) -> None:
         """Initialise URLDownloader with URL and set up a robust HTTP session.
@@ -112,7 +112,9 @@ class URLDownloader(Downloader):
 
             logger.info(
                 f"HEAD request successful. Content-Type: {content_type}, "
-                f"Content-Length: {int(content_length) / (1024 * 1024) if content_length else 'unknown'} MB"
+                "Content-Length: "
+                f"{int(content_length) / (1024 * 1024) if content_length else 'n/a'} "
+                "MB"
             )
             return content_type, content_length
 
@@ -211,7 +213,10 @@ class URLDownloader(Downloader):
                                 else 30
                             )
                             logger.warning(
-                                f"Server asked to wait (status {r.status_code}). Waiting {wait_time} seconds..."
+                                "Server asked to wait (status %s). "
+                                "Waiting %s seconds...",
+                                r.status_code,
+                                wait_time,
                             )
                             retry_count += 1
                             if retry_count >= self.max_retries:
@@ -273,7 +278,9 @@ class URLDownloader(Downloader):
                         0.8 + 0.4 * random.random()  # nosec B311 - jitter, not crypto
                     )
                     logger.warning(
-                        f"Connection issue: {e} \nRetrying in {wait_time:.1f} seconds..."
+                        "Connection issue: %s\nRetrying in %.1f seconds...",
+                        e,
+                        wait_time,
                     )
                     if retry_count >= self.max_retries:
                         logger.error("Max retries reached after connection errors.")
@@ -315,7 +322,9 @@ class URLDownloader(Downloader):
                 return True
             else:
                 logger.warning(
-                    f"Size mismatch: downloaded {total_downloaded}, expected {expected_size}"
+                    "Size mismatch: downloaded %s, expected %s",
+                    total_downloaded,
+                    expected_size,
                 )
                 return False
         else:

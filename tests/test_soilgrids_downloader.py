@@ -5,7 +5,8 @@ Covers:
   defaults and custom configuration.
 - :meth:`~datavia.soil.soilgrids_downloader.SoilGridsDownloader.get_coverage_ids`
   coverage ID format and Cartesian-product count.
-- :meth:`~datavia.soil.soilgrids_downloader.SoilGridsDownloader._download_single_coverage`
+- :meth:`~datavia.soil.soilgrids_downloader.SoilGridsDownloader
+  ._download_single_coverage`
   property-alias mapping (``"carbon"`` → ``"soc"``, ``"ph"`` → ``"phh2o"``),
   empty-file guard and exception handling.
 - :meth:`~datavia.soil.soilgrids_downloader.SoilGridsDownloader.download_coverages`

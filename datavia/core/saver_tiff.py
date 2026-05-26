@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 class TiffSaver(Saver):
-    """Saver implementation for TIFF files with SQLite metadata management and multi-band support."""
+    """Saver for TIFF files with SQLite metadata and multi-band support."""
 
     def __init__(self, source_name: str):
         """Initialize TiffSaver with data directory and CRS from config.
@@ -55,7 +55,7 @@ class TiffSaver(Saver):
         resolution_m: int | None = None,
         register_only: bool = False,
     ) -> bool:
-        """Save a TIFF file to the data directory and register it in the metadata database.
+        """Save a TIFF file and register it in the metadata database.
 
         Handles both single-band and multi-band TIFF files. When *reproject*
         is ``True`` the file is reprojected in-place to ``self.target_crs``
@@ -222,7 +222,8 @@ class TiffSaver(Saver):
 
             existing = session.execute(
                 text(
-                    "SELECT 1 FROM raster_layers WHERE layer_name = :layer_name AND source_name = :source_name"
+                    "SELECT 1 FROM raster_layers "
+                    "WHERE layer_name = :layer_name AND source_name = :source_name"
                 ),
                 {"layer_name": layer_name, "source_name": self.source_name},
             ).fetchone()
@@ -234,7 +235,10 @@ class TiffSaver(Saver):
                 text(
                     """
                     INSERT INTO raster_layers
-                    (layer_name, source_name, bbox, resolution_x, resolution_y, crs, uri, acquisition_time)
+                    (
+                        layer_name, source_name, bbox, resolution_x,
+                        resolution_y, crs, uri, acquisition_time
+                    )
                     VALUES (:layer_name, :source_name, :bbox_wkt,
                             :res_x, :res_y, :crs, :uri, :acq_time)
                 """
@@ -342,7 +346,8 @@ class TiffSaver(Saver):
 
             session.execute(
                 text(
-                    "DELETE FROM raster_band_metadata WHERE layer_name = :layer_name AND source_name = :source_name"
+                    "DELETE FROM raster_band_metadata "
+                    "WHERE layer_name = :layer_name AND source_name = :source_name"
                 ),
                 {"layer_name": layer_name, "source_name": self.source_name},
             )
@@ -351,7 +356,9 @@ class TiffSaver(Saver):
                 session.execute(
                     text(
                         """
-                        INSERT INTO raster_band_metadata (layer_name, source_name, band_index, description)
+                        INSERT INTO raster_band_metadata (
+                            layer_name, source_name, band_index, description
+                        )
                         VALUES (:layer_name, :source_name, :band_index, :description)
                     """
                     ),
@@ -404,7 +411,8 @@ class TiffSaver(Saver):
         try:
             session.execute(
                 text(
-                    "DELETE FROM raster_band_metadata WHERE layer_name = :layer_name AND source_name = :source_name"
+                    "DELETE FROM raster_band_metadata "
+                    "WHERE layer_name = :layer_name AND source_name = :source_name"
                 ),
                 {"layer_name": layer_name, "source_name": self.source_name},
             )

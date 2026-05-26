@@ -83,7 +83,9 @@ def get_raster_metadata(source_name: str) -> list[dict]:
             metadata_list.append(metadata)
 
         logger.debug(
-            f"Retrieved metadata for {len(metadata_list)} layers from source: {source_name}"
+            "Retrieved metadata for %d layers from source: %s",
+            len(metadata_list),
+            source_name,
         )
         return metadata_list
 
@@ -128,7 +130,9 @@ def get_band_metadata(source_name: str) -> dict[str, list[dict]]:
             band_metadata[layer_name].append(band_info)
 
         logger.debug(
-            f"Retrieved band metadata for {len(band_metadata)} layers from source: {source_name}"
+            "Retrieved band metadata for %d layers from source: %s",
+            len(band_metadata),
+            source_name,
         )
         return band_metadata
 

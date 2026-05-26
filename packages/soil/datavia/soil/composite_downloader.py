@@ -127,7 +127,8 @@ class CompositeDownloader(CompositeDownloaderABC):
         )
         all_ids = sorted(set(sg_ids) | set(hh_ids))
         logger.info(
-            "CompositeDownloader: %d SoilGrids + %d HiHydroSoil = %d total coverage IDs",
+            "CompositeDownloader: %d SoilGrids + %d HiHydroSoil"
+            " = %d total coverage IDs",
             len(sg_ids),
             len(hh_ids),
             len(all_ids),
@@ -202,7 +203,7 @@ class CompositeDownloader(CompositeDownloaderABC):
         return results[0][0] if results else "failed"
 
     def get_remote_available_properties(self) -> dict[str, list[str]]:
-        """Discover all properties and depth layers available across both remote backends.
+        """Discover available properties/depths across both remote backends.
 
         Delegates to
         :meth:`~datavia.soil.soilgrids_downloader.SoilGridsDownloader.get_remote_available_properties`
@@ -229,7 +230,8 @@ class CompositeDownloader(CompositeDownloaderABC):
 
         result = {prop: sorted(depths) for prop, depths in sorted(merged.items())}
         logger.info(
-            "CompositeDownloader remote catalogue: %d SoilGrids + %d HiHydroSoil properties, "
+            "CompositeDownloader remote catalogue: "
+            "%d SoilGrids + %d HiHydroSoil properties, "
             "%d total unique properties",
             len(sg_catalogue),
             len(hh_catalogue),

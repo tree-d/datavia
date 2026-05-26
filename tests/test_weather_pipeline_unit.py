@@ -250,7 +250,9 @@ class TestSaverWeather:
             return_value={
                 "valid_from": "2024-01-01T00:00:00",
                 "valid_until": "2024-01-31T23:00:00",
-                "bbox": "POLYGON ((5.9 47.3, 15.0 47.3, 15.0 55.1, 5.9 55.1, 5.9 47.3))",
+                "bbox": (
+                    "POLYGON ((5.9 47.3, 15.0 47.3, 15.0 55.1, 5.9 55.1, 5.9 47.3))"
+                ),
                 "crs": "EPSG:4326",
             },
         ):
@@ -1098,14 +1100,15 @@ class TestSaverWeatherDestNaming:
     than from the random ``tmp*`` stem (BUG-07 fix, naming responsibility
     moved from downloader to saver).
 
-    All tests use a mocked :func:`~datavia.library.formats.extract_netcdf_layer_metadata`
+    All tests use a mocked
+    :func:`~datavia.library.formats.extract_netcdf_layer_metadata`
     so no real NetCDF files are required.
     """
 
     def test_single_variable_nc_uses_source_variable_year(
         self, sqlite_db: None, tmp_path
     ) -> None:
-        """A single-variable NC is copied as ``{source}_{nc_var}_{YYYYmm_start}_{YYYYmm_end}_{bbox_tag}.nc``.
+        """Single-variable NC naming includes source, variable, date-range and bbox tag.
 
         Parameters
         ----------
@@ -1143,7 +1146,7 @@ class TestSaverWeatherDestNaming:
     def test_multi_variable_nc_omits_variable_from_stem(
         self, sqlite_db: None, tmp_path
     ) -> None:
-        """A multi-variable NC is copied as ``{source}_{YYYYmm_start}_{YYYYmm_end}_{bbox_tag}.nc``.
+        """Multi-variable NC naming omits the variable token from the stem.
 
         When more than one data variable is present in the file, encoding all
         of them in the filename would be impractically long.
@@ -1622,7 +1625,7 @@ class TestInterpolateNetcdf:
 
 
 class TestInterpolateNetcdfCRS:
-    """Tests for the ``input_crs`` parameter of :func:`~datavia.library.interpolation.interpolate_netcdf`.
+    """Tests for ``input_crs`` in :func:`interpolate_netcdf`.
 
     Verifies that input coordinates in any pyproj-compatible CRS are
     reprojected correctly to the file's native CRS before interpolation.
@@ -1890,7 +1893,7 @@ class TestTemporalResolution:
             )
 
     def test_getter_forwards_temporal_resolution(self) -> None:
-        """GetterWeather passes its configured temporal_resolution to interpolate_netcdf."""
+        """GetterWeather forwards temporal_resolution to interpolate_netcdf."""
         from datavia.weather.getter_weather import GetterWeather
 
         getter = GetterWeather("ERA5_land", temporal_resolution="hourly")
@@ -2119,7 +2122,8 @@ class TestCoverageManager:
             if c.date_end < "1990-01-01" or c.date_start > "2000-12-31"
         ]
         assert len(temporal_cells) == 2, (
-            f"Expected 2 temporal-only cells; got {len(temporal_cells)}: {temporal_cells}"
+            "Expected 2 temporal-only cells; "
+            f"got {len(temporal_cells)}: {temporal_cells}"
         )
         for cell in temporal_cells:
             assert cell.bbox == self._EAST_GERMANY, (
@@ -2224,7 +2228,8 @@ class TestWeatherPipelineLifecycle:
         cfg["date_start"] = "2023-01-01"
 
         assert pipe.get_config()["date_start"] == "2024-01-01", (
-            "Mutating the returned config must not change the pipeline's internal state."
+            "Mutating the returned config must not change "
+            "the pipeline's internal state."
         )
 
     def test_get_config_matches_init_config(self) -> None:
@@ -2968,7 +2973,8 @@ class TestERA5DownloaderChunkBy:
         dl.download()
 
         assert mock_client.retrieve.call_count == 1, (
-            f"Expected 1 CDS job for chunk_by='none', got {mock_client.retrieve.call_count}"
+            "Expected 1 CDS job for chunk_by='none', "
+            f"got {mock_client.retrieve.call_count}"
         )
 
     @patch("datavia.weather.era5_downloader.cdsapi")
@@ -3000,7 +3006,8 @@ class TestERA5DownloaderChunkBy:
         dl.download()
 
         assert mock_client.retrieve.call_count == 8, (
-            f"Expected 8 CDS jobs for 2 years quarterly, got {mock_client.retrieve.call_count}"
+            "Expected 8 CDS jobs for 2 years quarterly, "
+            f"got {mock_client.retrieve.call_count}"
         )
 
 

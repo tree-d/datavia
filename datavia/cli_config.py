@@ -13,10 +13,16 @@ logger = logging.getLogger(__name__)
 ELEVATION_EXAMPLE = """
     # Example 1: Get elevation data
     try:
-        elevations = datavia.elevation.get_data(coords=berlin_coords, crs_coords="EPSG:4326")
+        elevations = datavia.elevation.get_data(
+            coords=berlin_coords,
+            crs_coords="EPSG:4326",
+        )
         print(f"Berlin elevation: {elevations[0]:.1f}m")
 
-        elevations = datavia.elevation.get_data(coords=munich_coords, crs_coords="EPSG:4326")
+        elevations = datavia.elevation.get_data(
+            coords=munich_coords,
+            crs_coords="EPSG:4326",
+        )
         print(f"Munich elevation: {elevations[0]:.1f}m")
     except Exception as e:
         print(f"Elevation example failed: {e}")
@@ -24,7 +30,8 @@ ELEVATION_EXAMPLE = """
 
 SOIL_EXAMPLE = """
     # Example 2: Get soil data
-    # Note: SoilPipeline.get_data() returns dict[str, np.ndarray] - one array per property.
+    # Note: SoilPipeline.get_data() returns dict[str, np.ndarray]
+    # - one array per property.
     try:
         soil_data = datavia.soil.get_data(coords=berlin_coords, crs_coords="EPSG:4326")
         print("Berlin soil properties:")
@@ -61,7 +68,10 @@ WEATHER_EXAMPLE = """
 RADIATION_EXAMPLE = """
     # Example 4: Get radiation data
     try:
-        radiation_data = datavia.radiation.get_data(coords=berlin_coords, crs_coords="EPSG:4326")
+        radiation_data = datavia.radiation.get_data(
+            coords=berlin_coords,
+            crs_coords="EPSG:4326",
+        )
         print(f"Berlin solar radiation: {radiation_data}")
     except Exception as e:
         print(f"Radiation example failed: {e}")
@@ -73,7 +83,8 @@ GENERAL_EXAMPLE = """
         try:
             print(f"Testing {pipeline.name} pipeline...")
             data = pipeline.get_data(coords=berlin_coords, crs_coords="EPSG:4326")
-            # SoilPipeline returns dict[str, np.ndarray]; scalar pipelines return np.ndarray
+            # SoilPipeline returns dict[str, np.ndarray];
+            # scalar pipelines return np.ndarray.
             if isinstance(data, dict):
                 for prop, values in data.items():
                     print(f"  {pipeline.name}.{prop}: {values[0]:.2f}")
@@ -262,7 +273,8 @@ def main() -> None:
                     summary = {{k: float(v[0]) for k, v in data.items()}}
                     print(f"{{pipeline.name}}: {{summary}}")
                 else:
-                    print(f"{{pipeline.name}}: {{data[0] if len(data) > 0 else 'No data'}}")
+                    value = data[0] if len(data) > 0 else "No data"
+                    print(f"{{pipeline.name}}: {{value}}")
             except Exception as e:
                 print(f"{{pipeline.name}}: Error - {{e}}")
 

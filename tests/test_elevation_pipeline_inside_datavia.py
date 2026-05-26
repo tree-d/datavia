@@ -1,4 +1,4 @@
-"""Integration tests for the elevation pipeline executed through the datavia interface."""
+"""Integration tests for elevation pipeline through the datavia interface."""
 
 import logging
 import os

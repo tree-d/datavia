@@ -351,7 +351,7 @@ class TestDownload:
 
 
 class TestGetFinalFilename:
-    """Tests for :meth:`~datavia.weather.hyras_downloader.HYRASDownloader._get_final_filename`.
+    """Tests for :meth:`HYRASDownloader._get_final_filename`.
 
     The downloader's sole responsibility is to replace the ``.download``
     temporary extension with ``.nc`` so that the parent

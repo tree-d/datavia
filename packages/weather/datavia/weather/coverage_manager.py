@@ -51,7 +51,7 @@ _ONE_DAY: datetime.timedelta = datetime.timedelta(days=1)
 
 
 class CoverageCell(NamedTuple):
-    """A single ``(bbox, date_range)`` download unit returned by :class:`CoverageManager`.
+    """A single ``(bbox, date_range)`` unit from :class:`CoverageManager`.
 
     Attributes
     ----------
@@ -192,7 +192,8 @@ class CoverageManager:
         req_end = _parse_date(date_end)
         if req_start > req_end:
             raise ValueError(
-                f"date_start ({date_start!r}) must not be after date_end ({date_end!r})."
+                f"date_start ({date_start!r}) must not be "
+                f"after date_end ({date_end!r})."
             )
 
         seen: set[CoverageCell] = set()
@@ -233,7 +234,8 @@ class CoverageManager:
                     row.get("bbox") and row.get("valid_from") and row.get("valid_until")
                 ):
                     logger.debug(
-                        "Skipping incomplete coverage row for %s/%s (missing bbox or dates).",
+                        "Skipping incomplete coverage row for %s/%s "
+                        "(missing bbox or dates).",
                         self._source_name,
                         variable,
                     )

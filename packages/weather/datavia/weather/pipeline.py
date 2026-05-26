@@ -456,7 +456,8 @@ class WeatherPipeline(Pipeline):
             )
         if not isinstance(self.getter, GetterWeather):
             raise RuntimeError(
-                "WeatherPipeline.get_weather_data: getter is not a GetterWeather instance."
+                "WeatherPipeline.get_weather_data: getter is not a "
+                "GetterWeather instance."
             )
 
         return self.getter.get_weather_data(

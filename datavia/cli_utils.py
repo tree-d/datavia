@@ -83,7 +83,8 @@ def get_datavia_instance(config_file: str = "datavia_config.py") -> Any | None:
                 "No 'datavia' or 'datavia_raw' instance found in configuration file"
             )
             logger.info(
-                "Expected: 'datavia = Datavia(pipelines=pipelines)()' or 'datavia_raw = Datavia(pipelines=pipelines)'"
+                "Expected: 'datavia = Datavia(pipelines=pipelines)()' "
+                "or 'datavia_raw = Datavia(pipelines=pipelines)'"
             )
             return None
 
@@ -148,7 +149,8 @@ def validate_config_file(config_file: str) -> tuple[bool, str]:
         if datavia_instance is not None:
             return (
                 True,
-                f"Valid configuration with {len(datavia_instance.pipelines)} pipeline(s)",
+                "Valid configuration with "
+                f"{len(datavia_instance.pipelines)} pipeline(s)",
             )
         else:
             return False, "Configuration validation failed"

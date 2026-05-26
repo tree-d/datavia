@@ -227,7 +227,7 @@ class HiHydroSoilDownloader(Downloader):
         return results
 
     def get_remote_available_properties(self) -> dict[str, list[str]]:
-        """Discover all properties and depth layers available in the HiHydroSoil catalogue.
+        """Discover all properties/depths in the HiHydroSoil catalogue.
 
         Fetches the HTTP directory listing at :attr:`_BASE_URL` and parses the
         HTML ``href`` links to extract every ``*_250m.tif`` filename. Each
@@ -283,7 +283,8 @@ class HiHydroSoilDownloader(Downloader):
             canonical = prefix_to_canonical.get(file_prefix)
             if canonical is None:
                 logger.debug(
-                    "HiHydroSoil: unknown file prefix '%s' in '%s' — not in _CANONICAL_TO_PREFIX",
+                    "HiHydroSoil: unknown file prefix '%s' in '%s' "
+                    "- not in _CANONICAL_TO_PREFIX",
                     file_prefix,
                     basename,
                 )

@@ -8,7 +8,8 @@ to select the appropriate grid downloader (e.g.
 :class:`~datavia.weather.era5_downloader.ERA5Downloader` or
 :class:`~datavia.weather.hyras_downloader.HYRASDownloader`) and optionally
 instantiates :class:`~datavia.weather.dwd_downloader.DWDStationDownloader`
-when station data is requested.  All output paths are returned as a newline-joined string so the pipeline
+when station data is requested. All output paths are returned as a
+newline-joined string so the pipeline
 can hand them to ``SaverWeather.save()`` one at a time.  ERA5 monthly
 chunking means a single ERA5 download may contribute multiple paths (one
 per calendar-month chunk); they are incorporated into the flat newline-

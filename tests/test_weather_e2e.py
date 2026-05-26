@@ -155,7 +155,8 @@ class TestDWDStationE2E:
             df = pd.read_parquet(output_path)
             assert len(df) > 0, "Parquet file is empty"
             assert _VARIABLE in df.columns, (
-                f"Column '{_VARIABLE}' missing from Parquet; columns: {list(df.columns)}"
+                f"Column '{_VARIABLE}' missing from Parquet; "
+                f"columns: {list(df.columns)}"
             )
         finally:
             # Clean up the temp file produced by DWDStationDownloader.
@@ -328,7 +329,8 @@ class TestERA5E2E:
             assert os.path.getsize(output_path) > 0, "Downloaded NetCDF is empty"
             ds = xr.open_dataset(output_path)
             assert "t2m" in ds or "2m_temperature" in ds, (
-                f"Expected temperature variable not found; variables: {list(ds.data_vars)}"
+                "Expected temperature variable not found; "
+                f"variables: {list(ds.data_vars)}"
             )
             ds.close()
         finally:
@@ -381,7 +383,7 @@ class TestHYRASE2E:
     """
 
     def test_version_discovery_returns_filename(self, live_database) -> None:
-        """_discover_latest_filename returns a plausible filename from the live DWD listing.
+        """_discover_latest_filename returns plausible names from live DWD listing.
 
         Fetches the HTML directory for ``air_temperature_mean`` and checks
         that the returned filename matches the expected pattern.  No large
@@ -421,7 +423,8 @@ class TestHYRASE2E:
         Run with::
 
             DATAVIA_E2E=1 DATAVIA_E2E_SLOW=1 pytest \\
-                tests/test_weather_e2e.py::TestHYRASE2E::test_single_variable_year_download_opens_with_xarray -v
+                tests/test_weather_e2e.py::TestHYRASE2E::
+                test_single_variable_year_download_opens_with_xarray -v
         """
         import xarray as xr
 

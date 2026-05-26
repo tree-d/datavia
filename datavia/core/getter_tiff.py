@@ -68,7 +68,11 @@ class GetterTiff(Getter):
         """
         coord_type = "lon/lat" if crs_coords == "EPSG:4326" else "x/y"
         logger.debug(
-            f"Handling TIFF request for {self.source_name} at {len(coords)} ({coord_type}) coordinate pairs, band={band}"
+            "Handling TIFF request for %s at %d (%s) coordinate pairs, band=%d",
+            self.source_name,
+            len(coords),
+            coord_type,
+            band,
         )
 
         try:
@@ -82,7 +86,9 @@ class GetterTiff(Getter):
             metadata_list = get_raster_metadata(self.source_name)
             for metadata in metadata_list:
                 logger.debug(
-                    f"Available layer: {metadata['layer_name']} (CRS: {metadata['crs']})"
+                    "Available layer: %s (CRS: %s)",
+                    metadata["layer_name"],
+                    metadata["crs"],
                 )
 
         except Exception as db_error:

@@ -56,8 +56,10 @@ def spatial_interpolate(
         Path to GeoTIFF raster file
     coords : np.ndarray
         Array of coordinates, shape (N, 2)
-        - For EPSG:4326: (lon, lat) pairs where coords[:, 0] = longitude, coords[:, 1] = latitude
-        - For EPSG:25832: (x, y) pairs where coords[:, 0] = easting, coords[:, 1] = northing
+                - For EPSG:4326: (lon, lat) pairs where
+                    coords[:, 0] = longitude and coords[:, 1] = latitude
+                - For EPSG:25832: (x, y) pairs where
+                    coords[:, 0] = easting and coords[:, 1] = northing
     coords_crs : str, default 'EPSG:4326'
         CRS of input coordinates
     interpolation_order : int, default 3
@@ -122,7 +124,8 @@ def spatial_interpolate(
         cols, rows = ~transform * (coords[:, 0], coords[:, 1])
 
         # Stack coordinates for scipy.ndimage.map_coordinates
-        # Note: map_coordinates expects (row, col) order - handled by rowcol conversion above
+        # map_coordinates expects (row, col) order;
+        # rowcol conversion above already provides that order.
         coord_array = np.vstack([rows, cols])
 
         # Perform interpolation for all points simultaneously
