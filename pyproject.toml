@@ -82,8 +82,6 @@ dev = [
     "ruff>=0.8.0,<1.0",
     "mypy>=1.13.0,<2.0",
     "bandit>=1.9.3,<2.0",
-    "sphinx>=8.2.3,<9.0",
-    "sphinx-rtd-theme>=1.0.0",
     "build>=1.3.0,<2.0",
 ]
 test = [
@@ -92,7 +90,7 @@ test = [
     "pytest-mock>=3.14.1,<4.0",
 ]
 docs = [
-    "sphinx>=8.2.3,<9.0",
+    "sphinx>=9.0",
     "sphinx-rtd-theme>=1.0.0",
     "myst-parser>=0.18.0",
     "xdoctest>=1.1.0,<2.0",
@@ -229,3 +227,103 @@ skips = ["B105"]  # Skip hardcoded password check for test database credentials
 [tool.xdoctest]
 style = "google"
 options = "+NORMALIZE_WHITESPACE"
+
+[tool.pixi.workspace]
+authors = ["Michael Berg <michael.berg@ufz.de>"]
+channels = ["conda-forge"]
+name = "datavia"
+platforms = ["linux-64"]
+version = "1.0.0"
+requires-pixi = ">=0.63"
+
+# Ensure the workspace root is first on sys.path for every Python process
+# launched in this environment. This prevents the namespace-only stub that
+# sub-packages install into site-packages from shadowing the real
+# datavia/__init__.py (which defines the Datavia class).
+# PYTHONPATH is processed before site-packages in Python's startup sequence.
+[tool.pixi.activation.env]
+PYTHONPATH = "$PIXI_PROJECT_ROOT"
+
+[tool.pixi.tasks]
+docs = {cmd = "sphinx-build -E -b html docs docs/_build/html", default-environment = "dev"}
+test = {cmd = "pytest tests/ -v", default-environment = "dev"}
+test-docs = {cmd = "python scripts/test_docs_modern.py --format sphinx", default-environment = "dev"}
+test-docs-verbose = {cmd = "DATAVIA_DOCTEST_IO=0 python scripts/test_docs_modern.py --format sphinx --verbose", default-environment = "dev"}
+test-docs-with-io = {cmd = "python scripts/test_docs_with_io.py --verbose", default-environment = "dev"}
+
+# Development workflow tasks (require dev feature to be active)
+# No suffix = core + all packages (used in CI and by default locally)
+format = {cmd = "ruff format datavia/ tests/ packages/", default-environment = "dev"}
+format-check = {cmd = "ruff format --check datavia/ tests/ packages/", default-environment = "dev"}
+lint = {cmd = "ruff check datavia/ tests/ packages/", default-environment = "dev"}
+type-check = {cmd = "mypy datavia/ --ignore-missing-imports", default-environment = "dev"}
+security-scan = {cmd = "bandit -r datavia/ packages/ -f json -o bandit-report.json", default-environment = "dev"}
+
+# -core suffix = core and tests only, for faster local feedback when not touching packages
+format-core = {cmd = "ruff format datavia/ tests/", default-environment = "dev"}
+format-check-core = {cmd = "ruff format --check datavia/ tests/", default-environment = "dev"}
+lint-core = {cmd = "ruff check datavia/ tests/", default-environment = "dev"}
+
+test-unit = {cmd = "pytest tests/test_config.py tests/test_coordinate_transforms.py tests/test_spatial_ops.py -v", default-environment = "dev"}
+# CI variant of unit tests: adds coverage reporting; pass --junitxml=... via `pixi run test-unit-ci -- --junitxml=<file>`
+test-unit-ci = {cmd = "pytest tests/test_config.py tests/test_coordinate_transforms.py tests/test_spatial_ops.py -v --cov=datavia --cov-report=xml --cov-report=html", default-environment = "dev"}
+test-light = {cmd = "pytest tests/ -v -k 'not test_elevation_pipeline and not test_elevation_pipeline_inside_datavia'", default-environment = "dev"}
+
+# Heavy integration tests (with running backend containers and network access)
+test-e2e = {cmd = "DATAVIA_E2E=1 pytest tests/ -v --cov=datavia --cov-report=xml --cov-report=html", default-environment = "dev"}
+ci-check = [{task = "format-check"}, {task = "lint"}, {task = "type-check"}, {task = "test-light"}]
+ci-pr-check = [{task = "ci-check"}, {task = "docs"}, {task = "test-docs-verbose"}, {task = "security-scan"}]
+
+
+# Development feature for CI/CD tools
+[tool.pixi.feature.dev.pypi-dependencies]
+sphinx = ">=9.0"
+
+[tool.pixi.feature.dev.dependencies]
+ruff = ">=0.8.0,<1.0"
+mypy = ">=1.13.0,<2.0"
+bandit = ">=1.9.3,<2.0"
+pytest = ">=8.0.0,<9.0"
+pytest-cov = ">=7.0.0,<8.0"
+pytest-mock = ">=3.14.1,<4.0"
+twine = ">=6.2.0,<7"
+python-build = ">=1.2.0,<2"
+types-requests = ">=2.32.4,<3"
+types-shapely = ">=2.1.0,<3"
+scipy-stubs = ">=1.16.0,<2"
+
+# Environments
+[tool.pixi.environments]
+default = { solve-group = "default" }
+dev = { features = ["dev"], solve-group = "default" }
+vector = { features = ["vector"], solve-group = "default" }
+
+[tool.pixi.dependencies]
+python = ">=3.12" #
+numpy = ">=2.2.0,<3"
+rasterio = ">=1.4.3,<2"
+gdal = ">=3.10.0" #
+pyproj = ">=3.7.1,<4"
+requests = ">=2.32.3,<3"
+fastapi = ">=0.115.12,<1"
+uvicorn = ">=0.34.2,<1"
+sqlalchemy = ">=2.0.41,<3"
+pandas = ">=2.2.3,<3"
+pydantic = ">=2.11.4,<3"
+python-multipart = ">=0.0.20,<1"
+python-dotenv = ">=1.1.0,<2"
+pyyaml = ">=6.0.2,<7"
+tqdm = ">=4.67.1,<5"
+click = ">=8.1.8,<9"
+rich = ">=14.0.0,<15"
+matplotlib = ">=3.10.1,<4"
+scipy = ">=1.16.0,<2"
+
+[tool.pixi.feature.vector.dependencies]
+fiona = ">=1.10.1,<2"
+
+[tool.pixi.pypi-dependencies]
+soilgrids = "==0.1.0"
+datavia = { path = ".", editable = true }
+datavia-soil = { path = "./packages/soil/", editable = true }
+datavia-elevation = { path = "./packages/elevation/", editable = true }
