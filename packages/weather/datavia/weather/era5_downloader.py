@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 import tempfile
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 from datavia.core.downloader_api import APIDownloader
@@ -73,6 +73,50 @@ class ERA5Downloader(APIDownloader):
         )
         self.bbox: list[float] = bbox or _GERMANY_BBOX
 
+    @staticmethod
+    def _build_request_date_fields(
+        date_start: str, date_end: str
+    ) -> tuple[list[str], list[str], list[str]]:
+        """Build the sorted unique year, month and day lists for a CDS request.
+
+        Iterates every calendar day in ``[date_start, date_end]`` (inclusive)
+        and collects the distinct years, months-of-year and days-of-month that
+        appear.  The resulting lists are sorted and zero-padded to two digits
+        for months and days, matching the format expected by the CDS API.
+
+        Parameters
+        ----------
+        date_start : str
+            ISO-8601 date string of the first day, e.g. ``"2024-01-01"``.
+        date_end : str
+            ISO-8601 date string of the last day (inclusive), e.g.
+            ``"2024-03-15"``.
+
+        Returns
+        -------
+        tuple[list[str], list[str], list[str]]
+            A three-tuple ``(years, months, days)`` where each element is a
+            sorted list of zero-padded strings, e.g.
+            ``(["2024"], ["01", "02", "03"], ["01", …, "15"])``.
+
+        Raises
+        ------
+        ValueError
+            If ``date_end`` is earlier than ``date_start``.
+        """
+        start = date.fromisoformat(date_start)
+        end = date.fromisoformat(date_end)
+        if end < start:
+            raise ValueError(
+                f"date_end ({date_end}) must not be earlier than date_start ({date_start})."
+            )
+        n_days = (end - start).days + 1
+        all_dates = [start + timedelta(days=n) for n in range(n_days)]
+        years = sorted({d.strftime("%Y") for d in all_dates})
+        months = sorted({d.strftime("%m") for d in all_dates})
+        days = sorted({d.strftime("%d") for d in all_dates})
+        return years, months, days
+
     def download(self) -> str:
         """Request ERA5 data from CDS and return the path to the downloaded NetCDF.
 
@@ -101,6 +145,10 @@ class ERA5Downloader(APIDownloader):
                 "Install it with `pip install cdsapi` and set up ~/.cdsapirc."
             ) from exc
 
+        years, months, days = self._build_request_date_fields(
+            self.date_start, self.date_end
+        )
+
         _, output_path = tempfile.mkstemp(suffix=".nc", prefix="era5_")
         logger.info(
             "Requesting ERA5 data: variables=%s, %s to %s",
@@ -116,14 +164,9 @@ class ERA5Downloader(APIDownloader):
                 {
                     "product_type": "reanalysis",
                     "variable": self.variables,
-                    "year": list(
-                        dict.fromkeys(
-                            str(self.date_start)[:4],
-                            str(self.date_end)[:4],
-                        )
-                    ),
-                    "month": [f"{m:02d}" for m in range(1, 13)],
-                    "day": [f"{d:02d}" for d in range(1, 32)],
+                    "year": years,
+                    "month": months,
+                    "day": days,
                     "time": [f"{h:02d}:00" for h in range(24)],
                     "area": self.bbox,
                     "format": "netcdf",

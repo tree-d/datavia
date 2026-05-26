@@ -121,12 +121,16 @@ def update_pipeline(pipeline_name: str, config_file: str = "datavia_config.py") 
             )
             return False
 
-        # Call the actual update_data method on the pipeline
+        # Call the actual update_data method on the pipeline and propagate
+        # its success/failure signal back to the caller.
         logger.info(f"Calling {pipeline_name}.update_data()...")
-        pipeline.update_data()
+        result = pipeline.update_data()
 
-        logger.info(f"Successfully updated {pipeline_name}")
-        return True
+        if result:
+            logger.info(f"Successfully updated {pipeline_name}")
+        else:
+            logger.error(f"{pipeline_name}.update_data() reported a failure")
+        return bool(result)
 
     except Exception as e:
         logger.error(f"Error updating {pipeline_name}: {e}")

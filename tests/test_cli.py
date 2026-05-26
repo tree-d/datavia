@@ -71,5 +71,107 @@ class TestConfigFileCreation:
         mock_file.assert_not_called()
 
 
+class TestCliUtilsUpdatePipeline:
+    """Tests for ``datavia.cli_utils.update_pipeline`` return-value forwarding.
+
+    Verifies that the result of ``pipeline.update_data()`` is correctly
+    propagated back to the caller — a bug-fix introduced after the original
+    implementation always returned ``True`` regardless of pipeline outcome.
+    """
+
+    def _make_fake_config(self, tmp_path, pipeline_name: str) -> str:
+        """Write a minimal Python config file containing one mock pipeline.
+
+        Parameters
+        ----------
+        tmp_path : pathlib.Path
+            Pytest-provided temporary directory.
+        pipeline_name : str
+            The ``name`` attribute the fake pipeline should expose.
+
+        Returns
+        -------
+        str
+            Absolute path to the written config file.
+        """
+        config_path = tmp_path / "datavia_config.py"
+        config_path.write_text(
+            "class _FakePipeline:\n"
+            f"    name = '{pipeline_name}'\n"
+            "    def update_data(self):\n"
+            "        return self._update_result\n\n"
+            "class _FakeDatavia:\n"
+            "    def __init__(self, result):\n"
+            "        p = _FakePipeline()\n"
+            "        p._update_result = result\n"
+            "        self.pipelines = [p]\n\n"
+            f"datavia = _FakeDatavia(True)\n"
+        )
+        return str(config_path)
+
+    def test_returns_true_when_update_data_succeeds(self, tmp_path) -> None:
+        """update_pipeline forwards True when pipeline.update_data() returns True."""
+        from datavia.cli_utils import reset_datavia_instance, update_pipeline
+
+        config_path = tmp_path / "datavia_config.py"
+        config_path.write_text(
+            "class _P:\n"
+            "    name = 'weather'\n"
+            "    def update_data(self):\n"
+            "        return True\n\n"
+            "class _D:\n"
+            "    pipelines = [_P()]\n\n"
+            "datavia = _D()\n"
+        )
+        reset_datavia_instance()
+        try:
+            result = update_pipeline("weather", str(config_path))
+            assert result is True
+        finally:
+            reset_datavia_instance()
+
+    def test_returns_false_when_update_data_fails(self, tmp_path) -> None:
+        """update_pipeline forwards False when pipeline.update_data() returns False."""
+        from datavia.cli_utils import reset_datavia_instance, update_pipeline
+
+        config_path = tmp_path / "datavia_config.py"
+        config_path.write_text(
+            "class _P:\n"
+            "    name = 'weather'\n"
+            "    def update_data(self):\n"
+            "        return False\n\n"
+            "class _D:\n"
+            "    pipelines = [_P()]\n\n"
+            "datavia = _D()\n"
+        )
+        reset_datavia_instance()
+        try:
+            result = update_pipeline("weather", str(config_path))
+            assert result is False
+        finally:
+            reset_datavia_instance()
+
+    def test_returns_false_for_unknown_pipeline(self, tmp_path) -> None:
+        """update_pipeline returns False when the named pipeline is not registered."""
+        from datavia.cli_utils import reset_datavia_instance, update_pipeline
+
+        config_path = tmp_path / "datavia_config.py"
+        config_path.write_text(
+            "class _P:\n"
+            "    name = 'elevation'\n"
+            "    def update_data(self):\n"
+            "        return True\n\n"
+            "class _D:\n"
+            "    pipelines = [_P()]\n\n"
+            "datavia = _D()\n"
+        )
+        reset_datavia_instance()
+        try:
+            result = update_pipeline("weather", str(config_path))
+            assert result is False
+        finally:
+            reset_datavia_instance()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

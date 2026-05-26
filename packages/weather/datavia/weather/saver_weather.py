@@ -265,7 +265,7 @@ class SaverWeather(Saver):
         crs : str or None
             CRS string, e.g. ``"EPSG:4326"``.
         """
-        acquisition_time = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        acquisition_time = datetime.datetime.now(datetime.UTC).isoformat()
 
         session = session_local()
         try:

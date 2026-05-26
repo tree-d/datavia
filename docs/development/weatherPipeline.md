@@ -2,184 +2,193 @@
 
 The weather pipeline follows the same three-part pattern as elevation and soil
 (Downloader → Saver → Getter) but uses NetCDF for gridded ERA5 data and Parquet
-for DWD station time series, since neither is a static spatial raster. A new
-`weather_layers` table in the shared SQLite DB tracks every downloaded file with
-temporal `valid_from`/`valid_until` columns. At query time `GetterWeather` blends
-station and gridded data at the requested coordinates.
+for DWD station time series. A `weather_layers` table in the shared SQLite DB
+tracks every downloaded file with temporal `valid_from`/`valid_until` columns.
+At query time `GetterWeather` blends station and gridded data at the requested
+coordinates.
 
-**Status: core implementation complete — E2E tests and CLI smoke-test open.**
+**Status: unit tests passing — e2e tests failing due to known bugs listed below.**
 
 ---
 
-## Implementation notes
-
-### Ideas for further steps
-
-- Look for some experience in copernicus project from BioDT
-- Create some Option to only download for single day/month/year
-- Create some self containing management for deletion and sorting of old data
-
-
-### Design decisions made during implementation
+## Design decisions
 
 - `SaverWeather` and `GetterWeather` live in `packages/weather/` (not `datavia/core/`),
-  because no other package needs them. Same reasoning as `TiffSaver`/`GetterTiff`
-  being in `datavia/core/` only because two packages share them.
-- `cdsapi` is an **optional** dependency (`datavia-weather[era5]`) because DWD-only
-  usage does not need Copernicus credentials.
-- DWD station data is fetched via the **Open-Meteo HTTP API** (no auth required,
-  no `wetterdienst` dependency needed).
-- `formats.py` exposes `extract_netcdf_layer_metadata()` (not `read_netcdf_metadata`
-  as originally planned) — it reads metadata from an already-downloaded file and
-  returns `{valid_from, valid_until, variables, crs, bbox, resolution_x, resolution_y}`.
+  because no other package needs them.
+- `cdsapi` is an **optional** dependency (`datavia-weather[era5]`) — DWD-only usage
+  does not need Copernicus credentials.
+- DWD station data is fetched via the **Open-Meteo archive API** (no auth required).
 - A `CompositeDownloader(Downloader, ABC)` abstract base class was added to
-  `datavia/core/interfaces.py`. Both `CompositeWeatherDownloader` and
-  `packages/soil/datavia/soil/composite_downloader.py` now extend it and implement
-  the required `downloaders` property.
+  `datavia/core/interfaces.py`, shared by weather and soil composite downloaders.
 
 ---
 
-## Steps
+## What is implemented
 
-### ✅ Database layer
+| Component | Location | Notes |
+|---|---|---|
+| `weather_layers` DB table + index | `datavia/library/database/init.sql` | idempotent `CREATE … IF NOT EXISTS` |
+| `get_weather_paths`, `get_weather_metadata`, `check_weather_source_exists` | `datavia/library/database/query.py` | |
+| `interpolate_netcdf`, `interpolate_station_parquet`, `blend_gridded_and_station` | `datavia/library/interpolation.py` | |
+| `extract_netcdf_layer_metadata`, `write_parquet`, `read_parquet_time_range` | `datavia/library/formats.py` | |
+| `CompositeDownloader` ABC | `datavia/core/interfaces.py` | |
+| `ERA5Downloader` | `packages/weather/datavia/weather/era5_downloader.py` | CDS API, writes `.nc`; `_build_request_date_fields()` builds year/month/day lists |
+| `DWDStationDownloader` | `packages/weather/datavia/weather/dwd_downloader.py` | Open-Meteo, writes `.parquet` |
+| `CompositeWeatherDownloader` | `packages/weather/datavia/weather/composite_downloader.py` | runs ERA5 then DWD, returns newline-joined paths |
+| `SaverWeather` | `packages/weather/datavia/weather/saver_weather.py` | copy → metadata → DB insert; `sync_files_and_database()` |
+| `GetterWeather` | `packages/weather/datavia/weather/getter_weather.py` | dispatches to NetCDF, Parquet, or blend |
+| `WeatherPipeline` | `packages/weather/datavia/weather/pipeline.py` | `name = "weather"` |
+| `cli_utils.update_pipeline()` return value | `datavia/cli_utils.py` | was always `True`; now forwards the actual result |
+| Unit tests | `tests/test_weather_pipeline_unit.py` | 32 tests, 7 classes, no network required |
+| E2E tests | `tests/test_weather_e2e.py` | gated by `DATAVIA_E2E=1`; ERA5 also requires `~/.cdsapirc` |
 
-`datavia/library/database/init.sql` — `weather_layers` table and index added:
+**Test counts:** 295 unit tests pass, 14 skip (< 4 s, no network).
+All 6 e2e tests fail with `DATAVIA_E2E=1` due to the bugs below.
 
-`datavia/library/database/start.py` — removed the `has_table("raster_layers")`
-guard that prevented `weather_layers` from being created on existing databases.
-All `CREATE TABLE/INDEX IF NOT EXISTS` statements now always run (idempotent).
-
-### ✅ Weather query functions — `datavia/library/database/query.py`
-
-- `get_weather_paths(source_name, variable, from_dt, to_dt) → list[str]`
-- `get_weather_metadata(source_name, variable=None) → list[dict]`
-- `check_weather_source_exists(source_name, variable=None, from_dt=None, to_dt=None) → bool`
-
-### ✅ Core library additions
-
-**`datavia/library/interpolation.py`**
-
-- `interpolate_netcdf(nc_path, lat, lon, variable, datetime_utc)`
-- `blend_gridded_and_station(gridded_value, station_value, station_weight=0.6)`
-
-**`datavia/library/formats.py`**
-
-- `extract_netcdf_layer_metadata(filepath) → dict` — returns
-  `{valid_from, valid_until, variables, crs, bbox, resolution_x, resolution_y}`.
-- `write_parquet(records, path)` — writes a list of dicts to Parquet via pandas.
-- `read_parquet_time_range(path, variable, from_dt, to_dt) → DataFrame`
-
-### ✅ `CompositeDownloader` ABC — `datavia/core/interfaces.py`
-
-New abstract base class `CompositeDownloader(Downloader, ABC)`:
-- Sets `url=""` (no single canonical endpoint).
-- Requires subclasses to implement `@property downloaders() → list[Downloader]`.
-- Used by both weather and soil composite downloaders.
-
-### ✅ Interface implementations — `packages/weather/datavia/weather/`
-
-**`saver_weather.py`** — `SaverWeather(Saver)`:
-- `save(data_path, …) → bool` — copies file to `data/{source_name}_{stem}.{ext}`,
-  infers format from extension, extracts temporal metadata, inserts into `weather_layers`.
-- `check_data_exists(variable, from_dt, to_dt) → bool`
-- `sync_files_and_database() → bool` — reconciles files on disk with DB rows
-  (same orphan-removal pattern as `TiffSaver`).
-
-**`getter_weather.py`** — `GetterWeather(Getter)`:
-- `get_existing_layers() → set[str]`
-- `get_data(coords, …, **kwargs) → np.ndarray` — pipeline interface.
-- `get_weather_data(lat, lon, variable, datetime_utc, …) → float` — dispatches to
-  `interpolate_netcdf`, `interpolate_station_parquet`, or blends both.
-
-### ✅ Package scaffold — `packages/weather/`
-
-Follows the same namespace-package pattern (PEP 420) as elevation and soil.
-
-- `pyproject.toml` — `datavia-weather`; core deps: `xarray`, `netCDF4`, `pyarrow`,
-  `pandas`; optional `[era5]` extra: `cdsapi>=0.7`.
-- `datavia/weather/__init__.py` — exports `WeatherPipeline`, `ERA5Downloader`,
-  `DWDStationDownloader`, `CompositeWeatherDownloader`, `SaverWeather`, `GetterWeather`.
-- `pipeline.py` — `WeatherPipeline(Pipeline)`, `name = "weather"`.
-- `era5_downloader.py` — `ERA5Downloader(APIDownloader)`: calls
-  `cdsapi.Client().retrieve(…)`, writes `.nc` to a temp file. Requires
-  `~/.cdsapirc`. Note: date range is currently simplified — see open items.
-- `dwd_downloader.py` — `DWDStationDownloader(APIDownloader)`: fetches from
-  Open-Meteo (`https://api.open-meteo.com`), combines station records, writes
-  `.parquet`.
-- `composite_downloader.py` — `CompositeWeatherDownloader(CompositeDownloader)`:
-  runs ERA5 then DWD, returns newline-joined file paths.
-
-### ✅ Main package wiring
-
-- `pyproject.toml` (root) — `weather` optional-dep group includes `xarray`,
-  `netCDF4`, `pyarrow`, `datavia-weather`.
-- `packages/weather/pyproject.toml` — `cdsapi` moved to `[era5]` optional extra.
-- `pixi.toml` — `xarray`, `netcdf4`, `pyarrow` added to conda deps; `datavia-weather`
-  added as editable PyPI dep. `pixi install` completed successfully.
-
-### ✅ Unit tests — `tests/test_weather_pipeline_unit.py`
-
-26 tests across 6 classes, all passing without network access:
-
-| Class | Tests |
-|---|---|
-| `TestBlendGriddedAndStation` | 5 — blending math and boundary conditions |
-| `TestWeatherQueryHelpers` | 4 — DB round-trip with `sqlite_db` in-memory fixture |
-| `TestSaverWeather` | 3 — save / idempotency / `check_data_exists` |
-| `TestGetterWeather` | 6 — layers, error cases, NetCDF dispatch, scalar result |
-| `TestCompositeWeatherDownloader` | 3 — `downloaders` property, path joining, error |
-| `TestWeatherPipeline` | 4 — init, path splitting, failure modes |
-
-Run with: `pytest tests/test_weather_pipeline_unit.py -v`
-
-### ✅ Soil `CompositeDownloader` migration
-
-`packages/soil/datavia/soil/composite_downloader.py` updated to extend
-`CompositeDownloaderABC` (imported alias for `datavia.core.interfaces.CompositeDownloader`).
-`super().__init__()` and the `downloaders` property implemented — now consistent with
-the weather composite.
+To run e2e tests:
+```bash
+DATAVIA_E2E=1 pytest tests/test_weather_e2e.py::TestDWDStationE2E -v   # no credentials needed
+DATAVIA_E2E=1 pytest tests/test_weather_e2e.py::TestERA5E2E -v         # requires ~/.cdsapirc
+```
 
 ---
 
-## Open items
+## Open bugs and planned work
 
-### ⬜ E2E tests — `tests/test_weather_e2e.py`
+Discovered by comparing the implementation against `weather_pipeline_report.md`
+(ERA5-Land reference from the BioDT/Grasslands project). Listed by severity.
 
-Gated by `DATAVIA_E2E=1`, mirroring `test_soil_e2e.py`:
+### Group 1 — Critical bugs (causing all e2e test failures)
 
-- Live ERA5 download for a small bounding box and short date range (requires
-  valid `~/.cdsapirc`).
-- Live DWD station download for Germany via Open-Meteo (no auth needed).
-- Point query for a known coordinate + datetime:
-  `GetterWeather.get_data(lat=52.5, lon=13.4, variable="temperature_2m", datetime_utc=…)`
-  should return a finite float in a realistic range.
+#### 🐛 1. Wrong DWD API hostname
 
-### ⬜ ERA5 date-range generation
+**File:** `packages/weather/datavia/weather/dwd_downloader.py`
 
-`ERA5Downloader.download()` currently passes simplified year/month/day values to
-`cdsapi`. For production use, generate proper lists from `date_start` to `date_end`
-using `datetime.date` ranges, e.g.:
+`_OPEN_METEO_URL` is `"https://historical-api.open-meteo.com/v1/archive"` — this
+hostname does not exist. The correct endpoint is:
+`https://archive-api.open-meteo.com/v1/archive`
+
+#### 🐛 2. Wrong ERA5 dataset name
+
+**File:** `packages/weather/datavia/weather/era5_downloader.py`
+
+`client.retrieve()` requests `"reanalysis-era5-single-levels"` — a coarser global
+product (0.25°). Change to `"reanalysis-era5-land"` (0.1° land surface reanalysis).
+
+#### 🐛 3. CDS API v2 request parameter keys
+
+**File:** `packages/weather/datavia/weather/era5_downloader.py`
+
+The CDS migrated to API v2 in late 2024. The old `"format": "netcdf"` key is
+rejected. Replace with:
 
 ```python
-days = [
-    d.strftime("%Y-%m-%d")
-    for d in (date_start + timedelta(n) for n in range((date_end - date_start).days + 1))
-]
+"data_format": "netcdf",
+"download_format": "unarchived",
+"grid": "0.1/0.1",
 ```
 
-### ⬜ CLI smoke-test
+Also remove the redundant `"date"` field — the year/month/day arrays already
+encode the full range.
 
-The existing `datavia update weather` route calls `update_pipeline("weather", …)`
-which should work once `datavia-weather` is installed. Verify end-to-end:
+#### 🐛 4. Index alignment bug in `interpolate_station_parquet`
 
-```bash
-datavia update weather
-# expect: data/era5_*.nc, data/dwd_stations*.parquet, rows in data/datavia.db
-```
+**File:** `datavia/library/interpolation.py`
+
+After the radius filter `df = df[dist_km <= radius_km].copy()`, the DataFrame
+retains original row indices while `dist_km` becomes a new 0-based numpy array.
+The subsequent `dist_km[df.index]` then uses the old pandas row numbers, causing
+wrong values or an `IndexError`. Fix: reset `df.index` and rebuild `dist_km` in
+the same step.
 
 ---
 
-## Dependencies introduced
+### Group 2 — Correctness issues
+
+#### ⚠ 5. No unit conversion applied to ERA5 raw values
+
+ERA5 returns temperature in **Kelvin**, precipitation in **metres**, SSRD in
+**J/m²**. The e2e range check (`-25 … 50 °C`) will always fail without conversion.
+
+Add `datavia/library/unit_conversions.py`:
+
+```python
+kelvin_to_celsius(values)
+precipitation_m_to_mm(values)
+ssrd_to_par(ssrd_daily_j_m2)            # × 4.57 × 0.5 / 86400
+convert_era5_variable(values, variable)  # dispatches by variable name
+```
+
+Call from `GetterWeather.get_weather_data()` so `interpolation.py` stays
+format-agnostic.
+
+#### ⚠ 6. Variable name inferred from temp-file stem (unreliable)
+
+**File:** `packages/weather/datavia/weather/saver_weather.py`
+
+`_extract_variable_from_stem()` strips the source prefix from a stem like
+`era5_tmpXYZabc` (from `tempfile.mkstemp(prefix="era5_")`), yielding a random
+string. Fix: add an explicit `variable: str` parameter to `SaverWeather.save()`
+and propagate it from `WeatherPipeline.update_data()`.
+
+#### ⚠ 7. CRS extraction returns CF convention string, not EPSG code
+
+**File:** `datavia/library/formats.py`
+
+`ds.attrs.get("grid_mapping_name", "EPSG:4326")` returns e.g.
+`"latitude_longitude"` when the attribute is present. Default to `"EPSG:4326"`
+unconditionally for geographic-coordinate ERA5 files.
+
+---
+
+### Group 3 — Robustness improvements
+
+#### 8. ERA5 bbox grid-snapping
+
+Add `ERA5Downloader._snap_bbox(bbox)` — rounds each edge to the 0.1° grid
+(`ceil` north/east, `floor` south/west) before the CDS request.
+
+#### 9. Deduplicate `get_weather_paths` call in `GetterWeather`
+
+**File:** `packages/weather/datavia/weather/getter_weather.py`
+
+`nc_paths` and `parquet_paths` are assigned from two identical
+`get_weather_paths()` calls. Make one call and split by extension.
+
+#### 10. Buffer-day download for accumulative ERA5 variables
+
+Precipitation and SSRD reset at UTC midnight, not local midnight. Add
+`buffer_days: int = 1` to `ERA5Downloader` that widens `date_start` before the
+CDS request so the first local-day total can be reconstructed.
+
+---
+
+### Group 4 — Code quality
+
+#### 11. Replace f-string logger calls in `formats.py`
+
+`process_temporal_netcdf` uses `logger.error(f"...")` — use `%s`-style
+lazy formatting throughout, consistent with the rest of the codebase.
+
+#### 12. Extend unit tests
+
+Add tests to `tests/test_weather_pipeline_unit.py` for:
+- `unit_conversions.py` — K→°C, m→mm, PAR, variable-name dispatch
+- Fixed index-alignment in `interpolate_station_parquet`
+- `ERA5Downloader._snap_bbox()`
+- Explicit `variable` parameter in `SaverWeather.save()`
+
+---
+
+### Deferred
+
+- Daily aggregation (mean/min/max, PAR, PET) — address after hourly pipeline is stable.
+- Self-contained management for deletion/archiving of old data files.
+- Option to download only for a single day/month/year.
+
+---
+
+## Dependencies
 
 | Package | Purpose | Where |
 |---|---|---|

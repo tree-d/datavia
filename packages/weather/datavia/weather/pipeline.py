@@ -137,12 +137,12 @@ class WeatherPipeline(Pipeline):
             return False
 
         all_saved = True
-        for path in combined_paths.splitlines():
-            path = path.strip()
-            if path:
-                success = self.saver.save(path)
+        for raw_path in combined_paths.splitlines():
+            file_path = raw_path.strip()
+            if file_path:
+                success = self.saver.save(file_path)
                 if not success:
-                    logger.error("Failed to save weather file: %s", path)
+                    logger.error("Failed to save weather file: %s", file_path)
                     all_saved = False
 
         return all_saved

@@ -19,8 +19,6 @@ Covers (all without network access or real files):
 
 from __future__ import annotations
 
-import os
-import tempfile
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -549,3 +547,80 @@ class TestWeatherPipeline:
         pipe.saver.save.side_effect = [True, False]
 
         assert pipe.update_data() is False
+
+
+# ---------------------------------------------------------------------------
+# ERA5Downloader._build_request_date_fields
+# ---------------------------------------------------------------------------
+
+
+class TestERA5DownloaderDateFields:
+    """Tests for ERA5Downloader._build_request_date_fields().
+
+    Verifies that the helper produces correct, sorted, zero-padded year/month/day
+    lists for various date ranges without touching the network or cdsapi.
+    """
+
+    def test_single_day_produces_single_entries(self) -> None:
+        """A one-day range yields exactly one year, one month, one day."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        years, months, days = ERA5Downloader._build_request_date_fields(
+            "2024-01-15", "2024-01-15"
+        )
+        assert years == ["2024"]
+        assert months == ["01"]
+        assert days == ["15"]
+
+    def test_multi_day_same_month(self) -> None:
+        """A range within one month yields one year, one month, all spanned days."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        years, months, days = ERA5Downloader._build_request_date_fields(
+            "2024-03-10", "2024-03-12"
+        )
+        assert years == ["2024"]
+        assert months == ["03"]
+        assert days == ["10", "11", "12"]
+
+    def test_multi_month_same_year(self) -> None:
+        """A range spanning two months collects the correct months and days."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        years, months, days = ERA5Downloader._build_request_date_fields(
+            "2024-01-30", "2024-02-02"
+        )
+        assert years == ["2024"]
+        assert months == ["01", "02"]
+        # Days 30, 31 from January and 01, 02 from February.
+        assert days == ["01", "02", "30", "31"]
+
+    def test_multi_year_range(self) -> None:
+        """A range crossing a year boundary yields both years."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        years, months, days = ERA5Downloader._build_request_date_fields(
+            "2023-12-30", "2024-01-02"
+        )
+        assert years == ["2023", "2024"]
+        assert months == ["01", "12"]
+        # Days: 30, 31 from Dec-2023 and 01, 02 from Jan-2024.
+        assert days == ["01", "02", "30", "31"]
+
+    def test_end_before_start_raises(self) -> None:
+        """ValueError is raised when date_end precedes date_start."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        with pytest.raises(ValueError, match="date_end"):
+            ERA5Downloader._build_request_date_fields("2024-03-01", "2024-02-01")
+
+    def test_lists_are_sorted(self) -> None:
+        """All returned lists are lexicographically sorted."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        years, months, days = ERA5Downloader._build_request_date_fields(
+            "2023-11-28", "2024-02-03"
+        )
+        assert years == sorted(years)
+        assert months == sorted(months)
+        assert days == sorted(days)
