@@ -1021,3 +1021,462 @@ class TestSaverWeatherExplicitVariable:
         # Both variables from the NC file must have their own DB rows.
         assert "2m_temperature" in stored_vars
         assert "total_precipitation" in stored_vars
+
+
+# ---------------------------------------------------------------------------
+# SaverWeather — content-derived destination naming (BUG-07)
+# ---------------------------------------------------------------------------
+
+
+class TestSaverWeatherDestNaming:
+    """Tests for the content-derived destination filename logic in SaverWeather.
+
+    Verifies that :meth:`~datavia.weather.saver_weather.SaverWeather.save`
+    copies temp files to descriptive names derived from file content rather
+    than from the random ``tmp*`` stem (BUG-07 fix, naming responsibility
+    moved from downloader to saver).
+
+    All tests use a mocked :func:`~datavia.library.formats.extract_netcdf_layer_metadata`
+    so no real NetCDF files are required.
+    """
+
+    def test_single_variable_nc_uses_source_variable_year(
+        self, sqlite_db: None, tmp_path
+    ) -> None:
+        """A single-variable NC file is copied as ``{source}_{nc_var}_{year}.nc``.
+
+        Parameters
+        ----------
+        sqlite_db : None
+            pytest fixture; initialises the SQLite test database.
+        tmp_path : pathlib.Path
+            pytest-provided temporary directory.
+        """
+        from datavia.weather.saver_weather import SaverWeather
+
+        nc_file = tmp_path / "tmpXXXXXX.nc"
+        nc_file.write_bytes(b"FAKE_NC")
+
+        saver = SaverWeather.__new__(SaverWeather)
+        saver.source_name = "HYRAS"
+        saver.data_dir = str(tmp_path)
+
+        with patch(
+            "datavia.weather.saver_weather.extract_netcdf_layer_metadata",
+            return_value={
+                "valid_from": "2024-01-01T00:00:00",
+                "valid_until": "2024-12-31T23:59:59",
+                "variables": ["tas"],
+                "bbox": None,
+                "crs": "EPSG:4326",
+            },
+        ):
+            saver.save(str(nc_file))
+
+        # The temp file must NOT appear in the data directory.
+        assert not (tmp_path / "HYRAS_tmpXXXXXX.nc").exists()
+        # The descriptive name must exist instead.
+        assert (tmp_path / "HYRAS_tas_2024.nc").exists()
+
+    def test_multi_variable_nc_omits_variable_from_stem(
+        self, sqlite_db: None, tmp_path
+    ) -> None:
+        """A multi-variable NC file is copied as ``{source}_{year}.nc``.
+
+        When more than one data variable is present in the file, encoding all
+        of them in the filename would be impractically long.
+
+        Parameters
+        ----------
+        sqlite_db : None
+            pytest fixture; initialises the SQLite test database.
+        tmp_path : pathlib.Path
+            pytest-provided temporary directory.
+        """
+        from datavia.weather.saver_weather import SaverWeather
+
+        nc_file = tmp_path / "tmpMULTI.nc"
+        nc_file.write_bytes(b"FAKE_NC")
+
+        saver = SaverWeather.__new__(SaverWeather)
+        saver.source_name = "ERA5_land"
+        saver.data_dir = str(tmp_path)
+
+        with patch(
+            "datavia.weather.saver_weather.extract_netcdf_layer_metadata",
+            return_value={
+                "valid_from": "2024-06-01T00:00:00",
+                "valid_until": "2024-06-30T23:59:59",
+                "variables": ["2m_temperature", "total_precipitation"],
+                "bbox": None,
+                "crs": "EPSG:4326",
+            },
+        ):
+            saver.save(str(nc_file))
+
+        assert (tmp_path / "ERA5_land_2024.nc").exists()
+
+    def test_register_only_uses_file_stem_as_layer_name(
+        self, sqlite_db: None, tmp_path
+    ) -> None:
+        """register_only=True uses the file stem directly, no double-prefix.
+
+        Files already in the data directory carry the source_name as part of
+        their name (e.g. ``HYRAS_tas_2024.nc``).  Prepending source_name
+        again would produce ``HYRAS_HYRAS_tas_2024``.  The layer name must
+        match what save() would produce for the same file.
+
+        Parameters
+        ----------
+        sqlite_db : None
+            pytest fixture; initialises the SQLite test database.
+        tmp_path : pathlib.Path
+            pytest-provided temporary directory.
+        """
+        from sqlalchemy import text
+
+        from datavia.library.database.connection import session_local
+        from datavia.weather.saver_weather import SaverWeather
+
+        nc_file = tmp_path / "HYRAS_tas_2024.nc"
+        nc_file.write_bytes(b"FAKE_NC")
+
+        saver = SaverWeather.__new__(SaverWeather)
+        saver.source_name = "HYRAS"
+        saver.data_dir = str(tmp_path)
+
+        with patch(
+            "datavia.weather.saver_weather.extract_netcdf_layer_metadata",
+            return_value={
+                "valid_from": "2024-01-01T00:00:00",
+                "valid_until": "2024-12-31T23:59:59",
+                "variables": ["tas"],
+                "bbox": None,
+                "crs": "EPSG:4326",
+            },
+        ):
+            saver.save(str(nc_file), register_only=True)
+
+        session = session_local()
+        row = session.execute(
+            text("SELECT layer_name FROM weather_layers WHERE source_name='HYRAS'")
+        ).fetchone()
+        session.close()
+        assert row is not None
+        assert row[0] == "HYRAS_tas_2024", (
+            f"Expected layer_name='HYRAS_tas_2024', got '{row[0]}'"
+        )
+
+    def test_parquet_uses_datetime_year_not_temp_stem(
+        self, sqlite_db: None, tmp_path
+    ) -> None:
+        """A Parquet station file is copied as ``{source}_{year}.parquet``.
+
+        The year is derived from the ``datetime`` column minimum, so the
+        destination name is deterministic and human-readable rather than
+        inheriting the random ``tmp*`` temp stem.
+
+        Parameters
+        ----------
+        sqlite_db : None
+            pytest fixture; initialises the SQLite test database.
+        tmp_path : pathlib.Path
+            pytest-provided temporary directory.
+        """
+        import pandas as pd
+
+        from datavia.weather.saver_weather import SaverWeather
+
+        parquet_file = tmp_path / "tmpABCDEF.parquet"
+        df = pd.DataFrame(
+            {
+                "datetime": pd.to_datetime(["2023-01-01", "2023-06-15", "2023-12-31"]),
+                "station_id": [1, 1, 1],
+                "temperature": [0.5, 20.3, 3.1],
+            }
+        )
+        df.to_parquet(str(parquet_file))
+
+        saver = SaverWeather.__new__(SaverWeather)
+        saver.source_name = "DWD"
+        saver.data_dir = str(tmp_path)
+
+        saver.save(str(parquet_file))
+
+        assert not (tmp_path / "DWD_tmpABCDEF.parquet").exists()
+        assert (tmp_path / "DWD_2023.parquet").exists()
+
+
+# ---------------------------------------------------------------------------
+# extract_netcdf_layer_metadata — year-end timestamp boundary (BUG-06)
+# ---------------------------------------------------------------------------
+
+
+class TestExtractNetcdfLayerMetadata:
+    """Tests for :func:`~datavia.library.formats.extract_netcdf_layer_metadata`.
+
+    Verifies that ``valid_until`` is always rounded up to ``23:59:59`` of the
+    last calendar date, regardless of the raw time value present in the file.
+    """
+
+    def test_valid_until_rounded_to_end_of_day(self, tmp_path) -> None:
+        """valid_until is clamped to 23:59:59 regardless of the raw last time step.
+
+        HYRAS precipitation stores its last annual step at 06:00 UTC on
+        31 December.  Before the fix, annual boundary queries failed because
+        the stored ``valid_until`` was ``2025-12-31T06:00:00`` instead of
+        ``2025-12-31T23:59:59``.
+
+        Parameters
+        ----------
+        tmp_path : pathlib.Path
+            pytest-provided temporary directory.
+        """
+        import numpy as np
+        import xarray as xr
+
+        from datavia.library.formats import extract_netcdf_layer_metadata
+
+        times = np.array(
+            ["2025-01-01T00:00:00", "2025-12-31T06:00:00"],
+            dtype="datetime64[ns]",
+        )
+        ds = xr.Dataset(
+            {"pr": (["time"], [0.0, 1.0])},
+            coords={"time": times},
+        )
+        nc_file = tmp_path / "hyras_pr_2025.nc"
+        ds.to_netcdf(str(nc_file))
+
+        metadata = extract_netcdf_layer_metadata(str(nc_file))
+
+        assert metadata["valid_until"] == "2025-12-31T23:59:59"
+
+    def test_valid_from_unchanged(self, tmp_path) -> None:
+        """valid_from is not altered — only the upper bound is rounded.
+
+        Parameters
+        ----------
+        tmp_path : pathlib.Path
+            pytest-provided temporary directory.
+        """
+        import numpy as np
+        import xarray as xr
+
+        from datavia.library.formats import extract_netcdf_layer_metadata
+
+        times = np.array(
+            ["2025-01-01T06:00:00", "2025-12-31T06:00:00"],
+            dtype="datetime64[ns]",
+        )
+        ds = xr.Dataset(
+            {"tas": (["time"], [280.0, 275.0])},
+            coords={"time": times},
+        )
+        nc_file = tmp_path / "hyras_tas_2025.nc"
+        ds.to_netcdf(str(nc_file))
+
+        metadata = extract_netcdf_layer_metadata(str(nc_file))
+
+        # Lower bound must not be modified.
+        assert metadata["valid_from"] == "2025-01-01T06:00:00.000000000"
+        # Upper bound must still be end-of-day.
+        assert metadata["valid_until"] == "2025-12-31T23:59:59"
+
+    def test_midnight_last_step_unchanged(self, tmp_path) -> None:
+        """A last step already at midnight produces the same 23:59:59 result.
+
+        ERA5 files typically end at 00:00 UTC; this test confirms that the
+        rounding does not shift the date forward.
+
+        Parameters
+        ----------
+        tmp_path : pathlib.Path
+            pytest-provided temporary directory.
+        """
+        import numpy as np
+        import xarray as xr
+
+        from datavia.library.formats import extract_netcdf_layer_metadata
+
+        times = np.array(
+            ["2024-01-01T00:00:00", "2024-12-31T00:00:00"],
+            dtype="datetime64[ns]",
+        )
+        ds = xr.Dataset(
+            {"t2m": (["time"], [280.0, 275.0])},
+            coords={"time": times},
+        )
+        nc_file = tmp_path / "era5_t2m_2024.nc"
+        ds.to_netcdf(str(nc_file))
+
+        metadata = extract_netcdf_layer_metadata(str(nc_file))
+
+        assert metadata["valid_until"] == "2024-12-31T23:59:59"
+
+
+# ---------------------------------------------------------------------------
+# interpolate_netcdf — batch coordinates (BUG-05) + NaN pre-fill (BUG-08)
+# ---------------------------------------------------------------------------
+
+
+class TestInterpolateNetcdf:
+    """Tests for :func:`~datavia.library.interpolation.interpolate_netcdf`.
+
+    All tests use synthetic in-memory NetCDF datasets written to ``tmp_path``
+    to avoid any network or real-file dependency.
+
+    Covers:
+
+    - Scalar lat/lon still returns a scalar (backward compatibility).
+    - Array lat/lon returns an ``(N,)`` array (BUG-05 batch support).
+    - A single ``open_dataset`` call is used regardless of N (performance).
+    - Nodata cells filled before interpolation — edge points no longer NaN
+      (BUG-08 pre-fill).
+    - Geographic coordinates (ERA5-style latitude/longitude) are handled.
+    """
+
+    @staticmethod
+    def _make_geographic_nc(tmp_path, *, with_nodata: bool = False) -> str:
+        """Write a tiny ERA5-style geographic NetCDF to *tmp_path*.
+
+        Creates a 5x5 degree grid centred on Germany with a single time step.
+
+        Parameters
+        ----------
+        tmp_path : pathlib.Path
+            Directory for the file.
+        with_nodata : bool
+            When ``True``, set the corner cells to the ``_FillValue``
+            so that a query point near the edge triggers BUG-08.
+
+        Returns
+        -------
+        str
+            Absolute path to the written file.
+        """
+        import xarray as xr
+
+        lats = np.array([47.0, 48.0, 49.0, 50.0, 51.0], dtype=float)
+        lons = np.array([9.0, 10.0, 11.0, 12.0, 13.0], dtype=float)
+        times = np.array(["2024-06-15T12:00:00"], dtype="datetime64[ns]")
+
+        data = np.ones((1, len(lats), len(lons)), dtype=float) * 20.0
+        fill_val = -9999.0
+
+        if with_nodata:
+            # Set the entire top row to fill_value to force BUG-08 scenario
+            # at any point near lat=51.
+            data[0, -1, :] = fill_val
+
+        da = xr.DataArray(
+            data,
+            dims=["time", "latitude", "longitude"],
+            coords={"time": times, "latitude": lats, "longitude": lons},
+            attrs={"_FillValue": fill_val},
+        )
+        ds = xr.Dataset({"t2m": da})
+        path = str(tmp_path / "era5_geo.nc")
+        ds.to_netcdf(path)
+        return path
+
+    def test_scalar_input_returns_scalar(self, tmp_path) -> None:
+        """A single lat/lon pair returns a Python float (backward compatible).
+
+        Parameters
+        ----------
+        tmp_path : pathlib.Path
+            pytest-provided temporary directory.
+        """
+        from datavia.library.interpolation import interpolate_netcdf
+
+        nc = self._make_geographic_nc(tmp_path)
+        result = interpolate_netcdf(nc, 49.0, 11.0, "t2m", "2024-06-15T12:00:00")
+
+        assert isinstance(result, float)
+        assert result == pytest.approx(20.0)
+
+    def test_array_input_returns_array(self, tmp_path) -> None:
+        """An array of N coordinates returns an (N,) ndarray (BUG-05).
+
+        Parameters
+        ----------
+        tmp_path : pathlib.Path
+            pytest-provided temporary directory.
+        """
+        from datavia.library.interpolation import interpolate_netcdf
+
+        nc = self._make_geographic_nc(tmp_path)
+        lats = np.array([48.0, 49.0, 50.0])
+        lons = np.array([10.0, 11.0, 12.0])
+
+        result = interpolate_netcdf(nc, lats, lons, "t2m", "2024-06-15T12:00:00")
+
+        assert isinstance(result, np.ndarray)
+        assert result.shape == (3,)
+        np.testing.assert_allclose(result, 20.0, atol=1e-6)
+
+    def test_single_file_open_for_batch(self, tmp_path) -> None:
+        """xr.open_dataset is called exactly once regardless of N (BUG-05 perf).
+
+        Parameters
+        ----------
+        tmp_path : pathlib.Path
+            pytest-provided temporary directory.
+        """
+        from unittest.mock import patch
+
+        import xarray as xr
+
+        from datavia.library.interpolation import interpolate_netcdf
+
+        nc = self._make_geographic_nc(tmp_path)
+        lats = np.array([48.0, 49.0, 50.0])
+        lons = np.array([10.0, 11.0, 12.0])
+
+        with patch("xarray.open_dataset", wraps=xr.open_dataset) as mock_open:
+            interpolate_netcdf(nc, lats, lons, "t2m", "2024-06-15T12:00:00")
+
+        assert mock_open.call_count == 1, (
+            f"Expected 1 open_dataset call for {len(lats)} points, "
+            f"got {mock_open.call_count}"
+        )
+
+    def test_nodata_prefill_prevents_nan_at_edge(self, tmp_path) -> None:
+        """Edge points adjacent to nodata cells return a value, not NaN (BUG-08).
+
+        The top row of the synthetic grid is set to fill_value.  A query near
+        that edge (lat=50.5) would previously return NaN because the bilinear
+        stencil contained a fill cell.  After the pre-fill fix the stencil is
+        filled with the nearest valid value and the result is finite.
+
+        Parameters
+        ----------
+        tmp_path : pathlib.Path
+            pytest-provided temporary directory.
+        """
+        from datavia.library.interpolation import interpolate_netcdf
+
+        nc = self._make_geographic_nc(tmp_path, with_nodata=True)
+        # lat=50.5 sits between the valid row (50.0 = 20.0) and the nodata
+        # row (51.0 = fill_value).  Without pre-fill this returns NaN.
+        result = interpolate_netcdf(nc, 50.5, 11.0, "t2m", "2024-06-15T12:00:00")
+
+        assert np.isfinite(result), (
+            "Expected a finite value near a nodata boundary after pre-fill; "
+            f"got {result}"
+        )
+
+    def test_unknown_variable_raises_key_error(self, tmp_path) -> None:
+        """A missing variable name raises KeyError with a descriptive message.
+
+        Parameters
+        ----------
+        tmp_path : pathlib.Path
+            pytest-provided temporary directory.
+        """
+        from datavia.library.interpolation import interpolate_netcdf
+
+        nc = self._make_geographic_nc(tmp_path)
+        with pytest.raises(KeyError, match="no_such_var"):
+            interpolate_netcdf(nc, 49.0, 11.0, "no_such_var", "2024-06-15T12:00:00")

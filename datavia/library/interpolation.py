@@ -157,19 +157,19 @@ def spatial_interpolate(
         return result
 
 
-def _spatial_interp_kwargs(
+def _build_spatial_interp_coords(
     ds: "xr.Dataset",
     variable: str,
-    lat: float,
-    lon: float,
-) -> dict[str, float]:
-    """Build xarray.DataArray.interp() keyword arguments for a WGS84 point.
+    lats: np.ndarray,
+    lons: np.ndarray,
+) -> dict[str, "xr.DataArray"]:
+    """Build vectorised xarray.DataArray.interp() coordinates for N WGS84 points.
 
     Detects whether the dataset uses geographic coordinates (ERA5-style
     ``latitude``/``longitude``) or projected coordinates (HYRAS-style ``x``/``y``
-    with a CF ``grid_mapping`` attribute).  For projected files the WGS84 input
-    point is reprojected to the dataset's native CRS via ``pyproj`` before the
-    projected coordinates are returned as keyword arguments.
+    with a CF ``grid_mapping`` attribute).  For projected files all input points
+    are reprojected to the dataset's native CRS in a single ``pyproj`` batch
+    call.
 
     Parameters
     ----------
@@ -177,17 +177,18 @@ def _spatial_interp_kwargs(
         Open xarray dataset.
     variable : str
         Variable name; used to read the ``grid_mapping`` attribute.
-    lat : float
-        Geographic latitude in degrees North (EPSG:4326).
-    lon : float
-        Geographic longitude in degrees East (EPSG:4326).
+    lats : np.ndarray
+        Geographic latitudes in degrees North (EPSG:4326), shape ``(N,)``.
+    lons : np.ndarray
+        Geographic longitudes in degrees East (EPSG:4326), shape ``(N,)``.
 
     Returns
     -------
-    dict[str, float]
-        Keyword arguments suitable for ``ds[variable].interp(**kwargs)``,
-        e.g. ``{"latitude": 48.1, "longitude": 11.5}`` for ERA5 or
-        ``{"y": 2781634.7, "x": 4438345.7}`` for HYRAS.
+    dict[str, xr.DataArray]
+        Keyword arguments suitable for ``ds[variable].interp(**kwargs)`` where
+        each value is an ``xr.DataArray`` of shape ``(N,)`` with dim
+        ``"points"``.  For ERA5: ``{"latitude": ..., "longitude": ...}``;
+        for HYRAS: ``{"y": ..., "x": ...}``.
 
     Raises
     ------
@@ -198,9 +199,6 @@ def _spatial_interp_kwargs(
     grid_mapping_name = ds[variable].attrs.get("grid_mapping")
 
     # Projected grid (e.g. HYRAS EPSG:3035): dimensions are x/y in metres.
-    # The grid_mapping variable carries the full CRS definition in CF-compliant
-    # attributes.  We reproject the WGS84 input point to that CRS so that
-    # xarray.interp() can locate the correct grid cell.
     if (
         grid_mapping_name
         and grid_mapping_name in ds
@@ -214,30 +212,120 @@ def _spatial_interp_kwargs(
             )
         crs_file = pyproj.CRS.from_cf(ds[grid_mapping_name].attrs)
         transformer = pyproj.Transformer.from_crs("EPSG:4326", crs_file, always_xy=True)
-        # always_xy=True means transformer.transform() expects (lon, lat) order.
-        x_proj, y_proj = transformer.transform(lon, lat)
-        return {"y": y_proj, "x": x_proj}
+        # Batch-reproject all N points in a single transformer call.
+        x_arr, y_arr = transformer.transform(lons, lats)
+        return {
+            "y": xr.DataArray(y_arr, dims="points"),
+            "x": xr.DataArray(x_arr, dims="points"),
+        }
 
     # Geographic grid (ERA5, ICON): dimensions are latitude/longitude in degrees.
     lat_name = "latitude" if "latitude" in ds.coords else "lat"
     lon_name = "longitude" if "longitude" in ds.coords else "lon"
-    return {lat_name: lat, lon_name: lon}
+    return {
+        lat_name: xr.DataArray(lats, dims="points"),
+        lon_name: xr.DataArray(lons, dims="points"),
+    }
+
+
+def _fill_nan_along_axis(arr: np.ndarray, axis: int) -> np.ndarray:
+    """Forward-fill then backward-fill NaN values along *axis* with numpy.
+
+    Pure-numpy equivalent of ``xr.DataArray.ffill(...).bfill(...)``.  Does
+    not require the ``bottleneck`` package.
+
+    Parameters
+    ----------
+    arr : np.ndarray
+        Input array (copy is made internally; original is not mutated).
+    axis : int
+        Axis index along which to propagate valid values.
+
+    Returns
+    -------
+    np.ndarray
+        Copy of *arr* with NaN runs replaced by their nearest valid neighbour
+        along *axis*.  Leading or trailing NaN runs that cannot be filled in
+        one direction are covered by the complementary pass.
+    """
+    # Bring the fill axis to position 0 for simpler indexing.
+    work = np.moveaxis(arr.copy(), axis, 0)
+    n = work.shape[0]
+
+    # Forward pass: copy previous slice into NaN cells.
+    for i in range(1, n):
+        mask = np.isnan(work[i])
+        work[i] = np.where(mask, work[i - 1], work[i])
+
+    # Backward pass: cover any leading NaN run that forward-fill missed.
+    for i in range(n - 2, -1, -1):
+        mask = np.isnan(work[i])
+        work[i] = np.where(mask, work[i + 1], work[i])
+
+    return np.moveaxis(work, 0, axis)
+
+
+def _prefill_nodata(da: "xr.DataArray") -> "xr.DataArray":
+    """Replace nodata cells with nearest valid neighbour before interpolation.
+
+    Propagates valid values outward in all four axis directions (forward and
+    backward along both spatial axes).  This ensures that bilinear (or cubic)
+    interpolation stencils touching the domain boundary always have a finite
+    value to work with, eliminating NaN propagation at domain edges (BUG-08).
+
+    The approach is an approximation: cells filled by this method receive the
+    nearest value along one of the four cardinal directions, not the globally
+    nearest valid cell.  For roughly convex domains like the HYRAS Germany
+    grid this is adequate.  For exact nearest-neighbour fill, use
+    ``scipy.ndimage.distance_transform_edt`` (as done in
+    :func:`interpolate_tiff`) in a future upgrade.
+
+    Parameters
+    ----------
+    da : xr.DataArray
+        Spatial data array.  Must have ``_FillValue`` in ``attrs`` for the
+        fill sentinel to be masked; otherwise only existing ``NaN`` cells
+        are filled.
+
+    Returns
+    -------
+    xr.DataArray
+        Copy of *da* with nodata cells replaced by nearest valid values.
+    """
+    fill_val = da.attrs.get("_FillValue", None)
+    if fill_val is not None:
+        da = da.where(da != fill_val)
+
+    # Detect spatial dimension names — projected (x/y) or geographic (lat/lon).
+    x_dim = (
+        "x" if "x" in da.dims else ("longitude" if "longitude" in da.dims else "lon")
+    )
+    y_dim = "y" if "y" in da.dims else ("latitude" if "latitude" in da.dims else "lat")
+
+    # Use a pure-numpy propagation so bottleneck is not required.
+    arr = da.values.astype(float, copy=True)
+    x_axis = da.dims.index(x_dim)
+    y_axis = da.dims.index(y_dim)
+    arr = _fill_nan_along_axis(arr, x_axis)
+    arr = _fill_nan_along_axis(arr, y_axis)
+
+    return xr.DataArray(arr, dims=da.dims, coords=da.coords, attrs=da.attrs)
 
 
 def interpolate_netcdf(
     nc_path: str,
-    lat: float,
-    lon: float,
+    lats: float | np.ndarray,
+    lons: float | np.ndarray,
     variable: str,
     datetime_utc: Any,
 ) -> float | np.ndarray:
-    r"""Sample a NetCDF variable at a geographic point for one or more time steps.
+    r"""Sample a NetCDF variable at one or more geographic points.
 
-    Opens the file with xarray, selects the nearest time step(s) to
-    *datetime_utc*, and bilinearly interpolates the variable to (*lat*, *lon*).
-    When *datetime_utc* is a single ``datetime``-like object a scalar ``float``
-    is returned; when it is a sequence an ``np.ndarray`` of shape ``(T,)`` is
-    returned instead.
+    Opens the file **once** with xarray and interpolates all coordinates in a
+    single vectorised call, eliminating per-point file-open overhead (BUG-05).
+    Before interpolation, nodata cells are replaced with the nearest valid
+    neighbour so that bilinear stencils touching domain boundaries always have
+    finite values (BUG-08).
 
     Supports both geographic coordinate files (ERA5: ``latitude``/``longitude``
     dimensions in degrees) and projected coordinate files (HYRAS: ``x``/``y``
@@ -252,22 +340,28 @@ def interpolate_netcdf(
     ----------
     nc_path : str
         Absolute path to the NetCDF file (``*.nc``).
-    lat : float
-        Geographic latitude in degrees North (EPSG:4326).
-    lon : float
-        Geographic longitude in degrees East (EPSG:4326).
+    lats : float or np.ndarray
+        Geographic latitude(s) in degrees North (EPSG:4326).  A scalar float
+        produces a scalar (or 1-D time-series) return value; an array of
+        shape ``(N,)`` produces an ``(N,)`` array.
+    lons : float or np.ndarray
+        Geographic longitude(s) in degrees East (EPSG:4326).  Must be the
+        same shape as *lats*.
     variable : str
-        Name of the variable to sample, e.g. ``"2m_temperature"``.
+        Name of the variable to sample, e.g. ``"tas"`` or ``"2m_temperature"``.
     datetime_utc : datetime-like or sequence of datetime-like
-        One or more UTC timestamps.  Passed directly to
-        ``xarray.Dataset.sel`` with ``method="nearest"``.
+        One or more UTC timestamps.  Passed to ``xarray.Dataset.sel`` with
+        ``method="nearest"``.
 
     Returns
     -------
     float
-        Interpolated scalar value when a single timestamp is provided.
+        Interpolated scalar value when *lats*/*lons* are scalars and a single
+        timestamp is provided.
     np.ndarray
-        Array of shape ``(T,)`` when a sequence of timestamps is provided.
+        - Shape ``(T,)`` — scalar coordinate, sequence of timestamps.
+        - Shape ``(N,)`` — array of coordinates, single timestamp.
+        - Shape ``(N, T)`` — array of coordinates, sequence of timestamps.
 
     Raises
     ------
@@ -283,6 +377,10 @@ def interpolate_netcdf(
             "Install datavia-weather or run `pip install xarray netCDF4`."
         )
 
+    scalar_input = np.ndim(lats) == 0
+    lats_arr = np.atleast_1d(np.asarray(lats, dtype=float))
+    lons_arr = np.atleast_1d(np.asarray(lons, dtype=float))
+
     with xr.open_dataset(nc_path) as ds:
         if variable not in ds.data_vars:
             raise KeyError(
@@ -290,11 +388,16 @@ def interpolate_netcdf(
                 f"Available variables: {list(ds.data_vars)}"
             )
 
-        # Build spatial interp kwargs — auto-detects geographic vs projected CRS.
-        interp_kwargs = _spatial_interp_kwargs(ds, variable, lat, lon)
+        # Pre-fill nodata cells so bilinear stencils at domain edges are
+        # always finite (BUG-08 fix).
+        da = _prefill_nodata(ds[variable])
 
-        # Bilinear spatial interpolation to the requested point.
-        point = ds[variable].interp(interp_kwargs, method="linear")
+        # Build vectorised spatial interpolation coordinates for all N points
+        # in one batch — single pyproj call, single xarray interp call (BUG-05).
+        interp_coords = _build_spatial_interp_coords(ds, variable, lats_arr, lons_arr)
+
+        # Bilinear spatial interpolation across all N points simultaneously.
+        point = da.interp(interp_coords, method="linear")
 
         # Temporal selection: nearest available time step.
         # ERA5 files from cdsapi >= 0.7 use 'valid_time' instead of 'time'.
@@ -302,11 +405,17 @@ def interpolate_netcdf(
         if time_dim in point.coords:
             point = point.sel({time_dim: datetime_utc}, method="nearest")
 
-        values = point.values
+        values = np.asarray(point.values, dtype=float)
 
-    if values.ndim == 0:
-        return float(values)
-    return np.asarray(values, dtype=float)
+    # Restore scalar semantics when a single point was requested.
+    if scalar_input:
+        if values.ndim == 0:
+            return float(values)
+        if values.ndim == 1 and values.shape[0] == 1:
+            return float(values[0])
+        return values.squeeze()
+
+    return values
 
 
 def interpolate_station_parquet(

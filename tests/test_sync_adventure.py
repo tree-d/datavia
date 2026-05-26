@@ -461,16 +461,19 @@ class TestWeatherSyncAdventure:
         """A saved NetCDF file appears in both disk scan and DB query after save().
 
         Scenario: a downloader writes a temporary file; the saver copies it to
-        the data directory (naming it ``ERA5_land_<stem>.nc``) and registers it.
-        Both ``list_managed_files`` and ``get_registered_uris`` must agree.
+        the data directory with a content-derived name
+        ``{source}_{nc_variable}_{year}.nc`` (BUG-07 fix).  Both
+        ``list_managed_files`` and ``get_registered_uris`` must agree.
         """
         _, saver, getter = self._build_weather_pipeline(str(tmp_path))
 
-        # The source file (as if from a downloader temp dir) must NOT carry
-        # the source prefix so that the copy destination has a clean name.
+        # Source file has a random temp stem; the saver reads content to build
+        # the deterministic destination name (BUG-07 fix).
         src_file = tmp_path / "temperature_jan.nc"
         src_file.write_bytes(b"FAKE_NC_CONTENT")
-        expected_dest = str(tmp_path / f"{self._SOURCE}_temperature_jan.nc")
+        # _FAKE_NC_META has variables=["temperature_2m"], valid_from="2024-..."
+        # → _build_dest_stem produces ERA5_land_temperature_2m_2024.nc
+        expected_dest = str(tmp_path / f"{self._SOURCE}_temperature_2m_2024.nc")
 
         with patch(
             "datavia.weather.saver_weather.extract_netcdf_layer_metadata",

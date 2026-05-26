@@ -343,3 +343,52 @@ class TestDownload:
         assert len(captured_urls) == 1
         assert captured_urls[0].endswith("tas_hyras_1_2024_v6-1_de.nc")
         assert captured_urls[0].startswith(_HYRAS_BASE_URL)
+
+
+# ---------------------------------------------------------------------------
+# _get_final_filename — extension normalisation
+# ---------------------------------------------------------------------------
+
+
+class TestGetFinalFilename:
+    """Tests for :meth:`~datavia.weather.hyras_downloader.HYRASDownloader._get_final_filename`.
+
+    The downloader's sole responsibility is to replace the ``.download``
+    temporary extension with ``.nc`` so that the parent
+    :class:`~datavia.core.downloader_url.URLDownloader` has a valid local
+    path.  The permanent, descriptive filename is assigned later by
+    :class:`~datavia.weather.saver_weather.SaverWeather` when it copies the
+    file into the data directory.
+    """
+
+    def test_replaces_download_extension_with_nc(self) -> None:
+        """The ``.download`` extension is replaced by ``.nc``.
+
+        Parameters
+        ----------
+        None
+        """
+        from datavia.weather.hyras_downloader import HYRASDownloader
+
+        downloader = HYRASDownloader()
+        result = downloader._get_final_filename(
+            "/tmp/tmpABCDEF.download", "application/octet-stream"
+        )
+
+        assert result == "/tmp/tmpABCDEF.nc"
+
+    def test_preserves_directory_and_stem(self) -> None:
+        """Directory and temp stem are kept unchanged; only the extension changes.
+
+        Parameters
+        ----------
+        None
+        """
+        from datavia.weather.hyras_downloader import HYRASDownloader
+
+        downloader = HYRASDownloader()
+        result = downloader._get_final_filename(
+            "/var/tmp/some_temp_file.download", "application/x-netcdf"
+        )
+
+        assert result == "/var/tmp/some_temp_file.nc"

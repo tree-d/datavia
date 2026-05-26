@@ -127,17 +127,27 @@ class SaverWeather(Saver):
             ``False`` on any error.
         """
         try:
-            stem = os.path.splitext(os.path.basename(data_path))[0]
             ext = os.path.splitext(data_path)[1].lower()
             file_format = _infer_file_format(ext)
-            layer_name = f"{self.source_name}_{stem}"
 
             if register_only:
+                # File already lives in the data directory.  Its stem is the
+                # definitive layer name — no source_name prefix needed because
+                # the file was placed there by a previous save() that already
+                # applied the descriptive naming convention.
                 dest_path = data_path
+                layer_name = os.path.splitext(os.path.basename(data_path))[0]
             else:
-                dest_path = os.path.join(self.data_dir, f"{layer_name}{ext}")
+                # Derive a descriptive stem from the file content BEFORE
+                # copying so the permanent filename reflects what is actually
+                # inside the file rather than the random temp-path stem
+                # produced by tempfile.mkstemp (BUG-07: naming responsibility
+                # moved from downloader to saver).
+                dest_stem = _build_dest_stem(data_path, file_format, self.source_name)
+                dest_path = os.path.join(self.data_dir, f"{dest_stem}{ext}")
                 shutil.copy2(data_path, dest_path)
                 logger.info("Copied weather file to %s", dest_path)
+                layer_name = dest_stem
 
             # Resolve the list of variables to register for this file.
             # When an explicit variable is given, register exactly that one.
@@ -438,6 +448,65 @@ def _infer_file_format(ext: str) -> str:
             f"Expected one of: {list(mapping.keys())}"
         )
     return mapping[ext]
+
+
+def _build_dest_stem(
+    data_path: str,
+    file_format: str,
+    source_name: str,
+) -> str:
+    """Build a descriptive, content-derived filename stem for a weather file.
+
+    For NetCDF files the source file is opened before the copy so that the
+    permanent filename reflects the file's actual content rather than the
+    random temp-path stem produced by :func:`tempfile.mkstemp`.
+
+    Naming rules:
+
+    - Single data variable: ``{source_name}_{nc_variable}_{year}``
+      e.g. ``HYRAS_tas_2024``, ``ERA5_land_2m_temperature_2024``.
+    - Multiple data variables: ``{source_name}_{year}``
+      (encoding all variable names would produce an impractically long stem).
+    - Unreadable NC / Parquet: ``{source_name}_{temp_stem}`` as a safe
+      fallback so existing behaviour for Parquet station files is preserved.
+
+    Parameters
+    ----------
+    data_path : str
+        Absolute path to the source file (typically a temp file).
+    file_format : str
+        ``"netcdf"`` or ``"parquet"``.
+    source_name : str
+        Pipeline source identifier, e.g. ``"HYRAS"`` or ``"ERA5_land"``.
+
+    Returns
+    -------
+    str
+        Descriptive filename stem without extension or directory component.
+    """
+    if file_format == "netcdf":
+        meta = extract_netcdf_layer_metadata(data_path)
+        nc_vars: list[str] = meta.get("variables", [])
+        valid_from: str | None = meta.get("valid_from")
+        year: str = valid_from[:4] if valid_from else "unknown"
+        if len(nc_vars) == 1:
+            return f"{source_name}_{nc_vars[0]}_{year}"
+        # Multiple variables or metadata unreadable — omit variable name.
+        return f"{source_name}_{year}"
+
+    # Parquet (DWD station files): derive a year from the datetime column so
+    # the filename is descriptive rather than random.  Falls back to the temp
+    # stem only when the datetime column cannot be read.
+    try:
+        import pandas as pd
+
+        df = pd.read_parquet(data_path, columns=["datetime"])
+        df["datetime"] = pd.to_datetime(df["datetime"])
+        year = str(df["datetime"].min().year)
+        return f"{source_name}_{year}"
+    except Exception:
+        stem = os.path.splitext(os.path.basename(data_path))[0]
+        return f"{source_name}_{stem}"
 
 
 def _extract_variable_from_stem(stem: str, source_name: str) -> str:

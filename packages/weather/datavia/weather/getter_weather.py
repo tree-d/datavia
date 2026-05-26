@@ -238,38 +238,34 @@ class GetterWeather(Getter):
 
         results = np.full(len(coords_arr), np.nan)
 
+        # --- Gridded NetCDF path (BUG-05 fix: single batch call for all coords) ---
+        if nc_files:
+            try:
+                nc_variable = get_nc_variable_name(self.source_name, variable)
+                lats = coords_arr[:, 1]
+                lons = coords_arr[:, 0]
+                raw_batch = interpolate_netcdf(
+                    nc_files[0], lats, lons, nc_variable, datetime_utc
+                )
+                # raw_batch shape: (N,) for a single timestamp; scalar when N=1.
+                raw_arr = np.atleast_1d(np.asarray(raw_batch, dtype=float))
+                for i, raw_val in enumerate(raw_arr):
+                    if not np.isnan(raw_val):
+                        results[i] = float(
+                            apply_conversion(
+                                self.source_name,
+                                variable,
+                                raw_val,
+                                self._unit_overrides,
+                            )
+                        )
+            except Exception as exc:
+                logger.warning("NetCDF batch interpolation failed: %s", exc)
+
+        # --- Station Parquet path (still per-coord; station IDW is inherently local) ---
         for i, coord in enumerate(coords_arr):
             lon, lat = float(coord[0]), float(coord[1])
-            gridded_val: float | None = None
             station_val: float | None = None
-
-            if nc_files:
-                try:
-                    # Translate the pipeline-level variable name to the name
-                    # actually stored inside the NetCDF file.  For ERA5 the
-                    # two names are identical; for HYRAS they differ
-                    # (e.g. "2m_temperature" → "tas").
-                    nc_variable = get_nc_variable_name(self.source_name, variable)
-                    raw_gridded = interpolate_netcdf(
-                        nc_files[0], lat, lon, nc_variable, datetime_utc
-                    )
-                    # Apply source-aware unit conversion (e.g. K→°C for ERA5_land;
-                    # HYRAS passes through unchanged as it is already in target units).
-                    gridded_val = float(
-                        apply_conversion(
-                            self.source_name,
-                            variable,
-                            raw_gridded,
-                            self._unit_overrides,
-                        )
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "NetCDF interpolation failed for (%.4f, %.4f): %s",
-                        lat,
-                        lon,
-                        exc,
-                    )
 
             if parquet_files:
                 for parquet_path in parquet_files:
@@ -294,9 +290,9 @@ class GetterWeather(Getter):
                     if not np.isnan(candidate):
                         station_val = candidate
                         break
-                    # Keep the NaN as fallback so station_val is set even
-                    # when all files return NaN (avoids silently missing data).
                     station_val = candidate
+
+            gridded_val = results[i] if not np.isnan(results[i]) else None
 
             if (
                 gridded_val is not None
@@ -306,9 +302,7 @@ class GetterWeather(Getter):
                 results[i] = blend_gridded_and_station(
                     gridded_val, station_val, station_weight
                 )
-            elif gridded_val is not None:
-                results[i] = gridded_val
-            elif station_val is not None:
+            elif station_val is not None and gridded_val is None:
                 results[i] = station_val
 
         return results

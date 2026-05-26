@@ -306,7 +306,10 @@ def extract_netcdf_layer_metadata(filepath: str) -> dict[str, Any]:
 
         - ``valid_from`` (str): ISO-8601 start of the time dimension, or
           ``None`` when the file has no time coordinate.
-        - ``valid_until`` (str): ISO-8601 end of the time dimension.
+        - ``valid_until`` (str): ISO-8601 end of the time dimension, always
+          rounded up to ``23:59:59`` of the last date so that day-boundary
+          queries succeed regardless of the raw time value stored in the
+          file (e.g. HYRAS ``pr`` ends at ``06:00 UTC`` on 31 December).
         - ``variables`` (list[str]): Data variable names.
         - ``crs`` (str): CRS string; defaults to ``"EPSG:4326"`` (ERA5 standard).
         - ``bbox`` (str): WKT POLYGON bounding box, or ``None`` when spatial
@@ -328,7 +331,17 @@ def extract_netcdf_layer_metadata(filepath: str) -> dict[str, Any]:
             if "time" in ds.coords:
                 time_vals = ds.coords["time"]
                 valid_from = str(time_vals.min().values)
-                valid_until = str(time_vals.max().values)
+                # Round the last time step up to end-of-day (23:59:59) so
+                # that annual queries succeed even when a variable's final
+                # daily value is stored earlier in the day (BUG-06: HYRAS pr
+                # ends at 06:00 UTC on 31 December).
+                import pandas as pd  # noqa: PLC0415 — deferred: guaranteed by xarray
+
+                valid_until = (
+                    pd.Timestamp(time_vals.max().values)
+                    .replace(hour=23, minute=59, second=59, microsecond=0)
+                    .isoformat()
+                )
 
             # --- Spatial bounds & resolution ---
             lat_name = "latitude" if "latitude" in ds.coords else "lat"

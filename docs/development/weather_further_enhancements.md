@@ -32,63 +32,22 @@
 
 ## 0. Known bugs
 
-### BUG-01 — `sync_files_and_database` is placed at the wrong abstraction level
+### ✅ BUG-01 — `sync_files_and_database` is placed at the wrong abstraction level — FIXED
 
 **Introduced:** April 2026 (during example-script testing)  
-**Status:** Partially worked around — root cause is a systemic interface
-contradiction described in [section 9](#9-known-risks-and-open-questions).
+**Status:** **Fixed (pre-2026-04-28).**  `Pipeline.sync_files_and_database()` is
+now a concrete method on the base class.  `WeatherPipeline.update_data()` calls
+`self.sync_files_and_database()` at the top.  `SaverWeather` exposes
+`list_managed_files()` and `delete_registration(uri)` as the disk/DB primitives;
+`GetterWeather.get_registered_uris()` provides the DB read side.  No concrete
+casts remain.
 
-#### Surface symptom
+The underlying interface contradiction (Saver must read DB to sync, but only
+Getter is meant to read the DB) is still a long-term design issue, but the
+weather pipeline now behaves consistently with the TiffSaver pattern.
 
-When the database is reset, previously downloaded files are no longer
-registered.  A call to `update_data()` re-downloads everything instead of
-detecting the files already on disk.  To recover, `sync_files_and_database()`
-was needed, but `SaverWeather` never implemented it, so a workaround was
-added directly to `WeatherPipeline`:
-
-```python
-# packages/weather/datavia/weather/pipeline.py  (current workaround)
-def sync_files_and_database(self) -> bool:
-    ...
-    assert isinstance(self.saver, SaverWeather)   # ← concrete cast
-    return self.saver.sync_files_and_database()    # ← raises NotImplementedError
-```
-
-`WeatherPipeline.update_data()` also does not call `sync_files_and_database()`
-before querying existing layers, so the DB is never automatically reconciled.
-
-#### Root cause — a contradiction in `interfaces.py`
-
-`datavia/core/interfaces.py` contains two statements that directly contradict
-each other:
-
-1. `Saver` declares `sync_files_and_database()` as an **abstract method**,
-   which any concrete saver must implement.
-2. The docstring on `Getter.get_existing_layers()` states: *"Only the Getter
-   may read from the database; callers should use this method instead of
-   asking the Saver."*
-
-Any implementation of `Saver.sync_files_and_database()` **must** read from the
-database to detect orphan rows — which violates statement 2.  `TiffSaver`
-already violates it: `check_data_exists()` queries `raster_layers` directly.
-The weather pipeline not having an implementation just made the contradiction
-visible earlier.
-
-#### Short-term workaround (acceptable until the interface is redesigned)
-
-1. Implement `sync_files_and_database()` on `SaverWeather` following the
-   `TiffSaver` pattern — this perpetuates the interface violation but at
-   least makes the weather pipeline consistent with the others.
-2. Remove the concrete cast and the override from `WeatherPipeline`.
-3. Call `self.saver.sync_files_and_database()` at the top of
-   `WeatherPipeline.update_data()` before querying existing layers.
-
-**Files to change:** `packages/weather/datavia/weather/saver_weather.py`,
-`packages/weather/datavia/weather/pipeline.py`.
-
-**The correct long-term fix** requires redesigning the `Saver` and `Pipeline`
-base interfaces so that reconciliation belongs at the pipeline level — see the
-design issue in [section 9](#9-known-risks-and-open-questions).
+**Files changed:** `packages/weather/datavia/weather/pipeline.py`,
+`packages/weather/datavia/weather/saver_weather.py`.
 
 ---
 
@@ -821,6 +780,42 @@ dv.check_pipelines()  # should pass silently
 
 ## 9. Known risks and open questions
 
+### ℹ️ FUTURE-01 — Configurable spatial interpolation method
+
+**Noted:** 2026-04-28.
+
+`interpolate_netcdf` uses `method="linear"` (bilinear) hard-coded.  xarray's
+`.interp()` also supports `method="nearest"` (no NaN-propagation, blocky),
+`method="cubic"` (4×4 stencil, smoother gradients, requires scipy), and
+others from `scipy.interpolate.RegularGridInterpolator`.
+
+**Cubic is the natural upgrade from bilinear** once the nodata pre-fill
+(BUG-08 fix) is in place — the 4×4 stencil will also only see filled values,
+so it is equally safe.  For meteorological fields (smooth spatial gradients)
+cubic interpolation gives meaningfully better results than bilinear,
+particularly when querying at resolutions coarser than the native grid.
+
+**Proposed future API:**
+
+```python
+pipeline.get_data(
+    coords=...,
+    variable="2m_temperature",
+    datetime_utc=...,
+    interpolation_method="cubic",   # new optional kwarg; default "linear"
+)
+```
+
+**Implementation:** pass `interpolation_method` through
+`GetterWeather.get_data()` → `interpolate_netcdf()` → `.interp(method=...)`.
+One extra kwarg at each layer; no structural change needed.  Accepted values:
+`"linear"` (default), `"nearest"`, `"cubic"`.
+
+**Prerequisite:** BUG-08 nodata pre-fill must be in place so that cubic does
+not propagate NaN via its wider stencil.
+
+---
+
 ### ⚠️ Bbox subtraction is non-trivial
 
 Exact 2-D bounding-box difference can produce an L-shaped or otherwise
@@ -881,4 +876,57 @@ Key primitives added:
 `TiffSaver.check_data_exists()` is the only remaining legacy violation (it
 SELECT from `raster_layers`); it is marked deprecated and will be removed once
 all callers migrate to `Pipeline.sync_files_and_database()`.
+
+### ⚠️ DESIGN-01 — Composite pipeline registers DWD files under the grid source_name
+
+**Discovered:** 2026-04-28 during BUG-10 code inspection.
+
+**Current behaviour:** When `WeatherPipeline` is created with
+`config={"source": "HYRAS", "dwd_stations": [...]}`, both the HYRAS `.nc` file
+and the DWD `.parquet` file are registered under `source_name="HYRAS"` by the
+same `SaverWeather(self.name)` instance.
+
+**Why it works today:** The composite pipeline is the only supported mode for
+mixed data.  `get_weather_paths("HYRAS", ...)` returns both file types and the
+blending path in `GetterWeather.get_data()` separates them by extension
+(`.nc` vs `.parquet`).
+
+**Where it breaks:**
+
+1. A *dedicated* `WeatherPipeline(config={"source": "DWD_stations"})` will
+   never see those rows — they were registered under `"HYRAS"`.
+2. `sync_files_and_database()` for a `"DWD_stations"` pipeline searches for
+   `DWD_stations_*.parquet` on disk, but the files are named `HYRAS_*.parquet`
+   because `SaverWeather` prefixes with `self.source_name`.
+3. `CoverageManager` (Step 7) queries `weather_layers` by `source_name` to
+   determine what is already cached.  If DWD station coverage for a
+   HYRAS-composite pipeline is stored under `"HYRAS"`, a new standalone
+   `"DWD_stations"` pipeline will re-download everything.
+
+**Impact today:** Non-blocking.  Mixed sources always go through the composite
+pipeline; nobody creates a separate `"DWD_stations"` pipeline targeting the
+same DB.
+
+**Becomes blocking at:** Step 7 (`CoverageManager`) if per-source incremental
+updates are required, or if a user tries to query DWD station data through a
+standalone `"DWD_stations"` pipeline after data was populated by a composite
+`"HYRAS"` pipeline.
+
+**Proposed fix (before Step 7):** `CompositeWeatherDownloader.download()`
+returns paths as a newline-joined string.  Tag each path with its logical
+source so the pipeline can instantiate the correct `SaverWeather` for each
+file type:
+
+```python
+# Option A — structured return value (break the internal string protocol):
+# return [{"path": nc_path, "source": config["source"]},
+#         {"path": parquet_path, "source": "DWD_stations"}]
+
+# Option B — keep the string protocol, embed source as a prefix:
+# return f"HYRAS:{nc_path}\nDWD_stations:{parquet_path}"
+```
+
+Alternatively, always use two separate `SaverWeather` instances inside the
+pipeline — one for grid data, one for DWD — each constructed with the
+appropriate source name.
 

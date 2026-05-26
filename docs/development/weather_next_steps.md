@@ -5,8 +5,9 @@
 > (bugs) and `weather_further_enhancements.md` (features).
 >
 > **Current state:** Pipeline is functionally correct and produces
-> climatologically plausible results.  Two blocking bugs must be fixed before
-> any research-scale use.  Enhancements build on top of a clean bug-free base.
+> climatologically plausible results.  Steps 1, 2, 3, and 4 (BUG-06,
+> BUG-01/09/10, BUG-07, BUG-05/08) are **done**.  All blocking and significant
+> bugs have been fixed.  Enhancements build on top of a clean bug-free base.
 
 ---
 
@@ -56,38 +57,31 @@ Key dependency insights:
 
 ---
 
-## Step 1 — Fix BUG-06: year-end timestamp boundary *(fix first, lowest effort)*
-
-**Why first:** One-line change, zero risk, immediately unblocks annual queries.
+## ✅ Step 1 — Fix BUG-06: year-end timestamp boundary *(done — 2026-04-28)*
 
 **Symptom:** `precipitation_north_south_2025.py` raised `RuntimeError` for
 `2025-12-31`.  HYRAS `pr` stores its last daily value at `06:00 UTC`; `tas`
-at `00:00 UTC`.  The saver writes those raw values into `valid_until`, so any
-query after those times on December 31 fails.
+at `00:00 UTC`.  The saver wrote those raw values into `valid_until`, so any
+query after those times on December 31 failed.
 
-**Where:** `datavia/library/formats.py` → `extract_netcdf_layer_metadata()`
-(line 291).  After reading the last time coordinate, replace the raw value with
-end-of-day:
+**Fix applied:** `datavia/library/formats.py` →
+`extract_netcdf_layer_metadata()`.  After reading the last time coordinate the
+value is now rounded up to end-of-day via
+`pd.Timestamp(...).replace(hour=23, minute=59, second=59, microsecond=0).isoformat()`.
+The library function was chosen over `saver_weather.py` so all future savers
+benefit automatically.
 
-```python
-# After this block (current code reads valid_until from last time step):
-valid_until = valid_until.replace(hour=23, minute=59, second=59, microsecond=0)
-```
+**Tests added:** `tests/test_weather_pipeline_unit.py` —
+`TestExtractNetcdfLayerMetadata` (3 tests):
+- `test_valid_until_rounded_to_end_of_day` — last step at 06:00 → 23:59:59
+- `test_valid_from_unchanged` — lower bound not touched
+- `test_midnight_last_step_unchanged` — ERA5-style midnight end also → 23:59:59
 
-**Alternatively** the rounding can live in `SaverWeather._read_temporal_metadata()`
-in `saver_weather.py` — either location is fine.  The library function is
-preferred because it is the canonical source of truth for NC metadata and any
-future saver will benefit automatically.
-
-**Test to add:** `tests/test_weather_pipeline_unit.py` — mock a NetCDF with
-last time stamp `2025-12-31T06:00:00`; assert `valid_until` returned by
-`extract_netcdf_layer_metadata` equals `2025-12-31T23:59:59`.
-
-**Files changed:** `datavia/library/formats.py` (or `saver_weather.py`)
+**Files changed:** `datavia/library/formats.py`
 
 ---
 
-## Step 2 — Fix BUG-01 / BUG-09 / BUG-10: sync and source_name hygiene
+## ✅ Step 2 — Fix BUG-01 / BUG-09 / BUG-10: sync and source_name hygiene *(done — pre-2026-04-28)*
 
 **Why together:** All three share `saver_weather.py` and `pipeline.py`.  A
 single focused PR touches both files once.
@@ -101,12 +95,12 @@ single focused PR touches both files once.
 DB-side primitives; `GetterWeather.get_registered_uris()` provides the DB
 read side.  No concrete casts, no `sync_files_and_database()` on any Saver.
 
-### BUG-09 consequence (duplicate rows fixed by BUG-01)
+### ✅ BUG-09 consequence (duplicate rows fixed by BUG-01) — DONE
 
-Once sync runs before `update_data()`, the DWD downloader checks what is
-already in the DB and skips existing station files.  The 3 duplicate Parquet
-rows will stop accumulating on new runs.  The existing duplicate rows in
-the DB should be cleaned up manually via a one-time migration:
+Sync now runs before `update_data()`, so the DWD downloader skips station
+files already in the DB.  No new duplicate rows will accumulate.  Existing
+duplicate rows in the DB can be cleaned up with the one-time SQL below if
+needed:
 
 ```sql
 DELETE FROM weather_layers
@@ -118,29 +112,29 @@ WHERE source_name = 'weather'
   );
 ```
 
-### BUG-10 (DWD rows use wrong source_name)
+### ✅ BUG-10 (DWD rows use correct source_name) — DONE
 
-In `SaverWeather.save()`, when saving a Parquet file, use the actual
-`self.source_name` (e.g. `"DWD_stations"`) instead of a hardcoded
-`"weather"`:
+`SaverWeather.save()` already uses `self.source_name` throughout — confirmed
+by code inspection on 2026-04-28.  No change was required.  The DB audit
+finding that triggered this bug was from an older code state (or a pipeline
+instance manually configured with `source="weather"`).
 
-```python
-# Current (wrong):
-source_name = "weather"
+**New finding — DESIGN-01 (composite pipeline source-name bleed):** a deeper
+trace revealed that when a composite pipeline (`source="HYRAS"`,
+`dwd_stations=[...]`) runs, DWD `.parquet` files are registered under
+`source_name="HYRAS"` rather than `"DWD_stations"`.  This is non-blocking now
+but will affect `CoverageManager` (Step 7) if per-source incremental updates
+are needed.  Full analysis and fix options are in
+`weather_further_enhancements.md` § Known risks (DESIGN-01).  This must be
+resolved **before Step 7** is implemented.
 
-# Correct — use the instance attribute set in __init__:
-source_name = self.source_name
-```
-
-**Test to add:** After `save()` inserts a Parquet row, assert that
-`weather_layers.source_name == self.source_name`, not `"weather"`.
-
-**Files changed:** `packages/weather/datavia/weather/pipeline.py`,
-`packages/weather/datavia/weather/saver_weather.py`
+**Files changed:** `packages/weather/datavia/weather/pipeline.py`
+(sync call added — BUG-01/09).  `saver_weather.py` already correct — no
+change needed for BUG-10.
 
 ---
 
-## Step 3 — Fix BUG-07: deterministic filenames
+## Step 3 — Fix BUG-07: deterministic filenames  ✅ DONE 2026-04-28
 
 > ### ⛔ DESIGN DISCUSSION REQUIRED before implementing Step 7 (`CoverageManager`)
 >
@@ -182,64 +176,60 @@ check.
 strips `.download` and keeps the `tmp*` stem.  The saver copies this into the
 data directory, leaving names like `HYRAS_tmp6tem1oyd.nc`.
 
-**Fix — two parts:**
+**Fix — naming responsibility moved to the saver:**
 
-#### Part A: `HYRASDownloader._get_final_filename()` returns a descriptive path
+An initial implementation placed naming logic in
+`HYRASDownloader._get_final_filename()` using tracking attributes.  This was
+corrected because:
+- The downloader's contract is to fetch bytes and return a temp path; it should
+  not know about `data_directory` or file content.
+- The saver already calls `extract_netcdf_layer_metadata()` for DB registration,
+  so deriving the name there adds no extra I/O.
+- The original approach produced a `HYRAS_HYRAS_tas_2024` double-prefix in
+  the `register_only` path because `saver.save()` would prepend `source_name`
+  again.
+
+`SaverWeather.save()` now calls `_build_dest_stem(data_path, file_format,
+source_name)` *before* the `shutil.copy2()` call:
 
 ```python
-# packages/weather/datavia/weather/hyras_downloader.py
-def _get_final_filename(self, temp_path: str, content_type: str) -> str:
-    """Build a stable, descriptive destination path for a HYRAS download.
-
-    Returns a path in the configured data directory of the form
-    ``HYRAS_<variable>_<year>.nc``, independent of the temporary filename.
-
-    Parameters
-    ----------
-    temp_path : str
-        Path of the temporary download file (not used except to extract
-        the extension as a fallback).
-    content_type : str
-        HTTP Content-Type header; not used for HYRAS files.
-
-    Returns
-    -------
-    str
-        Absolute destination path.
-    """
-    name = f"HYRAS_{self._current_variable}_{self._current_year}.nc"
-    return os.path.join(get_config().data_directory, name)
+# packages/weather/datavia/weather/saver_weather.py
+def _build_dest_stem(data_path: str, file_format: str, source_name: str) -> str:
+    if file_format == "netcdf":
+        meta = extract_netcdf_layer_metadata(data_path)
+        nc_vars = meta.get("variables", [])
+        year = (meta.get("valid_from") or "unknown")[:4]
+        if len(nc_vars) == 1:
+            return f"{source_name}_{nc_vars[0]}_{year}"  # HYRAS_tas_2024
+        return f"{source_name}_{year}"                   # ERA5_land_2024
+    # Parquet: year from datetime column minimum
+    df = pd.read_parquet(data_path, columns=["datetime"])
+    year = str(pd.to_datetime(df["datetime"]).min().year)
+    return f"{source_name}_{year}"                       # DWD_2023
 ```
 
-`self._current_variable` and `self._current_year` must be set as instance
-attributes just before each `download()` call in the download loop.
+`HYRASDownloader._get_final_filename()` is the trivial extension swap it was
+before:
 
-#### Part B: `URLDownloader` keeps the temp file in `/tmp` until rename
-
-`URLDownloader.download()` already does `os.rename(working_filename, final_path)`.
-No change needed there — `_get_final_filename()` now returns a path outside
-`/tmp`, so the rename moves the file directly into the data directory.
+```python
+def _get_final_filename(self, temp_path: str, content_type: str) -> str:
+    return temp_path.rsplit(".", 1)[0] + ".nc"
+```
 
 #### Migration of existing orphan files
 
-After the fix is deployed, the 6 orphan `HYRAS_tmp*.nc` files should be
-deleted (or moved to a backup location), and `sync_files_and_database()`
-re-run so the two registered files are re-associated with their
-deterministic names:
+After the fix is deployed, the orphan `HYRAS_tmp*.nc` files should be deleted
+and the pipeline re-run:
 
 ```bash
-# One-time cleanup — run after deploying the fix
-rm .datavia/data/HYRAS_tmp*.nc   # removes all tmp-named copies
-# Then call pipeline.sync_files_and_database() to re-register the two
-# remaining files under their new names after re-downloading
+# One-time cleanup
+rm .datavia/data/HYRAS_tmp*.nc
+# Re-download to produce deterministically named files
 ```
 
-> Note: The two DB-registered files will also need to be re-downloaded once
-> to get their deterministic names.  This is a one-time cost.
-
-**Files changed:** `packages/weather/datavia/weather/hyras_downloader.py`
-(no change needed to `datavia/core/downloader_url.py` — the hook is in
-`_get_final_filename`)
+**Files changed:**
+- `packages/weather/datavia/weather/saver_weather.py` — `_build_dest_stem()` added, `save()` updated
+- `packages/weather/datavia/weather/hyras_downloader.py` — reverted to simple extension swap
 
 ---
 
@@ -441,17 +431,17 @@ that cannot be tested with cached data and requires real Copernicus credentials.
 
 ## Summary table
 
-| Step | Bug / Enhancement | Effort | Prerequisite | Unblocks |
+| Step | Bug / Enhancement | Effort | Prerequisite | Unblocks | Status |
 |---|---|---|---|---|
-| **1** | BUG-06 — year-end `valid_until` | S | — | Correct annual queries |
-| **2** | BUG-01 / BUG-09 / BUG-10 — sync + source_name | S | — | Clean DB state |
-| **3** | BUG-07 — deterministic filenames | M | — | Enhancement 3 |
-| **4** | BUG-05 + BUG-08 — batch interp + NaN fill | M | — | Enhancement 1 |
-| **5** | Enh. 1 — wire CRS stub | S | Step 4 | CRS-agnostic queries |
-| **6** | Enh. 2 — temporal resolution config key | S | — | Hourly ERA5 queries |
-| **7** | Enh. 3 — `CoverageManager`, incremental DL | L | Steps 1–4 | Enhancement 4 |
-| **8** | Enh. 4 — pipeline lifecycle (merge, rename) | L | Step 7 | Full lifecycle API |
-| **9** | Enh. 5 — ERA5 chunking + progress | L | Steps 7–8, CDS creds | Production ERA5 use |
+| **1** | BUG-06 — year-end `valid_until` | S | — | Correct annual queries | ✅ 2026-04-28 |
+| **2** | BUG-01 / BUG-09 / BUG-10 — sync + source_name | S | — | Clean DB state | ✅ pre-2026-04-28 |
+| **3** | BUG-07 — deterministic filenames | M | — | Enhancement 3 | ✅ 2026-04-28 |
+| **4** | BUG-05 + BUG-08 — batch interp + NaN fill | M | — | Enhancement 1 | ✅ 2026-04-28 |
+| **5** | Enh. 1 — wire CRS stub | S | Step 4 | CRS-agnostic queries | |
+| **6** | Enh. 2 — temporal resolution config key | S | — | Hourly ERA5 queries | |
+| **7** | Enh. 3 — `CoverageManager`, incremental DL | L | Steps 1–4 | Enhancement 4 | |
+| **8** | Enh. 4 — pipeline lifecycle (merge, rename) | L | Step 7 | Full lifecycle API | |
+| **9** | Enh. 5 — ERA5 chunking + progress | L | Steps 7–8, CDS creds | Production ERA5 use | |
 
 **Effort key:** S = hours · M = 1–2 days · L = 3–5 days
 

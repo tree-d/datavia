@@ -100,7 +100,7 @@ not a general interpolation failure.
 
 ## Bugs Found
 
-### 🔴 BUG-05 — Per-coordinate file re-open (performance collapse)
+### ✅ 🔴 BUG-05 — Per-coordinate file re-open (performance collapse) — FIXED 2026-04-28
 
 **Discovered by:** `precipitation_north_south_2025.py` taking ~5 minutes for
 365 days × 8 stations on a single 48 MB file.
@@ -127,30 +127,27 @@ same file.
 Scales as O(N_days × N_coords), making any production-scale spatial analysis
 (e.g. 100 stations, multiple years) entirely impractical without a rewrite.
 
-**Fix:** `interpolate_netcdf` must accept a coordinate array and batch all
-points in a single `xr.open_dataset()` context:
+**Fix applied (2026-04-28):**
+`datavia/library/interpolation.py` rewritten to accept `float | np.ndarray`
+for `lats`/`lons`.  All N points are reprojected in one `pyproj` batch call
+and interpolated in a single `xr.DataArray.interp()` call using a `"points"`
+dimension.  `packages/weather/datavia/weather/getter_weather.py` updated to
+extract coordinate arrays and call `interpolate_netcdf` once per query instead
+of once per coordinate.  The Parquet/station path retains a per-coordinate loop
+because IDW is inherently local.  Five unit tests added in
+`tests/test_weather_pipeline_unit.py` (`TestInterpolateNetcdf`): scalar
+backward compatibility, `(N,)` output, single `open_dataset` call count,
+edge-NaN pre-fill, unknown variable `KeyError`.
 
-```python
-# datavia/library/interpolation.py — proposed signature change
-def interpolate_netcdf(
-    nc_path: str,
-    lats: float | np.ndarray,   # scalar or (N,) array
-    lons: float | np.ndarray,   # scalar or (N,) array
-    variable: str,
-    datetime_utc: Any,
-) -> float | np.ndarray:
-    with xr.open_dataset(nc_path) as ds:
-        # reproject all lons/lats at once → x_arr, y_arr (N,)
-        # ds[variable].interp(x=xr.DataArray(x_arr), y=xr.DataArray(y_arr))
-        ...
-```
+~~**Fix:** `interpolate_netcdf` must accept a coordinate array and batch all
+points in a single `xr.open_dataset()` context~~
 
-**Files to change:** `datavia/library/interpolation.py`,
-`packages/weather/datavia/weather/getter_weather.py`.
+**Files changed:** `datavia/library/interpolation.py`,
+`packages/weather/datavia/weather/getter_weather.py`
 
 ---
 
-### 🔴 BUG-06 — Year-end precipitation query fails (timestamp boundary)
+### ✅ 🔴 BUG-06 — Year-end precipitation query fails (timestamp boundary) — FIXED 2026-04-28
 
 **Discovered by:** `precipitation_north_south_2025.py` — the final day query
 raises a hard error:
@@ -186,25 +183,22 @@ valid_from  = '2025-01-01T00:00:00.000000000'
 valid_until = '2025-12-31T00:00:00.000000000'   ← 12 hours short of midnight
 ```
 
-**Fix:** In `SaverWeather.save()` (via `_read_temporal_metadata`), round
-`valid_until` up to end-of-day (23:59:59) or start-of-next-day rather than
-using the raw last timestamp from the file:
+**Fix applied (2026-04-28):** `datavia/library/formats.py` →
+`extract_netcdf_layer_metadata()` now rounds the last time coordinate up to
+end-of-day via
+`pd.Timestamp(...).replace(hour=23, minute=59, second=59, microsecond=0).isoformat()`.
+Three unit tests added in `tests/test_weather_pipeline_unit.py`
+(`TestExtractNetcdfLayerMetadata`): last-step-at-06:00 case, `valid_from`
+unchanged, and ERA5-midnight case.
 
-```python
-# datavia/library/formats.py or saver_weather.py — proposed fix
-import datetime
-...
-valid_until_rounded = valid_until.replace(
-    hour=23, minute=59, second=59, microsecond=0
-)
-```
+~~**Fix:** In `SaverWeather.save()` (via `_read_temporal_metadata`), round
+`valid_until` up to end-of-day~~
 
-**Files to change:** `datavia/library/formats.py` (`extract_netcdf_layer_metadata`),
-or `packages/weather/datavia/weather/saver_weather.py` (`_read_temporal_metadata`).
+**Files changed:** `datavia/library/formats.py`
 
 ---
 
-### 🟡 BUG-07 — Temp-path filenames leak into data directory and DB
+### ✅ 🟡 BUG-07 — Temp-path filenames leak into data directory and DB — FIXED 2026-04-28
 
 **Discovered by:** pre-run disk audit — all 8 HYRAS files are named
 `HYRAS_tmp*.nc` with random system-generated stems.
@@ -235,24 +229,45 @@ def _get_final_filename(self, temp_path, content_type):
   descriptive (`HYRAS_2m_temperature_2025`).
 - No way to find files by variable or year from the filename alone.
 
-**Fix:** `HYRASDownloader._get_final_filename()` should return a path in the
-configured data directory with a deterministic, descriptive name:
+**Fix applied (2026-04-28) — design corrected after initial implementation:**
+Naming responsibility was moved to `SaverWeather.save()` via a new
+`_build_dest_stem()` helper.  The downloader is reverted to a pure
+extension swap (`.download` → `.nc`) with no knowledge of data directories
+or variable names.
 
-```python
-def _get_final_filename(self, temp_path: str, content_type: str) -> str:
-    # Derive: HYRAS_<variable>_<year>.nc  placed in the data dir.
-    # self._current_variable and self._current_year set just before download().
-    name = f"HYRAS_{self._current_variable}_{self._current_year}.nc"
-    return os.path.join(get_config().data_directory, name)
-```
+`_build_dest_stem(data_path, file_format, source_name)` reads the file
+content *before* copying:
+- **NetCDF, single variable:** `{source_name}_{nc_var}_{year}.nc`
+  (e.g. `HYRAS_tas_2024.nc`)
+- **NetCDF, multiple variables:** `{source_name}_{year}.nc`
+- **Parquet:** `{source_name}_{year}.parquet` (year from `datetime` column
+  minimum); falls back to `{source_name}_{temp_stem}` only if the column
+  cannot be read.
 
-**Files to change:** `packages/weather/datavia/weather/hyras_downloader.py`,
-`datavia/core/downloader_url.py` (add a `dest_dir` parameter to allow
-subclasses to control placement).
+The `register_only=True` path was also corrected: the layer name is now
+derived directly from the existing file stem, preventing a
+`HYRAS_HYRAS_tas_2024` double-prefix that the old code produced.
+
+**Rationale:** The downloader's sole contract is to fetch bytes and return
+a temp path.  It has no knowledge of `data_directory` or file content.
+The saver already reads content for DB metadata (`extract_netcdf_layer_metadata`)
+so deriving the destination name there adds no extra I/O and avoids
+architectural coupling.
+
+**Files changed:**
+- `packages/weather/datavia/weather/saver_weather.py` — `_build_dest_stem()` added, `save()` updated
+- `packages/weather/datavia/weather/hyras_downloader.py` — reverted to simple extension swap
+- `tests/test_hyras_downloader.py` — `TestGetFinalFilename` updated (2 tests for ext swap)
+- `tests/test_weather_pipeline_unit.py` — `TestSaverWeatherDestNaming` added (4 tests)
+- `tests/test_sync_adventure.py` — `test_happy_registration` expected name updated
+
+> **One-time migration:** existing `HYRAS_tmp*.nc` orphan files should be
+> removed from the data directory and the pipeline re-run to produce
+> deterministically named files.
 
 ---
 
-### 🟡 BUG-08 — Bilinear NaN propagation at domain edges
+### ✅ 🟡 BUG-08 — Bilinear NaN propagation at domain edges — FIXED 2026-04-28
 
 **Discovered by:** `grid_snapshot_germany_2025.py` — 15 of 20 grid points
 return NaN.  Several points are inland Germany (e.g. 50.0°N/12.8°E = Chemnitz,
@@ -274,19 +289,17 @@ result is NaN — even if the query point itself is well inside Germany.
 due purely to edge effects — not because the query coordinates are outside
 Germany.
 
-**Fix:** Pre-fill HYRAS nodata cells with nearest-valid-neighbour values before
-bilinear interpolation (same as `interpolate_tiff` already does via
-`scipy.ndimage.distance_transform_edt`):
+**Fix applied (2026-04-28):**
+`_prefill_nodata()` helper added to `datavia/library/interpolation.py`.
+Masks `_FillValue` → NaN, then applies forward-fill and backward-fill along
+both spatial axes using a pure-numpy propagation (no `bottleneck` dependency).
+Called inside `interpolate_netcdf()` before `xr.DataArray.interp()`.  One
+dedicated test (`test_nodata_prefill_prevents_nan_at_edge`) confirms that a
+query point adjacent to a fill-value row returns a finite value.
 
-```python
-# datavia/library/interpolation.py — in interpolate_netcdf
-da = ds[variable]
-# Fill nodata before interpolation so stencil edges don't propagate NaN.
-da = da.where(da != ds[variable].attrs.get("_FillValue"), other=np.nan)
-da = da.ffill("x").ffill("y").bfill("x").bfill("y")   # simple 4-dir fill
-```
+~~**Fix:** Pre-fill HYRAS nodata cells with nearest-valid-neighbour values~~
 
-**Files to change:** `datavia/library/interpolation.py`.
+**Files changed:** `datavia/library/interpolation.py`.
 
 ---
 
@@ -323,20 +336,39 @@ the update loop).
 
 ---
 
-### 🔵 BUG-10 — DWD station rows use wrong `source_name`
+### ✅ 🔵 BUG-10 — DWD station rows use correct `source_name` — CONFIRMED 2026-04-28
 
 **Discovered by:** DB audit — DWD station rows have `source_name='weather'`
 instead of a source-specific name (e.g. `'DWD_stations'`).  HYRAS rows
 correctly use `source_name='HYRAS'`.
 
-**Impact:** Low — the DWD-only and HYRAS-only paths are currently isolated by
-file extension (`.parquet` vs `.nc`) rather than by `source_name`.  But
-`get_weather_paths()` queries by `source_name`, so a DWD-only pipeline
-`WeatherPipeline(config={"source": "DWD_stations"})` will never find its rows
-because they were registered under `'weather'`.
+**Status (2026-04-28):** Code inspection of `SaverWeather.save()` confirms
+`self.source_name` is already used throughout — no hardcoded `'weather'`
+string is present.  The DB audit finding was from an older code state
+(likely a pipeline instance created with `config={"source": "weather"}`).
+No code change required.
 
-**Files to change:** `packages/weather/datavia/weather/saver_weather.py` — use
-the actual source name when registering DWD Parquet files.
+**New finding — composite pipeline source-name bleed (DESIGN-01):** A deeper
+trace of the registration path reveals a related design concern that is *not*
+the original BUG-10 but is worth tracking:
+
+When a composite pipeline is configured with `source="HYRAS"` and
+`dwd_stations=[...]`, the single `SaverWeather(self.name)` instance registers
+both the HYRAS `.nc` file **and** the DWD `.parquet` file under
+`source_name="HYRAS"`.  Consequences:
+
+- `get_weather_paths(source_name="HYRAS", ...)` returns DWD rows as well as
+  gridded rows, so the blending path sees them correctly.
+- A *dedicated* `WeatherPipeline(config={"source": "DWD_stations"})` will
+  never find those rows — they were registered under `"HYRAS"`.
+- `sync_files_and_database()` for a `"DWD_stations"` pipeline cannot detect
+  the files because it searches for `HYRAS_*.parquet` prefixes, not
+  `DWD_stations_*.parquet`.
+
+This is currently non-blocking because the composite pipeline is the only
+supported mode for mixed data.  It becomes blocking once the `CoverageManager`
+(Step 7) or per-source incremental updates are introduced.  Tracked as
+**DESIGN-01** in `weather_further_enhancements.md` § Known risks.
 
 ---
 
@@ -344,12 +376,12 @@ the actual source name when registering DWD Parquet files.
 
 | # | ID | Severity | Fix complexity | Fix first because… |
 |---|---|---|---|---|
-| 1 | BUG-05 | 🔴 blocking | Medium | Makes production-scale queries impossible |
-| 2 | BUG-06 | 🔴 blocking | Low | Silently drops last day of any annual query |
-| 3 | BUG-07 | 🟡 significant | Medium | File accumulation; non-reproducible storage |
-| 4 | BUG-08 | 🟡 significant | Low | Loses 75 % of grid points at domain edges |
-| 5 | BUG-09 | 🟡 significant | Low | Resolved by BUG-01 fix (sync before update) |
-| 6 | BUG-10 | 🔵 informational | Low | Breaks DWD-only pipeline source isolation |
+| 1 | BUG-05 | 🔴 blocking | Medium | Makes production-scale queries impossible | ✅ Fixed 2026-04-28 |
+| 2 | BUG-06 | 🔴 blocking | Low | Silently drops last day of any annual query | ✅ Fixed 2026-04-28 |
+| 3 | BUG-07 | 🟡 significant | Medium | File accumulation; non-reproducible storage | ✅ Fixed 2026-04-28 |
+| 4 | BUG-08 | 🟡 significant | Low | Loses 75 % of grid points at domain edges | ✅ Fixed 2026-04-28 |
+| 5 | BUG-09 | 🟡 significant | Low | Resolved by BUG-01 fix (sync before update) | ✅ Fixed pre-2026-04-28 |
+| 6 | BUG-10 | 🔵 informational | Low | Breaks DWD-only pipeline source isolation | ✅ Already correct |
 
 BUG-01 (disk↔DB reconciliation at wrong abstraction level) has been **fixed**
 (April 2026 Option B refactor).  It was the root cause of BUG-04/BUG-09 and
@@ -377,10 +409,10 @@ the first architectural fix has been applied.
 
 | File | Bugs addressed |
 |---|---|
-| `datavia/library/interpolation.py` | BUG-05 (batch coords), BUG-08 (NaN fill) |
-| `datavia/library/formats.py` | BUG-06 (`valid_until` rounding) |
-| `packages/weather/datavia/weather/hyras_downloader.py` | BUG-07 (deterministic filenames) |
-| `datavia/core/downloader_url.py` | BUG-07 (expose `dest_dir`) |
-| `packages/weather/datavia/weather/getter_weather.py` | BUG-05 (pass coord array) |
-| `packages/weather/datavia/weather/saver_weather.py` | BUG-10 |
+| `datavia/library/interpolation.py` | ✅ BUG-05 (batch coords), BUG-08 (NaN fill) — DONE 2026-04-28 |
+| `datavia/library/formats.py` | ✅ BUG-06 (`valid_until` rounding) — DONE 2026-04-28 |
+| `packages/weather/datavia/weather/hyras_downloader.py` | ✅ BUG-07 — reverted to simple `.download`→`.nc` extension swap (naming moved to saver) |
+| `datavia/core/downloader_url.py` | ✅ BUG-07 — no change required |
+| `packages/weather/datavia/weather/getter_weather.py` | ✅ BUG-05 (pass coord array) — DONE 2026-04-28 |
+| `packages/weather/datavia/weather/saver_weather.py` | ✅ BUG-07 (`_build_dest_stem` + corrected `save()`) — DONE 2026-04-28 |
 | `packages/weather/datavia/weather/pipeline.py` | ✅ BUG-09 (sync before update) — DONE |

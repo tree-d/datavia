@@ -228,7 +228,10 @@ class HYRASDownloader(URLDownloader):
         """Return the temporary path with a ``.nc`` extension.
 
         Overrides the parent implementation which would otherwise assign a
-        ``.dat`` extension to generic binary content.
+        ``.dat`` extension to generic binary content.  The permanent,
+        descriptive filename is assigned by
+        :class:`~datavia.weather.saver_weather.SaverWeather` when it copies
+        the file into the data directory.
 
         Parameters
         ----------
