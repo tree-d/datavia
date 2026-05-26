@@ -332,9 +332,9 @@ def test_configure_then_update_downloads_new_coverage(live_database) -> None:
     pipeline.update_data()
 
     # Reconfigure to also include sand.
-    pipeline.configure(properties=["clay", "sand"], depths=["0-5cm"])
+    pipeline.reconfigure(properties=["clay", "sand"], depths=["0-5cm"])
     second_result = pipeline.update_data()
 
     assert second_result is True, (
-        "update_data() after configure() returned False. sand coverage download failed."
+        "update_data() after reconfigure() returned False. sand coverage download failed."
     )

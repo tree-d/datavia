@@ -90,10 +90,17 @@ class WeatherPipeline(Pipeline):
     config : dict[str, Any]
         Pipeline configuration.  Required keys: ``source``, ``variables``,
         ``date_start``, ``date_end``.  Optional keys: ``era5_bbox``,
-        ``dwd_stations``, ``unit_conversions``, ``buffer_days``.
+        ``dwd_stations``, ``unit_conversions``, ``buffer_days``,
+        ``temporal_resolution``.
+    replace : bool, optional
+        When ``True`` the stored config is completely replaced by *config* on
+        construction.  When ``False`` (default) the config is merged with any
+        previously stored values — this matches the behaviour of
+        :meth:`reconfigure`.  For a freshly created instance both values are
+        equivalent because there is no prior config.
     """
 
-    def __init__(self, config: dict[str, Any]) -> None:
+    def __init__(self, config: dict[str, Any], replace: bool = False) -> None:
         """Initialise the pipeline, validate config, and set the source name.
 
         Validates *config* against the required and known key sets before any
@@ -107,6 +114,11 @@ class WeatherPipeline(Pipeline):
             ``variables``, ``date_start``, and ``date_end``.  The value of
             ``source`` (e.g. ``"ERA5_land"``, ``"HYRAS"``) becomes the
             pipeline's ``name`` and the ``source_name`` stored in the database.
+        replace : bool, optional
+            Reserved for future use when upgrading an existing instance.
+            Currently unused during initial construction; included so that
+            :meth:`reconfigure` can pass the flag consistently.
+            Defaults to ``False``.
 
         Raises
         ------
@@ -128,7 +140,7 @@ class WeatherPipeline(Pipeline):
             saver=SaverWeather,
             getter=GetterWeather,
         )
-        self._config: dict[str, Any] = config
+        self._config: dict[str, Any] = dict(config)
 
     def __call__(self, *args: Any, **kwargs: Any) -> WeatherPipeline:
         """Instantiate the composite downloader, saver, and getter.
@@ -153,6 +165,100 @@ class WeatherPipeline(Pipeline):
             temporal_resolution=self._config.get("temporal_resolution", "daily"),
         )
         return self
+
+    def get_config(self) -> dict[str, Any]:
+        """Return a copy of the effective pipeline configuration.
+
+        Returns a shallow copy so callers cannot mutate the internal state
+        inadvertently.  Use :meth:`reconfigure` to change the pipeline config.
+
+        Returns
+        -------
+        dict[str, Any]
+            Copy of the current pipeline configuration dict.
+        """
+        return dict(self._config)
+
+    def reconfigure(
+        self,
+        config_updates: dict[str, Any],
+        replace: bool = False,
+    ) -> None:
+        """Update the pipeline configuration and re-initialise components.
+
+        Applies *config_updates* to the stored configuration.  By default the
+        updates are *merged* (delta mode): only keys present in *config_updates*
+        are changed; all other keys keep their current values.  When *replace*
+        is ``True`` the entire stored config is replaced by *config_updates*
+        (which must then satisfy all required-key constraints).
+
+        After updating the config the downloader and getter instances are
+        rebuilt so that the next :meth:`update_data` or :meth:`get_data` call
+        uses the new parameters.  The saver is not rebuilt because it depends
+        only on the immutable ``source_name`` (``config["source"]``), which
+        cannot change via :meth:`reconfigure`.
+
+        ``config["source"]`` cannot be changed via this method.  Attempting to
+        supply a different ``"source"`` value raises ``ValueError`` because the
+        source name is baked into the pipeline's ``name``, the database rows,
+        and the on-disk filenames.  Create a new :class:`WeatherPipeline`
+        instance instead.
+
+        Parameters
+        ----------
+        config_updates : dict[str, Any]
+            Keys and values to apply to the stored configuration.  In delta
+            mode only the listed keys are changed.  In replace mode this dict
+            must include all required keys.
+        replace : bool, optional
+            When ``True`` the stored config is replaced entirely by
+            *config_updates*.  When ``False`` (default) *config_updates* is
+            merged into the current config.
+
+        Raises
+        ------
+        ValueError
+            If *config_updates* contains a ``"source"`` key whose value
+            differs from the pipeline's current source name.
+        ValueError
+            If the merged or replacement config fails validation (missing
+            required keys or unknown keys present).
+        """
+        new_source = config_updates.get("source")
+        if new_source is not None and new_source != self._config["source"]:
+            raise ValueError(
+                f"WeatherPipeline.reconfigure: cannot change 'source' from "
+                f"'{self._config['source']}' to '{new_source}'. "
+                "Create a new WeatherPipeline instance instead."
+            )
+
+        if replace:
+            candidate = dict(config_updates)
+        else:
+            candidate = {**self._config, **config_updates}
+
+        Pipeline.validate_pipeline_config(
+            candidate,
+            required_keys=_REQUIRED_CONFIG_KEYS,
+            known_keys=_KNOWN_CONFIG_KEYS,
+            pipeline_name="WeatherPipeline.reconfigure",
+        )
+
+        self._config = candidate
+
+        # Rebuild the downloader so the next update_data() uses the new config.
+        self.downloader = CompositeWeatherDownloader(config=self._config)
+        # Rebuild the getter in case unit_conversions or temporal_resolution changed.
+        self.getter = GetterWeather(
+            self.name,
+            unit_overrides=self._config.get("unit_conversions"),
+            temporal_resolution=self._config.get("temporal_resolution", "daily"),
+        )
+        logger.info(
+            "WeatherPipeline '%s': configuration updated. mode=%s",
+            self.name,
+            "replace" if replace else "merge",
+        )
 
     def update_data(
         self,

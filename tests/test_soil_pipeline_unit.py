@@ -237,26 +237,26 @@ class TestSoilPipelineInit:
 
 
 # ---------------------------------------------------------------------------
-# SoilPipeline.configure
+# SoilPipeline.reconfigure
 # ---------------------------------------------------------------------------
 
 
-class TestSoilPipelineConfigure:
-    """Tests for in-place attribute updates via configure()."""
+class TestSoilPipelineReconfigure:
+    """Tests for in-place attribute updates via reconfigure()."""
 
     def test_updates_properties(self, pipeline: SoilPipeline) -> None:
-        """configure() replaces the properties list."""
-        pipeline.configure(properties=["clay"])
+        """reconfigure() replaces the properties list."""
+        pipeline.reconfigure(properties=["clay"])
         assert pipeline.properties == ["clay"]
 
     def test_updates_depths(self, pipeline: SoilPipeline) -> None:
-        """configure() replaces the SoilGrids depth list."""
-        pipeline.configure(depths=["15-30cm"])
+        """reconfigure() replaces the SoilGrids depth list."""
+        pipeline.reconfigure(depths=["15-30cm"])
         assert pipeline.depths == ["15-30cm"]
 
     def test_updates_statistic(self, pipeline: SoilPipeline) -> None:
-        """configure() replaces the statistic token."""
-        pipeline.configure(value="Q0.95")
+        """reconfigure() replaces the statistic token."""
+        pipeline.reconfigure(value="Q0.95")
         assert pipeline.statistic == "Q0.95"
 
     def test_none_arguments_leave_attributes_unchanged(
@@ -266,7 +266,7 @@ class TestSoilPipelineConfigure:
         original_props = pipeline.properties.copy()
         original_depths = pipeline.depths.copy()
         original_statistic = pipeline.statistic
-        pipeline.configure()
+        pipeline.reconfigure()
         assert pipeline.properties == original_props
         assert pipeline.depths == original_depths
         assert pipeline.statistic == original_statistic
@@ -276,7 +276,7 @@ class TestSoilPipelineConfigure:
     ) -> None:
         """Updating only properties leaves depths and statistic untouched."""
         original_depths = pipeline.depths.copy()
-        pipeline.configure(properties=["sand"])
+        pipeline.reconfigure(properties=["sand"])
         assert pipeline.depths == original_depths
 
 

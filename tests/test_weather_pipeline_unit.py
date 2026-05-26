@@ -2122,3 +2122,164 @@ class TestCoverageManager:
 
         mock_downloader_cls.assert_not_called()
         assert result is True
+
+
+class TestWeatherPipelineLifecycle:
+    """Tests for WeatherPipeline lifecycle methods: get_config and reconfigure.
+
+    All tests are isolated and do not touch the database because ``get_config``
+    and ``reconfigure`` are pure in-memory operations on the stored config
+    dict.
+    """
+
+    _BASE_CONFIG: ClassVar[dict] = {
+        "source": "ERA5_land",
+        "variables": ["2m_temperature"],
+        "date_start": "2024-01-01",
+        "date_end": "2024-12-31",
+    }
+
+    def test_get_config_returns_copy(self) -> None:
+        """get_config returns a copy; mutating it does not affect the pipeline.
+
+        Ensures callers cannot accidentally corrupt the internal config by
+        modifying the returned dict.
+        """
+        from datavia.weather.pipeline import WeatherPipeline
+
+        pipe = WeatherPipeline(config=self._BASE_CONFIG)
+        cfg = pipe.get_config()
+        cfg["date_start"] = "2023-01-01"
+
+        assert pipe.get_config()["date_start"] == "2024-01-01", (
+            "Mutating the returned config must not change the pipeline's internal state."
+        )
+
+    def test_get_config_matches_init_config(self) -> None:
+        """get_config returns all keys supplied at construction."""
+        from datavia.weather.pipeline import WeatherPipeline
+
+        config = {**self._BASE_CONFIG, "era5_bbox": [55.1, 5.9, 47.3, 15.0]}
+        pipe = WeatherPipeline(config=config)
+
+        assert pipe.get_config() == config
+
+    def test_reconfigure_merge_updates_dates(self) -> None:
+        """reconfigure in merge mode applies only the provided delta.
+
+        Only ``date_start`` and ``date_end`` are updated; all other keys
+        keep their original values.
+        """
+        from datavia.weather.pipeline import WeatherPipeline
+
+        pipe = WeatherPipeline(config=self._BASE_CONFIG)
+        pipe.reconfigure({"date_start": "2023-06-01", "date_end": "2023-12-31"})
+
+        cfg = pipe.get_config()
+        assert cfg["date_start"] == "2023-06-01"
+        assert cfg["date_end"] == "2023-12-31"
+        assert cfg["source"] == "ERA5_land", "Unchanged keys must be preserved."
+        assert cfg["variables"] == ["2m_temperature"], (
+            "Unchanged keys must be preserved."
+        )
+
+    def test_reconfigure_replace_sets_entire_config(self) -> None:
+        """reconfigure with replace=True swaps the full config.
+
+        The new config contains only the required keys.  Optional keys from
+        the original config (e.g. ``era5_bbox``) must not be present.
+        """
+        from datavia.weather.pipeline import WeatherPipeline
+
+        original = {**self._BASE_CONFIG, "era5_bbox": [55.1, 5.9, 47.3, 15.0]}
+        pipe = WeatherPipeline(config=original)
+
+        new_config = {
+            "source": "ERA5_land",
+            "variables": ["total_precipitation"],
+            "date_start": "2020-01-01",
+            "date_end": "2020-12-31",
+        }
+        pipe.reconfigure(new_config, replace=True)
+
+        cfg = pipe.get_config()
+        assert cfg == new_config
+        assert "era5_bbox" not in cfg, (
+            "replace=True must remove keys absent from the new config."
+        )
+
+    def test_reconfigure_rebuilds_downloader(self) -> None:
+        """reconfigure re-creates the downloader with the new config.
+
+        After reconfiguration the pipeline's ``downloader`` attribute must be
+        a fresh :class:`CompositeWeatherDownloader` instance, not the old one.
+        """
+        from unittest.mock import MagicMock, patch
+
+        from datavia.weather.pipeline import WeatherPipeline
+
+        pipe = WeatherPipeline(config=self._BASE_CONFIG)
+        pipe()  # Instantiate components.
+
+        original_downloader = pipe.downloader
+
+        with patch("datavia.weather.pipeline.GetterWeather"):
+            pipe.reconfigure({"date_end": "2025-12-31"})
+
+        assert pipe.downloader is not original_downloader, (
+            "reconfigure must rebuild the downloader instance."
+        )
+
+    def test_reconfigure_source_change_raises(self) -> None:
+        """reconfigure raises ValueError when 'source' would change.
+
+        The source name is immutable after construction because it is baked
+        into the pipeline name and all database rows.
+        """
+        from datavia.weather.pipeline import WeatherPipeline
+
+        pipe = WeatherPipeline(config=self._BASE_CONFIG)
+
+        with pytest.raises(ValueError, match="source"):
+            pipe.reconfigure({"source": "HYRAS"})
+
+    def test_reconfigure_missing_required_key_raises(self) -> None:
+        """reconfigure with replace=True raises ValueError when required key is absent.
+
+        Supplying an incomplete replacement config must fail validation before
+        any state is mutated.
+        """
+        from datavia.weather.pipeline import WeatherPipeline
+
+        pipe = WeatherPipeline(config=self._BASE_CONFIG)
+
+        incomplete = {
+            "source": "ERA5_land",
+            "variables": ["2m_temperature"],
+            # date_start and date_end intentionally omitted
+        }
+
+        with pytest.raises(ValueError):
+            pipe.reconfigure(incomplete, replace=True)
+
+        # Original config must be unchanged after failed reconfigure.
+        assert pipe.get_config()["date_start"] == "2024-01-01", (
+            "A failed reconfigure must not partially mutate the pipeline config."
+        )
+
+    def test_replace_false_at_init_stores_copy(self) -> None:
+        """WeatherPipeline(config, replace=False) stores a copy of the config.
+
+        Mutating the original dict after construction must not affect the
+        pipeline's internal config.
+        """
+        from datavia.weather.pipeline import WeatherPipeline
+
+        config = dict(self._BASE_CONFIG)
+        pipe = WeatherPipeline(config=config, replace=False)
+
+        config["date_start"] = "2000-01-01"
+        assert pipe.get_config()["date_start"] == "2024-01-01", (
+            "WeatherPipeline must store a copy; mutating the caller's dict "
+            "must not change the pipeline state."
+        )

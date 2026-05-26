@@ -311,7 +311,7 @@ class SoilPipeline(Pipeline):
         }
         return super().__call__(config, *args, **kwds)
 
-    def configure(
+    def reconfigure(
         self,
         properties: list[str] | None = None,
         depths: list[str] | None = None,
