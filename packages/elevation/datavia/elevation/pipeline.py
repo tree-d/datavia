@@ -81,6 +81,7 @@ class ElevationPipeline(Pipeline):
         """Update elevation data by downloading and saving if not already stored.
 
         Follows the canonical pipeline flow:
+
         1. Synchronise the filesystem and database via
            :meth:`~datavia.core.interfaces.Pipeline.sync_files_and_database`
            (Pipeline base class).  Removes orphan DB rows for deleted files
