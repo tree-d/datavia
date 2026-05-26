@@ -10,40 +10,24 @@ class Downloader(ABC):
     """Abstract base class for data downloaders.
 
     Downloaders are responsible for fetching data from external sources
-    (URLs, APIs) and saving it locally.
+    and writing the result to a local file.
     """
 
     @abstractmethod
-    def __init__(self, url: str = "") -> None:
-        """Initialize downloader with data source URL or endpoint.
-
-        Parameters
-        ----------
-        url : str, optional
-            URL or API endpoint to download data from.  Composite
-            downloaders that aggregate multiple sub-downloaders may pass an
-            empty string (the default) because they have no single
-            canonical URL.
-        """
-        self.url = url
-
-    @abstractmethod
     def download(self) -> str:
-        """Download data from the configured URL.
+        """Fetch data and return the path to the downloaded file.
 
         Returns
         -------
         str
-            Path to the downloaded file
+            Absolute path to the downloaded file, or ``"failed"`` on error.
 
         Raises
         ------
-        NotImplementedError
-            If subclass doesn't implement this method
         ConnectionError
-            If download fails
+            If the download cannot be completed.
         """
-        raise NotImplementedError("Download method must be implemented by subclasses.")
+        raise NotImplementedError("download() must be implemented by subclasses.")
 
 
 class CompositeDownloader(Downloader, ABC):
@@ -57,33 +41,11 @@ class CompositeDownloader(Downloader, ABC):
     Subclasses *must* implement :attr:`downloaders` (returning the list of
     component :class:`Downloader` instances) and :meth:`download` (which
     orchestrates and delegates to those components).
-
-    Composite downloaders have no single canonical URL, so the inherited
-    ``url`` attribute is set to an empty string.
-
-    Examples
-    --------
-    A two-source composite::
-
-        class MyComposite(CompositeDownloader):
-            def __init__(self) -> None:
-                super().__init__()
-                self._source_a = DownloaderA(url="https://a.example.com")
-                self._source_b = DownloaderB(url="https://b.example.com")
-
-            @property
-            def downloaders(self) -> list[Downloader]:
-                return [self._source_a, self._source_b]
-
-            def download(self) -> str:
-                path_a = self._source_a.download()
-                path_b = self._source_b.download()
-                return path_a  # or combine / return folder
     """
 
     def __init__(self) -> None:
-        """Initialise with an empty URL (composites have no single endpoint)."""
-        super().__init__(url="")
+        """Initialise the composite downloader."""
+        pass
 
     @property
     @abstractmethod
@@ -367,19 +329,22 @@ class Pipeline:
         self.getter: Getter | None = None
 
     def __call__(self, *args: Any, **kwds: Any) -> "Pipeline":
-        """Initialize pipeline components - lazy instantiation.
+        """Instantiate pipeline components.
 
-        Creates instances of downloader, saver, and getter components.
+        When ``self.url`` is set the downloader is created with just the URL
+        (elevation case).  Otherwise ``*args`` and ``**kwds`` are forwarded
+        directly to the downloader constructor (soil, weather pipelines that
+        override this method supply their own config).
 
         Returns
         -------
         Pipeline
-            Self for method chaining
+            Self for method chaining.
 
         Raises
         ------
         ValueError
-            If neither URL nor arguments are provided for downloader initialization
+            If neither a URL nor any arguments are provided.
         """
         if self.url:
             self.downloader = self.downloader_class(self.url)

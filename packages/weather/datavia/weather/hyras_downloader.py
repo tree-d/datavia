@@ -22,7 +22,6 @@ from __future__ import annotations
 import logging
 import re
 from datetime import date
-from typing import Any
 
 from datavia.core.downloader_url import URLDownloader
 
@@ -94,7 +93,6 @@ class HYRASDownloader(URLDownloader):
         variables: list[str] | None = None,
         date_start: date | str | None = None,
         date_end: date | str | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialise the HYRAS downloader.
 
@@ -111,12 +109,7 @@ class HYRASDownloader(URLDownloader):
             First day of the download range (inclusive). Defaults to today.
         date_end : date or str, optional
             Last day of the download range (inclusive). Defaults to today.
-        **kwargs : Any
-            Additional keyword arguments forwarded to
-            :class:`~datavia.core.downloader_url.URLDownloader`.
         """
-        # URLDownloader only accepts `url`; extra kwargs (e.g. bbox forwarded
-        # from CompositeWeatherDownloader) are intentionally not passed on.
         super().__init__(url=_HYRAS_BASE_URL)
         self.variables: list[str] = variables or ["2m_temperature"]
         self.date_start: str = (

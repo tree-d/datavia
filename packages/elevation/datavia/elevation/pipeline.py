@@ -4,7 +4,10 @@ Elevation Pipeline (renamed from Topography).
 Self-contained pipeline for elevation data using generic TIFF handling.
 """
 
+from __future__ import annotations
+
 import logging
+from typing import Any
 
 from datavia.core.downloader_url import TiffDownloader
 from datavia.core.getter_tiff import GetterTiff
@@ -13,20 +16,62 @@ from datavia.core.saver_tiff import TiffSaver
 
 logger = logging.getLogger(__name__)
 
+#: Default WCS URL for the 200 m digital elevation model of Germany.
+_DEFAULT_URL: str = (
+    "https://sgx.geodatenzentrum.de/wcs_dgm200_inspire"
+    "?VERSION=2.0.1&SERVICE=WCS&REQUEST=GetCoverage"
+    "&COVERAGEID=dgm200_inspire__EL.GridCoverage"
+    "&format=image/tiff&crs=EPSG:25832"
+    "&bbox=280000,5235000,921000,6101000"
+)
+
+#: Keys that must be present in the config dict.
+_REQUIRED_CONFIG_KEYS: frozenset[str] = frozenset({"source"})
+
+#: All valid config keys (required + optional).
+_KNOWN_CONFIG_KEYS: frozenset[str] = _REQUIRED_CONFIG_KEYS | frozenset({"url"})
+
 
 class ElevationPipeline(Pipeline):
-    """Complete elevation data pipeline using generic TIFF handling. Its name is 'elevation'."""
+    """Complete elevation data pipeline using generic TIFF handling.
 
-    def __init__(
-        self,
-        name: str = "elevation",
-        url: str = "https://sgx.geodatenzentrum.de/wcs_dgm200_inspire?VERSION=2.0.1&SERVICE=WCS&REQUEST=GetCoverage&COVERAGEID=dgm200_inspire__EL.GridCoverage&format=image/tiff&crs=EPSG:25832&bbox=280000,5235000,921000,6101000",
-    ):
-        """Initialize the elevation pipeline with TIFF handlers."""
-        downloader = TiffDownloader
-        saver = TiffSaver
-        getter = GetterTiff
-        super().__init__(name, downloader, saver, getter, url=url)
+    Configured via a ``config`` dict with the following keys:
+
+    - ``source`` (str, **required**): Identifier used for database isolation
+      and file naming, e.g. ``"elevation"``.
+    - ``url`` (str, optional): WCS URL for the elevation service.  Defaults
+      to the 200 m DEM of Germany from GeoBasis-DE / BKG.
+
+    Passing ``config=None`` (or calling with no arguments) is equivalent to
+    ``config={"source": "elevation"}`` with all defaults applied, and is
+    supported for backward compatibility with zero-argument call sites.
+    """
+
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
+        """Initialise the elevation pipeline.
+
+        Parameters
+        ----------
+        config : dict[str, Any], optional
+            Configuration dict.  When provided it must contain ``"source"``
+            and may contain ``"url"`` to override the default WCS endpoint.
+            When ``None`` (default) the pipeline is initialised with
+            ``source="elevation"`` and the built-in Germany DEM URL.
+        """
+        if config is not None:
+            Pipeline.validate_pipeline_config(
+                config,
+                _REQUIRED_CONFIG_KEYS,
+                _KNOWN_CONFIG_KEYS,
+                "ElevationPipeline",
+            )
+            name: str = config["source"]
+            url: str = config.get("url", _DEFAULT_URL)
+        else:
+            name = "elevation"
+            url = _DEFAULT_URL
+
+        super().__init__(name, TiffDownloader, TiffSaver, GetterTiff, url=url)
 
     def update_data(
         self,

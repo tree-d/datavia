@@ -217,22 +217,22 @@ class TestSoilPipelineInit:
 
     def test_custom_name_stored(self) -> None:
         """A custom name is stored without modification."""
-        custom = SoilPipeline(name="my_soil")
+        custom = SoilPipeline(config={"source": "my_soil"})
         assert custom.name == "my_soil"
 
     def test_custom_properties_stored(self) -> None:
         """A custom property list is stored as provided."""
-        custom = SoilPipeline(properties=["clay", "ph"])
+        custom = SoilPipeline(config={"source": "soil", "properties": ["clay", "ph"]})
         assert custom.properties == ["clay", "ph"]
 
     def test_custom_depths_stored(self) -> None:
         """A custom SoilGrids depth list is stored as provided."""
-        custom = SoilPipeline(depths=["0-5cm"])
+        custom = SoilPipeline(config={"source": "soil", "depths": ["0-5cm"]})
         assert custom.depths == ["0-5cm"]
 
     def test_custom_value_stored(self) -> None:
         """A custom statistic token is stored as provided."""
-        custom = SoilPipeline(value="Q0.05")
+        custom = SoilPipeline(config={"source": "soil", "statistic": "Q0.05"})
         assert custom.statistic == "Q0.05"
 
 

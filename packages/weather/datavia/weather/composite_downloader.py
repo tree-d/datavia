@@ -93,13 +93,18 @@ class CompositeWeatherDownloader(CompositeDownloader):
         # --- Grid downloader (ERA5, HYRAS, or None for DWD-only) ---
         grid_class = get_grid_downloader_class(source)
         if grid_class is not None:
-            self._grid: Downloader | None = grid_class(
-                variables=variables,
-                date_start=date_start,
-                date_end=date_end,
-                bbox=cfg.get("era5_bbox"),
-                buffer_days=cfg.get("buffer_days", 1),
-            )
+            grid_kwargs: dict[str, Any] = {
+                "variables": variables,
+                "date_start": date_start,
+                "date_end": date_end,
+            }
+            # bbox and buffer_days are ERA5-specific and must not be forwarded
+            # to other grid downloaders (e.g. HYRASDownloader) that do not
+            # accept them.
+            if source == "ERA5_land":
+                grid_kwargs["bbox"] = cfg.get("era5_bbox")
+                grid_kwargs["buffer_days"] = cfg.get("buffer_days", 1)
+            self._grid: Downloader | None = grid_class(**grid_kwargs)
         else:
             self._grid = None
 

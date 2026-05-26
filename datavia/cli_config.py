@@ -114,19 +114,11 @@ def create_config_file(selected_pipelines: list[str], config_file: str) -> None:
 
     if "elevation" in selected_pipelines:
         imports.append("from datavia.elevation import ElevationPipeline")
-        pipeline_instances.append(
-            """elevation = ElevationPipeline(
-    url="https://sgx.geodatenzentrum.de/wcs_dgm200_inspire?VERSION=2.0.1&SERVICE=WCS&REQUEST=GetCoverage&COVERAGEID=dgm200_inspire__EL.GridCoverage&format=image/tiff&crs=EPSG:25832&bbox=280000,5235000,921000,6101000"
-)"""
-        )
+        pipeline_instances.append("elevation = ElevationPipeline()")
 
     if "soil" in selected_pipelines:
         imports.append("from datavia.soil import SoilPipeline")
-        pipeline_instances.append(
-            """soil = SoilPipeline(
-    properties=["clay", "sand", "silt", "ph", "carbon"]
-)"""
-        )
+        pipeline_instances.append("soil = SoilPipeline()")
 
     if "weather" in selected_pipelines:
         imports.append("from datavia.weather import WeatherPipeline")

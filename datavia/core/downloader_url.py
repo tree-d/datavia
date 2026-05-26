@@ -25,9 +25,15 @@ logger = logging.getLogger(__name__)
 class URLDownloader(Downloader):
     """Downloader implementation for URL-based file downloads with robust error handling."""
 
-    def __init__(self, url: str):
-        """Initialize URLDownloader with URL and setup robust session."""
-        super().__init__(url)
+    def __init__(self, url: str) -> None:
+        """Initialise URLDownloader with URL and set up a robust HTTP session.
+
+        Parameters
+        ----------
+        url : str
+            URL to download data from.
+        """
+        self.url = url
 
         # Configuration from legacy proven approach
         self.max_retries = 5

@@ -23,7 +23,7 @@ Planned extensions:
 import logging
 import os
 import tempfile
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import numpy as np
 
@@ -38,6 +38,14 @@ from .composite_downloader import CompositeDownloader
 from .soilgrids_downloader import SoilGridsDownloader  # noqa: F401 (re-exported)
 
 logger = logging.getLogger(__name__)
+
+#: Keys that must be present in the config dict.
+_REQUIRED_CONFIG_KEYS: frozenset[str] = frozenset({"source"})
+
+#: All valid config keys (required + optional).
+_KNOWN_CONFIG_KEYS: frozenset[str] = _REQUIRED_CONFIG_KEYS | frozenset(
+    {"properties", "depths", "statistic"}
+)
 
 
 class SoilGetterTiff(GetterTiff):
@@ -206,44 +214,47 @@ class SoilPipeline(Pipeline):
         }
     )
 
-    def __init__(
-        self,
-        name: str = "soil",
-        properties: list[str] | None = None,
-        depths: list[str] | None = None,
-        value: str = "mean",
-    ) -> None:
-        """Initialize the soil pipeline with a configurable set of properties and depth layers.
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
+        """Initialise the soil pipeline.
 
         Parameters
         ----------
-        name : str, optional
-            Identifier used for database isolation and file naming.
-            Defaults to ``"soil"``.
-        properties : list[str], optional
-            Soil properties to download and expose. Accepts canonical names
-            from both SoilGrids (``"clay"``, ``"sand"``, ``"silt"``,
-            ``"ph"``, ``"carbon"``, ``"bdod"``, ``"cec"``, ``"cfvo"``,
-            ``"nitrogen"``, ``"ocd"``, ``"ocs"``) and HiHydroSoil
-            (``"field_capacity"``, ``"wilting_point"``, ``"porosity"``,
-            ``"hydraulic_conductivity"``).
-            Defaults to ``["clay", "sand", "silt", "ph", "carbon",
-            "field_capacity", "wilting_point", "porosity",
-            "hydraulic_conductivity"]``.
-        depths : list[str], optional
-            Depth layers applied to all properties across both sources.
-            Both SoilGrids and HiHydroSoil share the same six standard
-            layers: ``"0-5cm"``, ``"5-15cm"``, ``"15-30cm"``,
-            ``"30-60cm"``, ``"60-100cm"``, ``"100-200cm"``.
-            SoilGrids also offers ``"0-30cm"`` for the ``ocs`` property.
-            Defaults to ``["0-5cm", "5-15cm"]``.
-        value : str, optional
-            Statistical summary to retrieve for each property/depth combination.
-            SoilGrids supports ``"Q0.05"``, ``"Q0.5"``, ``"Q0.95"``,
-            ``"mean"``, ``"uncertainty"``.
-            HiHydroSoil supports only ``"mean"``.
-            Defaults to ``"mean"``.
+        config : dict[str, Any], optional
+            Configuration dict.  When provided it must contain ``"source"``
+            and may contain:
+
+            - ``properties`` (list[str]): Soil properties to download.
+              Accepts canonical names from both SoilGrids (``"clay"``,
+              ``"sand"``, ``"silt"``, ``"ph"``, ``"carbon"``, …) and
+              HiHydroSoil (``"field_capacity"``, ``"wilting_point"``,
+              ``"porosity"``, ``"hydraulic_conductivity"``).
+            - ``depths`` (list[str]): Depth layers applied to all properties,
+              e.g. ``["0-5cm", "5-15cm"]``.
+            - ``statistic`` (str): Statistical summary token for SoilGrids
+              (``"mean"``, ``"Q0.05"``, ``"Q0.5"``, ``"Q0.95"``,
+              ``"uncertainty"``).  Defaults to ``"mean"``.
+
+            When ``None`` (default) the pipeline is initialised with
+            ``source="soil"`` and all other defaults unchanged, for backward
+            compatibility with zero-argument call sites.
         """
+        if config is not None:
+            Pipeline.validate_pipeline_config(
+                config,
+                _REQUIRED_CONFIG_KEYS,
+                _KNOWN_CONFIG_KEYS,
+                "SoilPipeline",
+            )
+            name: str = config["source"]
+            properties: list[str] | None = config.get("properties")
+            depths: list[str] | None = config.get("depths")
+            value: str = config.get("statistic", "mean")
+        else:
+            name = "soil"
+            properties = None
+            depths = None
+            value = "mean"
+
         if properties is None:
             properties = [
                 "clay",
