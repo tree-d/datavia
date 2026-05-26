@@ -23,9 +23,10 @@
 3. [Enhancement 2 — Configurable temporal resolution](#3-enhancement-2--configurable-temporal-resolution)
 4. [Enhancement 3 — Incremental spatial and temporal downloads](#4-enhancement-3--incremental-spatial-and-temporal-downloads)
 5. [Enhancement 4 — Pipeline lifecycle management](#5-enhancement-4--pipeline-lifecycle-management)
-6. [Affected files](#6-affected-files)
-7. [Verification checklist](#7-verification-checklist)
-8. [Known risks and open questions](#8-known-risks-and-open-questions)
+6. [Enhancement 5 — ERA5 request chunking and download progress](#6-enhancement-5--era5-request-chunking-and-download-progress)
+7. [Affected files](#7-affected-files)
+8. [Verification checklist](#8-verification-checklist)
+9. [Known risks and open questions](#9-known-risks-and-open-questions)
 
 ---
 
@@ -35,7 +36,7 @@
 
 **Introduced:** April 2026 (during example-script testing)  
 **Status:** Partially worked around — root cause is a systemic interface
-contradiction described in [section 8](#8-known-risks-and-open-questions).
+contradiction described in [section 9](#9-known-risks-and-open-questions).
 
 #### Surface symptom
 
@@ -87,7 +88,7 @@ visible earlier.
 
 **The correct long-term fix** requires redesigning the `Saver` and `Pipeline`
 base interfaces so that reconciliation belongs at the pipeline level — see the
-design issue in [section 8](#8-known-risks-and-open-questions).
+design issue in [section 9](#9-known-risks-and-open-questions).
 
 ---
 
@@ -567,7 +568,184 @@ logs warnings, TBD) on any finding.
 
 ---
 
-## 6. Affected files
+## 6. Enhancement 5 — ERA5 request chunking and download progress
+
+### Current behaviour
+
+`ERA5Downloader.download()` submits a **single CDS job** that covers the
+entire configured date range, all requested variables, and the full bounding
+box in one call:
+
+```python
+client.retrieve(
+    "reanalysis-era5-land",
+    {
+        "variable": self.variables,   # all variables in one request
+        "year":     years,            # all years at once
+        "month":    months,
+        ...
+    },
+    output_path,
+)
+```
+
+This causes two real problems in production:
+
+1. **CDS queue latency** — large jobs (multi-year, many variables, large bbox)
+   can sit in the Copernicus queue for hours to **multiple days** before
+   processing begins.  The process blocks with no feedback during this time.
+2. **Single point of failure** — if the download is interrupted after hours of
+   queuing, the entire job must be resubmitted.  Nothing is saved until the
+   full file arrives.
+
+### Planned behaviour
+
+#### Request splitting by month (primary axis)
+
+`ERA5Downloader` splits the declared date range into **one CDS job per
+calendar month per variable**.  Each job is smaller, enters the queue faster,
+and its result is saved to disk independently — so a restart only re-downloads
+the months that are missing:
+
+```
+Config: 2022-01-01 → 2024-12-31, variables=["2m_temperature", "total_precipitation"]
+
+CDS jobs submitted:
+  2022-01  temperature    → era5_HYRAS_2022-01_2m_temperature.nc
+  2022-01  precipitation  → era5_HYRAS_2022-01_total_precipitation.nc
+  2022-02  temperature    → era5_HYRAS_2022-02_2m_temperature.nc
+  ...      (36 months × 2 variables = 72 jobs total)
+```
+
+The month boundary is the natural unit because:
+- One month of hourly ERA5-Land data for Germany (~1 km, full day range) is
+  typically 50–150 MB — a manageable file that exits the queue in minutes
+  rather than hours.
+- `SaverWeather` already supports multiple files per source; one row per
+  monthly file is inserted into `weather_layers` automatically.
+- `GetterWeather` queries by `valid_from`/`valid_until` and picks the
+  correct monthly file without any change to the query API.
+
+A `chunk_size` config key controls the granularity:
+
+```python
+WeatherPipeline(config={
+    "source":      "ERA5_land",
+    "variables":   ["2m_temperature", "total_precipitation"],
+    "date_start":  "2022-01-01",
+    "date_end":    "2024-12-31",
+    "era5_chunk":  "monthly",   # default — one CDS job per variable per month
+    # "era5_chunk": "yearly"   # coarser — one job per variable per year
+    # "era5_chunk": "none"     # original single-job behaviour (not recommended
+    #                          #   for ranges > ~3 months)
+})
+```
+
+#### Download progress feedback
+
+CDS jobs have two waiting phases:
+
+1. **Queue wait** — the job is accepted but not yet processed.  Duration is
+   unpredictable (seconds to days depending on CDS load).
+2. **Transfer** — the server streams the file after processing.  Duration
+   depends on file size and network speed.
+
+Both phases should surface progress to the user:
+
+- **Queue phase** — log the CDS job ID and elapsed waiting time every
+  60 seconds so the user knows the process is alive:
+
+  ```
+  INFO  datavia.weather.era5_downloader — CDS job abc-123 queued.
+        Status: queued (elapsed: 00:02:10)
+  INFO  datavia.weather.era5_downloader — CDS job abc-123 queued.
+        Status: queued (elapsed: 00:04:20)
+  INFO  datavia.weather.era5_downloader — CDS job abc-123 processing.
+  ```
+
+- **Transfer phase** — a `tqdm` progress bar showing bytes transferred,
+  total expected size, transfer speed, and estimated time remaining.  `tqdm`
+  is already in the pixi environment:
+
+  ```
+  Downloading ERA5 2022-01 2m_temperature:
+    42%|████████░░░░░░░░░| 58.3M/138.6M [00:23<00:31, 2.54MB/s]
+  ```
+
+  The progress bar is written to `stderr` (standard `tqdm` default) so it
+  does not pollute log files or stdout data pipelines.
+
+- **Multi-job overview** — when multiple monthly chunks are downloaded
+  sequentially, a second outer `tqdm` bar tracks overall progress:
+
+  ```
+  ERA5 2022–2024 (2m_temperature):  17%|███░░░░░░░░| 12/72 jobs [14:32<1:08:00]
+  ```
+
+#### Wall-clock timeout for CDS queue waiting
+
+A configurable `cds_queue_timeout` prevents the process from blocking
+indefinitely when the Copernicus queue is saturated:
+
+```python
+WeatherPipeline(config={
+    ...
+    "cds_queue_timeout": 3600,   # abort after 1 h of queue waiting per job
+                                  # (default: None → wait forever)
+})
+```
+
+When the timeout is exceeded the job is cancelled on the CDS side (via
+`cdsapi.Client.delete(job_id)`) and a `TimeoutError` is raised with the
+job ID so the user can resume or inspect the job on the CDS web UI.  Because
+the request was split into monthly chunks, already-completed chunks are
+not lost — only the timed-out chunk needs to be retried.
+
+### Implementation notes
+
+**File:** `packages/weather/datavia/weather/era5_downloader.py`
+
+- Add `_iter_monthly_chunks(date_start, date_end) -> Iterator[tuple[str, str]]`
+  — yields `(chunk_start, chunk_end)` pairs for each calendar month in the
+  range, respecting partial months at the boundaries.
+- `download()` iterates over chunks and calls a new `_download_chunk(start,
+  end, variable) -> str` for each, accumulating returned file paths.
+- `_download_chunk` wraps the existing `client.retrieve()` call, adds the
+  queue-wait logging loop (polling `client.status(job_id)` every 60 s), and
+  wraps the byte-transfer with a `tqdm` bar.
+- Honour `cds_queue_timeout`: track elapsed queue time; call
+  `client.delete(job_id)` and raise `TimeoutError` if the limit is exceeded.
+- Return a `list[str]` of file paths instead of a single `str`; the
+  composite downloader and pipeline must handle the list accordingly.
+
+**File:** `packages/weather/datavia/weather/composite_downloader.py`
+
+- `download()` must accept that each sub-downloader may return a `list[str]`
+  and flatten all results before passing to `SaverWeather`.
+
+**File:** `packages/weather/datavia/weather/pipeline.py`
+
+- `update_data()` must iterate over the list of paths and call
+  `self.saver.save()` for each one.
+- Add `"era5_chunk"` and `"cds_queue_timeout"` to `_KNOWN_CONFIG_KEYS`.
+
+### Test additions
+
+`tests/test_weather_pipeline_unit.py`:
+
+- `_iter_monthly_chunks("2024-01-15", "2024-03-20")` → yields
+  `("2024-01-15", "2024-01-31")`, `("2024-02-01", "2024-02-29")`,
+  `("2024-03-01", "2024-03-20")`.
+- Mock `client.retrieve` to return instantly; verify `download()` is called
+  once per month (3 times for a 3-month range).
+- Mock `client.status` to always return `"queued"`; verify `TimeoutError`
+  is raised after `cds_queue_timeout` seconds.
+- Verify that already-saved monthly files are skipped when `update_data()`
+  is called a second time (integration with Enhancement 3 / `CoverageManager`).
+
+---
+
+## 7. Affected files
 
 | File | Change type |
 |---|---|
@@ -578,11 +756,13 @@ logs warnings, TBD) on any finding.
 | `packages/weather/datavia/weather/coverage_manager.py` | **New file** — incremental download manager |
 | `packages/weather/datavia/weather/saver_weather.py` | Implement `sync_files_and_database()` (BUG-01); add `rename_all()` |
 | `datavia/core/datavia.py` | Add `check_pipelines()` |
+| `packages/weather/datavia/weather/era5_downloader.py` | Add monthly chunking, queue-wait logging, `tqdm` transfer bar, `cds_queue_timeout` |
+| `packages/weather/datavia/weather/composite_downloader.py` | Handle `list[str]` return from sub-downloaders |
 | `tests/test_weather_pipeline_unit.py` | New test cases (all enhancements) |
 
 ---
 
-## 7. Verification checklist
+## 8. Verification checklist
 
 ```bash
 # Unit tests — no network required
@@ -639,7 +819,7 @@ dv.check_pipelines()  # should pass silently
 
 ---
 
-## 8. Known risks and open questions
+## 9. Known risks and open questions
 
 ### ⚠️ Bbox subtraction is non-trivial
 
