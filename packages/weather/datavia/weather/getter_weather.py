@@ -219,9 +219,12 @@ class GetterWeather(Getter):
             )
         coords_arr = np.asarray(coords, dtype=float)
         n_coords = len(coords_arr)
-        is_multi_time = (
-            isinstance(datetime_utc, (list, tuple)) and len(datetime_utc) > 1
-        )
+        # Coerce a single-element list to a scalar so that interpolate_netcdf
+        # always receives either a plain value (single-time) or a list with at
+        # least two entries (multi-time), avoiding shape mismatches.
+        if isinstance(datetime_utc, (list, tuple)) and len(datetime_utc) == 1:
+            datetime_utc = datetime_utc[0]
+        is_multi_time = isinstance(datetime_utc, (list, tuple))
         n_times = len(datetime_utc) if is_multi_time else 1
 
         from_dt = (

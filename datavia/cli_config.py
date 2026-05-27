@@ -134,15 +134,15 @@ def create_config_file(selected_pipelines: list[str], config_file: str) -> None:
     if "weather" in selected_pipelines:
         imports.append("from datavia.weather import WeatherPipeline")
         pipeline_instances.append(
-            """# WeatherPipeline downloads DWD station observations (Open-Meteo, no key
-# required) and ERA5 gridded reanalysis (requires ~/.cdsapirc with CDS key).
-# Adjust variables, date_start/date_end, and era5_bbox to your area.
+            """# WeatherPipeline downloads gridded reanalysis (HYRAS / ERA5) and
+# optionally DWD point-station observations (Open-Meteo, no key required).
+# Adjust source, variables, date_start/date_end, and era5_bbox to your area.
 weather = WeatherPipeline(
     config={
-        "variables": ["temperature_2m"],
-        # Uncomment and set to restrict the download window:
-        # "date_start": "2024-01-01",
-        # "date_end":   "2024-12-31",
+        "source": "HYRAS",
+        "variables": ["2m_temperature"],
+        "date_start": "2024-01-01",
+        "date_end":   "2024-12-31",
         # Bounding box override for ERA5 (lon_min, lat_min, lon_max, lat_max):
         # "era5_bbox": [5.0, 47.0, 15.5, 55.5],
     }

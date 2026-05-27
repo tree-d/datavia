@@ -58,11 +58,11 @@ MONITORING_SITES: list[dict[str, object]] = [
 
 #: DWD station list used when ``USE_DWD_STATIONS=1``.
 DWD_REFERENCE_STATIONS: list[dict[str, object]] = [
-    {"id": "Muenster", "latitude": 51.96, "longitude": 7.63},
-    {"id": "Magdeburg", "latitude": 52.12, "longitude": 11.63},
-    {"id": "Wuerzburg", "latitude": 49.80, "longitude": 9.93},
-    {"id": "Rostock", "latitude": 54.09, "longitude": 12.11},
-    {"id": "Freiburg", "latitude": 48.00, "longitude": 7.85},
+    {"name": "Muenster", "latitude": 51.96, "longitude": 7.63},
+    {"name": "Magdeburg", "latitude": 52.12, "longitude": 11.63},
+    {"name": "Wuerzburg", "latitude": 49.80, "longitude": 9.93},
+    {"name": "Rostock", "latitude": 54.09, "longitude": 12.11},
+    {"name": "Freiburg", "latitude": 48.00, "longitude": 7.85},
 ]
 
 # ---------------------------------------------------------------------------

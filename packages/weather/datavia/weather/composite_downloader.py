@@ -196,7 +196,7 @@ class CompositeWeatherDownloader(CompositeDownloader):
             try:
                 grid_path = self._grid.download()
                 logger.info("CompositeWeatherDownloader: grid done -> %s", grid_path)
-                paths.append(grid_path)
+                paths.extend(p for p in grid_path.splitlines() if p and p != "failed")
             except (ImportError, RuntimeError) as exc:
                 logger.warning(
                     "CompositeWeatherDownloader: grid download skipped (%s). "
@@ -209,7 +209,7 @@ class CompositeWeatherDownloader(CompositeDownloader):
             logger.info("CompositeWeatherDownloader: starting DWD download")
             dwd_path = self._dwd.download()
             logger.info("CompositeWeatherDownloader: DWD done -> %s", dwd_path)
-            paths.append(dwd_path)
+            paths.extend(p for p in dwd_path.splitlines() if p and p != "failed")
 
         if not paths:
             return "failed"
