@@ -166,20 +166,22 @@ string value silently succeeds and is ignored.
 
 **File:** `packages/weather/datavia/weather/pipeline.py`
 
-`WeatherPipeline` requires:
+`WeatherPipeline` is documented as requiring:
 ```python
 pipe = WeatherPipeline(config={...})  # 1. construct
 pipe()                                 # 2. wire components
 pipe.update_data()                     # 3. download
 ```
-`get_weather_data()` and `get_data()` auto-wire components if step 2 is skipped,
-but `update_data()` only auto-wires and then immediately raises `RuntimeError`
-if the downloader is still `None`.  The two paths are inconsistent; the
-`RuntimeError` branches after the auto-init guard are currently unreachable.
+In practice, all three public methods (`update_data`, `get_weather_data`,
+`get_data`) contain an `if not self.<component>: self()` guard and auto-wire
+components on first use.  This means `pipe()` is never strictly required — but
+this is not communicated in the public API or docstrings.  The `RuntimeError`
+branches that follow each auto-wire guard are unreachable dead code.
 
-**Recommendation:** either always auto-wire on first use (remove the explicit
-`__call__` requirement from the public API) or remove the auto-wire guards and
-document clearly that `pipe()` is mandatory.
+**Recommendation:** either remove the explicit `__call__` step from all
+documentation and examples (auto-wire is the de facto contract) or remove the
+auto-wire guards and make `pipe()` a hard requirement enforced by a clear
+error raised before any guard.
 
 ---
 
@@ -225,16 +227,37 @@ would need to manufacture identical files.
 
 The WFS 2.0 endpoint `https://cdc.dwd.de/geoserver/ows` exposes high-resolution
 observational grids and point data under CC BY 4.0 (no licensing concerns).
-Research and example queries are in
-[weather_sources_for_tree_modelling.md](weather_sources_for_tree_modelling.md).
+Available layers include 10-minute temperature, precipitation, radiation, and
+sunshine duration (`CDC:OBS_DEU_PT10M_*`).  Note these are *station point
+features*, not gridded rasters; for gridded DWD data, HYRAS is preferred.
 No downloader implementation exists yet.
 
 ---
 
-### ❌ Changelog not updated for current branch
+### ❌ Zarr store as future storage architecture
 
-`docs/changelog.rst` has an `[Unreleased]` entry for the SQLite migration.
-The last stable release is `1.0.0`.  Update once this branch is merged.
+**Files affected:** `saver_weather.py`, `getter_weather.py`, `datavia/library/formats.py`, DB schema
+
+The current approach saves one NetCDF file per download fragment.  As the data
+store grows, `GetterWeather` must open and scan many files per query.  The
+recommended long-term replacement is a Zarr directory store per
+`(source, variable, year)`.  Each spatial tile fills its chunk files
+in-place; writing the same chunk twice is idempotent; `xarray` reads the entire
+store as one virtual array regardless of how many incremental downloads were
+made.  File count is bounded to one store per `(source, variable, year)`
+independent of download history, and filename collisions become impossible by
+construction.
+
+**Prerequisite:** Strategy 1 (unique `_build_dest_stem()`) already in place;
+Zarr migration can be done as a later, independent step.
+
+---
+
+### ❌ Changelog version not finalised
+
+`docs/changelog.rst` has an `[Unreleased] — 1.0.4` entry covering the full
+weather pipeline.  The version number and release date should be set and the
+entry promoted to a proper release once this branch is merged.
 
 ---
 
@@ -251,14 +274,12 @@ with typical TCP window sizes and reduces Python loop and syscall overhead.
 
 ---
 
-### ⚠️ Progress bar missing from `URLDownloader` and TIFF-level downloaders
+### ✅ Progress bar added to `URLDownloader` (fixed)
 
 **File:** `datavia/core/downloader_url.py`
 
-`tqdm` is used in `era5_downloader.py` for chunk-level progress.  The core
-`URLDownloader` (used by elevation and HYRAS) has no progress bar, so large
-TIFF or annual NetCDF downloads give no visual feedback.  Adding `tqdm` to
-`URLDownloader.download()` would benefit all pipelines uniformly.
+`URLDownloader.download()` now uses `tqdm` for byte-level progress, covering
+all pipelines that go through the core URL downloader (elevation, HYRAS, etc.).
 
 ---
 
