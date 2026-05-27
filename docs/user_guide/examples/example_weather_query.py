@@ -150,9 +150,9 @@ def query_daily_temperature(
 ) -> list[float]:
     """Return daily midday 2-m temperature (°C) for a single site.
 
-    Queries the pipeline at 12:00 UTC for each requested date and collects
-    the results.  ``float("nan")`` is returned for dates where no data are
-    available.
+    Issues a single batched :meth:`~datavia.weather.pipeline.WeatherPipeline.get_data`
+    call with all requested dates, opening the NetCDF file only once.
+    ``float("nan")`` is returned for dates where no data are available.
 
     Parameters
     ----------
@@ -171,17 +171,18 @@ def query_daily_temperature(
         Daily midday temperatures in °C, one entry per element of
         *query_dates*.
     """
-    temperatures: list[float] = []
-    for query_date in query_dates:
-        datetime_utc = f"{query_date.isoformat()}T12:00:00"
-        value = pipeline.get_weather_data(
-            lat=lat,
-            lon=lon,
-            variable="2m_temperature",
-            datetime_utc=datetime_utc,
-        )
-        temperatures.append(value)
-    return temperatures
+    if not query_dates:
+        return []
+    coords = np.array([[lon, lat]])
+    timestamps = [f"{d.isoformat()}T12:00:00" for d in query_dates]
+    result = pipeline.get_data(
+        coords=coords,
+        crs_coords="EPSG:4326",
+        variable="2m_temperature",
+        datetime_utc=timestamps,
+    )
+    # result shape: (1, N_dates); first row is the single site.
+    return np.asarray(result, dtype=float)[0].tolist()
 
 
 def query_multisite_snapshot(

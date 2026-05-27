@@ -90,33 +90,46 @@ def build_pipeline() -> WeatherPipeline:
 
 def query_snapshot(
     pipeline: WeatherPipeline,
-    snapshot_date: date,
+    snapshot_dates: list[date],
     variable: str,
-) -> np.ndarray:
-    """Return a grid snapshot for one date and one variable.
+) -> dict[date, np.ndarray]:
+    """Return grid snapshots for all dates and one variable in a single batch call.
+
+    Issues a single :meth:`~datavia.weather.pipeline.WeatherPipeline.get_data`
+    call with all *snapshot_dates* as a batched timestamp list, opening the
+    NetCDF file only once per variable.
 
     Parameters
     ----------
     pipeline : WeatherPipeline
         Initialised pipeline.
-    snapshot_date : date
-        Date to query (queried at 12:00 UTC).
+    snapshot_dates : list[date]
+        Dates to query (each queried at 12:00 UTC).  Must contain at least
+        two entries; pass a one-element list to stay on the multi-time path.
     variable : str
         Pipeline variable name.
 
     Returns
     -------
-    np.ndarray
-        Shape ``(N_lats, N_lons)`` value grid, ``NaN`` where unavailable.
+    dict[date, np.ndarray]
+        Mapping from each date to a shape ``(N_lats, N_lons)`` value grid,
+        ``NaN`` where unavailable.
     """
-    datetime_utc = f"{snapshot_date.isoformat()}T12:00:00"
-    flat_values = pipeline.get_data(
+    timestamps = [f"{d.isoformat()}T12:00:00" for d in snapshot_dates]
+    batch = pipeline.get_data(
         coords=GRID_COORDS,
         crs_coords="EPSG:4326",
         variable=variable,
-        datetime_utc=datetime_utc,
+        datetime_utc=timestamps,
     )
-    return flat_values.reshape(_N_LATS, _N_LONS)
+    # batch shape: (N_coords, N_dates); handle degenerate (N_coords,) edge case.
+    batch_arr = np.asarray(batch, dtype=float)
+    if batch_arr.ndim == 1:
+        batch_arr = batch_arr[:, np.newaxis]
+    return {
+        snap_date: batch_arr[:, i].reshape(_N_LATS, _N_LONS)
+        for i, snap_date in enumerate(snapshot_dates)
+    }
 
 
 def ascii_map(grid: np.ndarray, label: str, unit: str, fmt: str = ".1f") -> str:
@@ -195,7 +208,8 @@ def main() -> None:
     -----
     1. Build a HYRAS pipeline for both variables over all of 2025.
     2. ``update_data()`` — no-op if files are cached.
-    3. For each of 3 snapshot dates × 2 variables: one ``get_data()`` call.
+    3. For each of 2 variables: one batched ``get_data()`` call covering all
+       3 snapshot dates (2 calls total instead of 6).
     4. Render and print results.
     """
     print("Building HYRAS pipeline (temperature + precipitation, 2025)…")
@@ -209,25 +223,28 @@ def main() -> None:
         print("ERROR: update_data() reported failure.", file=sys.stderr)
         sys.exit(1)
 
-    n_total = len(SNAPSHOT_DATES) * len(VARIABLES)
-    print(f"Running {n_total} grid queries ({len(GRID_COORDS)} points each)…")
+    print(
+        f"Running {len(VARIABLES)} batched grid queries"
+        f" ({len(GRID_COORDS)} points × {len(SNAPSHOT_DATES)} dates each)…"
+    )
 
     results: dict[tuple[date, str], np.ndarray] = {}
     nan_stats: dict[tuple[date, str], int] = {}
 
-    for snap_date in SNAPSHOT_DATES:
-        for variable, _unit in VARIABLES:
-            print(f"  {snap_date}  {variable}…", end=" ", flush=True)
-            try:
-                grid = query_snapshot(pipeline, snap_date, variable)
+    for variable, _unit in VARIABLES:
+        print(f"  {variable}  ({len(SNAPSHOT_DATES)} dates)…", end=" ", flush=True)
+        try:
+            date_grids = query_snapshot(pipeline, SNAPSHOT_DATES, variable)
+            for snap_date, grid in date_grids.items():
                 results[(snap_date, variable)] = grid
                 nan_stats[(snap_date, variable)] = int(np.sum(np.isnan(grid)))
-                print("OK")
-            except Exception as exc:  # noqa: BLE001
-                logger.error("Query failed for %s/%s: %s", snap_date, variable, exc)
+            print("OK")
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Query failed for %s: %s", variable, exc)
+            for snap_date in SNAPSHOT_DATES:
                 results[(snap_date, variable)] = np.full((_N_LATS, _N_LONS), np.nan)
                 nan_stats[(snap_date, variable)] = _N_LATS * _N_LONS
-                print(f"FAILED — {exc}")
+            print(f"FAILED — {exc}")
 
     print_report(results, nan_stats)
 
