@@ -172,7 +172,7 @@ select = [
 # Test method/function names are self-describing per the naming standards (AC1+);
 # class-level docstrings already document the test group.
 # PLC0415: deferred imports inside test methods are the established pattern for
-# this project — each test method imports only what it needs to minimise fixture
+# this project — each test method imports only what it needs to minimize fixture
 # coupling and to keep individual test failures isolated.
 "tests/**" = ["D102", "PLC0415"]
 # Optional-dependency lazy imports inside try/except blocks are a deliberate
