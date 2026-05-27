@@ -9,24 +9,17 @@
 
 ## Bugs
 
-### ⚠️ Bug C — Filename collision in `_build_dest_stem()` (open)
+### ✅ Bug C — Filename collision in `_build_dest_stem()` (fixed — 2026-04-28)
 
 **File:** `packages/weather/datavia/weather/saver_weather.py`
 
-`_build_dest_stem()` encodes only `(source_name, variable, year)` in the
-destination filename.  Two downloads for the same variable and year with
-different bounding boxes or different monthly chunks can produce the same
-stem, causing the second `shutil.copy2()` call to silently overwrite the
-first file on disk and the second DB insert to register a duplicate row.
-
-**Impact:** incremental spatial coverage breaks; re-running `update_data()`
-with a shifted `era5_bbox` does not extend coverage — it overwrites existing
-data.
-
-**Planned fix (Strategy 1):** extend the stem with a `YYYYMM` range suffix and
-a short hex hash of the bounding box.  See
-[weather_file_management_strategies.md](weather_file_management_strategies.md)
-for a full comparison of six approaches.
+`_build_dest_stem()` now encodes
+`{source_name}_{variable}_{YYYYmm_start}_{YYYYmm_end}_{bbox_hash}` for NetCDF
+files.  The bbox hash is the first six hex digits of the MD5 of the WKT
+bounding-box string, so spatially distinct downloads for the same variable and
+period always receive unique filenames.  Parquet (DWD station) files are named
+by the minimum year in the datetime column.  See BUG-07 in the done table of
+`weather_next_steps.md`.
 
 ---
 

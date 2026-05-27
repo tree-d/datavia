@@ -5,22 +5,52 @@
 
 ---
 
-## ⚠️ Open — Bug C: filename collision in `_build_dest_stem()`
+## Plan
 
-`_build_dest_stem()` in `saver_weather.py` encodes only `(source, variable, year)` in
-the filename.  Two downloads for the same variable and year with different bounding
-boxes or months produce the same filename; the second silently overwrites the first,
-breaking incremental spatial coverage.
+This is the current execution plan for the review feedback still open on PR #20.
+The order is chosen to reduce correctness risk first, then clean up integration
+and documentation issues.
 
-**Root cause:** `packages/weather/datavia/weather/saver_weather._build_dest_stem()`
-returns `f"{source_name}_{nc_vars[0]}_{year}"`.
+1. ✅ Refactor `datavia/library/interpolation.py` — removed `_fill_nan_along_axis`
+  and `_prefill_nodata`; inlined `DataArray.interpolate_na` directly inside
+  `interpolate_netcdf` (2026-05-27).
+2. ✅ Fix the runtime issues in the weather pipeline path (2026-05-27):
+  - `datavia/cli_config.py` — added `"source"`, `"date_start"`, `"date_end"`;
+    switched variable name to `"2m_temperature"`
+  - `packages/weather/datavia/weather/composite_downloader.py` — filter
+    `"failed"` sentinel and flatten multi-path outputs in `download()`
+  - `packages/weather/datavia/weather/getter_weather.py` — coerce
+    single-element datetime lists to scalar before `is_multi_time` check
+  - `docs/user_guide/examples/example_weather_query.py` — renamed station
+    dict key `"id"` → `"name"`
+3. ✅ Normalize weather variable naming (2026-05-27):
+  - `packages/weather/datavia/weather/dwd_downloader.py` — added
+    `_PIPELINE_TO_OPEN_METEO` mapping; `DWDStationDownloader` now accepts
+    pipeline-level names (e.g. `2m_temperature`) and translates them to
+    Open-Meteo API names internally, renaming response columns back before
+    writing Parquet; fixed docstring typo
+  - `tests/test_weather_e2e.py` — updated `_VARIABLE` constant from
+    `"temperature_2m"` to `"2m_temperature"` to match pipeline naming
+4. ✅ Update stale documentation (2026-05-27):
+  - `docs/development/known_issues.md` — Bug C marked fixed; description updated
+    to match current `_build_dest_stem()` implementation
+  - This file — Bug C section updated to ✅
+5. ✅ Align lint and style-only feedback (2026-05-27):
+  - `pyproject.toml` — added `I001` to `tests/**` per-file ignores
+  - `packages/weather/LICENSE` — removed trailing `s` from `***Contact:***s`
+  - `datavia/core/downloader_api.py` — "Initialise" → "Initialize"
+  - `datavia/core/downloader_url.py` — "Initialise" → "Initialize"; removed
+    redundant init-level URL log; fixed double-skip bug (gate file-open mode on
+    HTTP 206 vs 200); replaced `while`/`retry_count` loop with `for`/`else`;
+    used `continue` for empty chunks
 
-**Immediate fix (Strategy 1):** extend the stem with a `YYYYMM` range and a short bbox
-hash — one-function change, zero new dependencies.
+---
 
-**Long-term options:** see [weather_file_management_strategies.md](weather_file_management_strategies.md)
-for a full comparison of six approaches (unique filename, tile grid, maintainer class,
-Zarr, Kerchunk, Parquet+DuckDB).
+## ✅ Fixed — Bug C: filename collision in `_build_dest_stem()`
+
+Fixed in BUG-07 (2026-04-28).  `_build_dest_stem()` now encodes
+`{source_name}_{variable}_{YYYYmm_start}_{YYYYmm_end}_{bbox_hash}`, making
+filenames unique per spatial region and time window.
 
 ---
 

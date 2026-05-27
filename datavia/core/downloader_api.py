@@ -16,7 +16,7 @@ class APIDownloader(Downloader):
     """Placeholder downloader for API-based data sources."""
 
     def __init__(self, url: str, **kwargs: Any) -> None:
-        """Initialise API downloader.
+        """Initialize API downloader.
 
         Parameters
         ----------
