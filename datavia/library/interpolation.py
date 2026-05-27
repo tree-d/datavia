@@ -247,90 +247,6 @@ def _build_spatial_interp_coords(
     }
 
 
-def _fill_nan_along_axis(arr: np.ndarray, axis: int) -> np.ndarray:
-    """Forward-fill then backward-fill NaN values along *axis* with numpy.
-
-    Pure-numpy equivalent of ``xr.DataArray.ffill(...).bfill(...)``.  Does
-    not require the ``bottleneck`` package.
-
-    Parameters
-    ----------
-    arr : np.ndarray
-        Input array (copy is made internally; original is not mutated).
-    axis : int
-        Axis index along which to propagate valid values.
-
-    Returns
-    -------
-    np.ndarray
-        Copy of *arr* with NaN runs replaced by their nearest valid neighbour
-        along *axis*.  Leading or trailing NaN runs that cannot be filled in
-        one direction are covered by the complementary pass.
-    """
-    # Bring the fill axis to position 0 for simpler indexing.
-    work = np.moveaxis(arr.copy(), axis, 0)
-    n = work.shape[0]
-
-    # Forward pass: copy previous slice into NaN cells.
-    for i in range(1, n):
-        mask = np.isnan(work[i])
-        work[i] = np.where(mask, work[i - 1], work[i])
-
-    # Backward pass: cover any leading NaN run that forward-fill missed.
-    for i in range(n - 2, -1, -1):
-        mask = np.isnan(work[i])
-        work[i] = np.where(mask, work[i + 1], work[i])
-
-    return np.moveaxis(work, 0, axis)
-
-
-def _prefill_nodata(da: "xr.DataArray") -> "xr.DataArray":
-    """Replace nodata cells with nearest valid neighbour before interpolation.
-
-    Propagates valid values outward in all four axis directions (forward and
-    backward along both spatial axes).  This ensures that bilinear (or cubic)
-    interpolation stencils touching the domain boundary always have a finite
-    value to work with, eliminating NaN propagation at domain edges.
-
-    The approach is an approximation: cells filled by this method receive the
-    nearest value along one of the four cardinal directions, not the globally
-    nearest valid cell.  For roughly convex domains like the HYRAS Germany
-    grid this is adequate.  For exact nearest-neighbour fill, use
-    ``scipy.ndimage.distance_transform_edt`` (as done in
-    :func:`interpolate_tiff`) in a future upgrade.
-
-    Parameters
-    ----------
-    da : xr.DataArray
-        Spatial data array.  Must have ``_FillValue`` in ``attrs`` for the
-        fill sentinel to be masked; otherwise only existing ``NaN`` cells
-        are filled.
-
-    Returns
-    -------
-    xr.DataArray
-        Copy of *da* with nodata cells replaced by nearest valid values.
-    """
-    fill_val = da.attrs.get("_FillValue", None)
-    if fill_val is not None:
-        da = da.where(da != fill_val)
-
-    # Detect spatial dimension names — projected (x/y) or geographic (lat/lon).
-    x_dim = (
-        "x" if "x" in da.dims else ("longitude" if "longitude" in da.dims else "lon")
-    )
-    y_dim = "y" if "y" in da.dims else ("latitude" if "latitude" in da.dims else "lat")
-
-    # Use a pure-numpy propagation so bottleneck is not required.
-    arr = da.values.astype(float, copy=True)
-    x_axis = da.dims.index(x_dim)
-    y_axis = da.dims.index(y_dim)
-    arr = _fill_nan_along_axis(arr, x_axis)
-    arr = _fill_nan_along_axis(arr, y_axis)
-
-    return xr.DataArray(arr, dims=da.dims, coords=da.coords, attrs=da.attrs)
-
-
 def interpolate_netcdf(
     nc_path: str,
     lats: float | np.ndarray,
@@ -425,9 +341,29 @@ def interpolate_netcdf(
                 f"Available variables: {list(ds.data_vars)}"
             )
 
-        # Pre-fill nodata cells so bilinear stencils at domain edges are
-        # always finite.
-        da = _prefill_nodata(ds[variable])
+        # Mask the fill sentinel and replace NaN cells with the nearest valid
+        # neighbour along each spatial dimension before bilinear interpolation,
+        # so stencils touching domain boundaries always receive a finite value.
+        da = ds[variable]
+        fill_val = da.attrs.get("_FillValue", None)
+        if fill_val is not None:
+            da = da.where(da != fill_val)
+        x_dim = (
+            "x"
+            if "x" in da.dims
+            else ("longitude" if "longitude" in da.dims else "lon")
+        )
+        y_dim = (
+            "y" if "y" in da.dims else ("latitude" if "latitude" in da.dims else "lat")
+        )
+        # Two sequential 1-D fills (x then y) approximate a 2-D nearest-
+        # neighbour fill.  A true 2-D solution exists via
+        # scipy.ndimage.distance_transform_edt, but it requires extracting raw
+        # numpy arrays and iterating over time slices, making it considerably
+        # more complex.  For the convex HYRAS/ERA5 grids used here the
+        # directional approximation is adequate.
+        da = da.interpolate_na(dim=x_dim, method="nearest", fill_value="extrapolate")
+        da = da.interpolate_na(dim=y_dim, method="nearest", fill_value="extrapolate")
 
         # Build vectorised spatial interpolation coordinates for all N points
         # in one batch — single pyproj call, single xarray interp call.
