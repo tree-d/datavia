@@ -33,9 +33,9 @@ import os
 from datetime import date, timedelta
 
 import numpy as np
+from datavia.weather import WeatherPipeline
 
 from datavia import Datavia
-from datavia.weather import WeatherPipeline
 
 logging.basicConfig(
     level=logging.INFO,

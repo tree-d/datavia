@@ -24,6 +24,18 @@ logger = logging.getLogger(__name__)
 #: Open-Meteo historical weather API endpoint.
 _OPEN_METEO_URL: str = "https://archive-api.open-meteo.com/v1/archive"
 
+#: Maps pipeline-level variable names (used throughout the datavia API) to the
+#: corresponding Open-Meteo hourly parameter names accepted by the archive API.
+#: Extend this table when additional variables are added to the registry.
+_PIPELINE_TO_OPEN_METEO: dict[str, str] = {
+    "2m_temperature": "temperature_2m",
+    "total_precipitation": "precipitation",
+    "surface_solar_radiation_downwards": "shortwave_radiation",
+    "relative_humidity_2m": "relativehumidity_2m",
+    "temperature_2m_max": "temperature_2m_max",
+    "temperature_2m_min": "temperature_2m_min",
+}
+
 #: Default DWD station locations covering the German climate regions.
 #: A more complete list can be generated at runtime from the Open-Meteo
 #: station index, but these representative stations are used as a bootstrap.
@@ -57,9 +69,10 @@ class DWDStationDownloader(APIDownloader):
         Parameters
         ----------
         variables : list[str], optional
-            Open-Meteo variable names, e.g.
-            ``["temperature_2m", "precipitation"]".``
-            Defaults to ``["temperature_2m"]``.
+            Pipeline-level variable names, e.g.
+            ``["2m_temperature", "total_precipitation"]``.
+            Defaults to ``["2m_temperature"]``.  Each name is translated to
+            the corresponding Open-Meteo API parameter name automatically.
         date_start : date or str, optional
             Start date for the download (inclusive). Defaults to today.
         date_end : date or str, optional
@@ -72,7 +85,11 @@ class DWDStationDownloader(APIDownloader):
             :class:`datavia.core.downloader_api.APIDownloader`.
         """
         super().__init__(url=_OPEN_METEO_URL, **kwargs)
-        self.variables: list[str] = variables or ["temperature_2m"]
+        self.variables: list[str] = variables or ["2m_temperature"]
+        # Translate pipeline names to Open-Meteo API names for the HTTP request.
+        self._open_meteo_vars: list[str] = [
+            _PIPELINE_TO_OPEN_METEO.get(v, v) for v in self.variables
+        ]
         self.date_start: str = (
             str(date_start) if date_start is not None else str(date.today())
         )
@@ -113,7 +130,7 @@ class DWDStationDownloader(APIDownloader):
             params: dict[str, Any] = {
                 "latitude": station["latitude"],
                 "longitude": station["longitude"],
-                "hourly": ",".join(self.variables),
+                "hourly": ",".join(self._open_meteo_vars),
                 "start_date": self.date_start,
                 "end_date": self.date_end,
                 "timezone": "UTC",
@@ -141,8 +158,10 @@ class DWDStationDownloader(APIDownloader):
                     "longitude": station["longitude"],
                     "datetime": ts,
                 }
-                for var in self.variables:
-                    row[var] = hourly.get(var, [None] * len(timestamps))[i]
+                for pipeline_var, om_var in zip(
+                    self.variables, self._open_meteo_vars, strict=False
+                ):
+                    row[pipeline_var] = hourly.get(om_var, [None] * len(timestamps))[i]
                 records.append(row)
 
         if not records:

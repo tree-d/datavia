@@ -89,7 +89,7 @@ _TEMP_MIN_C: float = -25.0
 _TEMP_MAX_C: float = 50.0
 
 # Variable name shared by both ERA5 and Open-Meteo.
-_VARIABLE: str = "temperature_2m"
+_VARIABLE: str = "2m_temperature"
 
 
 # ---------------------------------------------------------------------------
