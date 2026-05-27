@@ -6,7 +6,7 @@ All notable changes to Datavia will be documented in this file.
 The format is based on `Keep a Changelog <https://keepachangelog.com/en/1.0.0/>`_,
 and this project adheres to `Semantic Versioning <https://semver.org/spec/v2.0.0.html>`_.
 
-`[Unreleased] — 1.0.4 <https://github.com/tree-d/datavia/compare/v1.0.3...HEAD>`_
+`[Unreleased] — 1.0.4 <https://github.com/tree-d/datavia/compare/1.0.3...HEAD>`_
 -----------------------------------------------------------------------------------
 
 The weather pipeline release. Adds real-time and reanalysis weather data source
@@ -44,8 +44,8 @@ Changed
 - Unit conversion utilities extended to cover weather variables.
 
 
-`[1.0.3] — 2026-04-28 <https://github.com/tree-d/datavia/compare/v1.0.2...v1.0.3>`_
---------------------------------------------------------------------------------------
+`[1.0.3] — 2026-04-28 <https://github.com/tree-d/datavia/compare/1.0.2...1.0.3>`_
+----------------------------------------------------------------------------------
 
 The SQLite migration release. Removes the Docker/PostgreSQL requirement and
 makes the database zero-setup.
@@ -77,8 +77,8 @@ Removed
 - ``psycopg2-binary`` dependency.
 
 
-`[1.0.2] — 2026-03-23 <https://github.com/tree-d/datavia/compare/v1.0.1...v1.0.2>`_
---------------------------------------------------------------------------------------
+`[1.0.2] — 2026-03-23 <https://github.com/tree-d/datavia/compare/1.0.1...1.0.2>`_
+----------------------------------------------------------------------------------
 
 The soil pipeline release. Adds the first soil data source integration
 (HiHydroSoil and SoilGrids) on top of the existing elevation pipeline.
@@ -119,8 +119,8 @@ Changed
 - Updated unit definitions for soil output values.
 
 
-`[1.0.1] — 2026-02-24 <https://github.com/tree-d/datavia/compare/v1.0.0...v1.0.1>`_
---------------------------------------------------------------------------------------
+`[1.0.1] — 2026-02-24 <https://github.com/tree-d/datavia/compare/dev-1.0.0-dev.20260224...1.0.1>`_
+--------------------------------------------------------------------------------------------------
 
 The elevation pipeline release. Focuses on packaging, CI/CD infrastructure,
 and code quality on top of the working elevation data extraction from 1.0.0.
@@ -143,8 +143,8 @@ Changed
 - License updated across sub-packages.
 
 
-`[1.0.0] — 2025-01-15 <https://github.com/tree-d/datavia/releases/tag/v1.0.0>`_
-----------------------------------------------------------------------------------
+`[1.0.0] — 2025-01-15 <https://github.com/tree-d/datavia/releases/tag/dev-1.0.0-dev.20260224>`_
+------------------------------------------------------------------------------------------------
 
 Initial stable release. Working elevation data extraction from BKG DGM200
 German topography with a PostGIS backend (Docker-based).
