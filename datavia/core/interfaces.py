@@ -293,9 +293,10 @@ class Getter(ABC):
         interpolation_order : int
             Interpolation order for raster sampling. Defaults to 3 (cubic).
         band : int
-            Band number to extract (1-indexed). Defaults to 1 for backward
-            compatibility with single-band sources. For multi-band TIFFs use
-            :meth:`get_band_mapping` to resolve property names to band indices.
+            Band number to extract (1-indexed). Defaults to 1, which selects
+            the first band; suitable for single-band sources. For multi-band
+            TIFFs use :meth:`get_band_mapping` to resolve property names to
+            band indices.
         **kwargs : Any
             Additional parameters passed to the underlying sampling function.
 

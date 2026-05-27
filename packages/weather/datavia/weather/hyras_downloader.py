@@ -17,8 +17,6 @@ HYRAS data is already in target units (°C, mm/day, W/m²) and does not
 require unit conversion — see :data:`~datavia.weather.source_registry.SOURCE_REGISTRY`.
 """
 
-from __future__ import annotations
-
 import logging
 import re
 from datetime import date

@@ -15,8 +15,6 @@ and are intentionally format-agnostic so that they can be called from
 keeping ``interpolation.py`` free of source-specific knowledge.
 """
 
-from __future__ import annotations
-
 import numpy as np
 
 # ---------------------------------------------------------------------------

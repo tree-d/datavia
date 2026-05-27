@@ -17,8 +17,6 @@ Covers (all without network access or real files):
   round-trip via the ``sqlite_db`` fixture.
 """
 
-from __future__ import annotations
-
 from typing import ClassVar
 from unittest.mock import MagicMock, patch
 

@@ -36,7 +36,7 @@ class URLDownloader(Downloader):
         """
         self.url = url
 
-        # Configuration from legacy proven approach
+        # Retry and streaming configuration
         self.max_retries = 5
         self.chunk_size = (
             65536  # 64 KB — aligns with typical TCP window sizes for streaming HTTP

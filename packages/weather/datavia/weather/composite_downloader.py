@@ -20,8 +20,6 @@ The multi-path string convention is an internal protocol between
 package should not depend on it.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 

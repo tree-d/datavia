@@ -27,8 +27,6 @@ No network access, no real downloads.  All database I/O uses the
 ``sqlite_db`` in-memory fixture from ``conftest.py``.
 """
 
-from __future__ import annotations
-
 import os
 from pathlib import Path
 from typing import ClassVar

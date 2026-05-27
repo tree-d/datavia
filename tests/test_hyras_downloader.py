@@ -15,8 +15,6 @@ Covers (all without network access or real files):
   :exc:`RuntimeError`.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, patch
 
 import pytest

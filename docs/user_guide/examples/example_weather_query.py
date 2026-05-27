@@ -25,8 +25,6 @@ because it requires a free Copernicus CDS account (``~/.cdsapirc``).
 See https://cds.climate.copernicus.eu/how-to-api for setup instructions.
 """
 
-from __future__ import annotations
-
 import logging
 import math
 import os

@@ -25,8 +25,6 @@ Run::
     pixi run python docs/user_guide/examples/precipitation_north_south_2025.py
 """
 
-from __future__ import annotations
-
 import logging
 import math
 import sys

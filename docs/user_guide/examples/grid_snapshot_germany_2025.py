@@ -22,8 +22,6 @@ Run (no network access required — uses cached 2025 HYRAS files)::
     pixi run python docs/user_guide/examples/grid_snapshot_germany_2025.py
 """
 
-from __future__ import annotations
-
 import logging
 import math
 import sys

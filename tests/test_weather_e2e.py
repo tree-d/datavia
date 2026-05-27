@@ -24,8 +24,6 @@ No Docker container is required; the database is initialised in-memory
 automatically before each test module run.
 """
 
-from __future__ import annotations
-
 import logging
 import math
 import os

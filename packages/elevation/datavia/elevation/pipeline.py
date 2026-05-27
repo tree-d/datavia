@@ -4,8 +4,6 @@ Elevation Pipeline (renamed from Topography).
 Self-contained pipeline for elevation data using generic TIFF handling.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 
@@ -43,8 +41,7 @@ class ElevationPipeline(Pipeline):
       to the 200 m DEM of Germany from GeoBasis-DE / BKG.
 
     Passing ``config=None`` (or calling with no arguments) is equivalent to
-    ``config={"source": "elevation"}`` with all defaults applied, and is
-    supported for backward compatibility with zero-argument call sites.
+    ``config={"source": "elevation"}`` with all defaults applied.
     """
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:

@@ -29,8 +29,6 @@ each existing coverage cell it subtracts the covered portion:
 Each returned :class:`CoverageCell` maps to one downloader call.
 """
 
-from __future__ import annotations
-
 import datetime
 import logging
 from typing import NamedTuple

@@ -12,8 +12,6 @@ File format is inferred automatically from the file extension:
 - ``.parquet`` → ``"parquet"``
 """
 
-from __future__ import annotations
-
 import datetime
 import hashlib
 import json

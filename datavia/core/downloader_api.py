@@ -5,8 +5,6 @@ Downloader is implemented. It provides a documented stub so API docs
 and imports do not fail.
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 from .interfaces import Downloader

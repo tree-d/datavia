@@ -37,8 +37,6 @@ A ``tqdm`` outer bar shows ``[N/total chunks]`` progress.  The inner byte
 transfer bar is provided by the ``cdsapi`` client itself (unchanged).
 """
 
-from __future__ import annotations
-
 import calendar
 import contextlib
 import datetime

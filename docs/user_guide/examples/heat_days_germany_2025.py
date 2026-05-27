@@ -25,8 +25,6 @@ The script relies only on data already downloaded by
 network requests.
 """
 
-from __future__ import annotations
-
 import logging
 import math
 import sys

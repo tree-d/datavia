@@ -7,8 +7,6 @@ No API key is required; Open-Meteo is free for non-commercial use.
 For high-volume commercial use consider the ``wetterdienst`` library instead.
 """
 
-from __future__ import annotations
-
 import logging
 import tempfile
 from datetime import date

@@ -66,7 +66,7 @@ def spatial_interpolate(
         Interpolation order (1=linear, 3=cubic)
     band : int, default 1
         Band number to interpolate (1-indexed). Use for multi-band TIFFs to
-        select a specific band; defaults to band 1 for backward compatibility.
+        select a specific band; defaults to band 1 (first band).
 
     Returns
     -------

@@ -15,8 +15,6 @@ requested time window the results are blended via
 :func:`datavia.library.interpolation.blend_gridded_and_station`.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 

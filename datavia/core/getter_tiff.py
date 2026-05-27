@@ -54,10 +54,10 @@ class GetterTiff(Getter):
                             - Shape: (n_points, 2)
             crs_coords (str): CRS of input coordinates. Defaults to "EPSG:4326".
             interpolation_order (int): Interpolation order for raster sampling.
-            band (int): Band number to extract (1-indexed). Defaults to 1 for
-                        backward compatibility with single-band sources. For
-                        multi-band TIFFs use :meth:`get_band_mapping` to find
-                        the correct band index for a given property.
+            band (int): Band number to extract (1-indexed). Defaults to 1,
+                        which selects the first band. For multi-band TIFFs
+                        use :meth:`get_band_mapping` to find the correct band
+                        index for a given property.
 
         Returns:
             np.ndarray: Extracted raster values at coordinate locations.
