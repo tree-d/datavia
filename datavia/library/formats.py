@@ -53,7 +53,22 @@ except ImportError:
 
 # GeoTIFF Operations (migrated from processor)
 def read_tiff_metadata(filepath: str) -> dict[str, Any]:
-    """Complete TIFF metadata reading with all processor functionality."""
+    """Read TIFF metadata without loading the full raster array.
+
+    Parameters
+    ----------
+    filepath : str
+        Absolute path to the GeoTIFF file.
+
+    Returns
+    -------
+    dict[str, Any]
+        Metadata dict with keys ``width``, ``height``, ``count``, ``crs``,
+        ``transform``, ``bounds``, ``dtypes``, ``nodata``, ``compression``,
+        ``tiled``, ``block_shapes``, and optionally ``bands`` (list of per-band
+        dicts for multi-band files).  Returns an empty dict when the file
+        cannot be read or rasterio is unavailable.
+    """
     if not RASTERIO_AVAILABLE:
         return {}
 
@@ -105,7 +120,30 @@ def write_tiff_data(
     transform: Any = None,
     nodata: float | None = None,
 ) -> bool:
-    """Write array data to GeoTIFF with proper geospatial metadata."""
+    """Write an array to a GeoTIFF file with geospatial metadata.
+
+    Parameters
+    ----------
+    data : np.ndarray
+        2-D ``(height, width)`` or 3-D ``(bands, height, width)`` array to
+        write.
+    filepath : str
+        Absolute destination path for the GeoTIFF.
+    crs : str, optional
+        Coordinate reference system for the output file.  Defaults to
+        ``"EPSG:4326"``.
+    transform : rasterio.transform.Affine, optional
+        Affine transform mapping pixel coordinates to world coordinates.
+        When ``None`` a global identity transform is used; callers should
+        always supply this for geographically meaningful output.
+    nodata : float, optional
+        NoData sentinel value to embed in the file.  Defaults to ``None``.
+
+    Returns
+    -------
+    bool
+        ``True`` if the file was written successfully, ``False`` on error.
+    """
     if not RASTERIO_AVAILABLE:
         logger.error("rasterio not available - cannot write TIFF")
         return False
@@ -153,7 +191,23 @@ def write_tiff_data(
 
 
 def validate_tiff_file(filepath: str) -> bool:
-    """Validate TIFF file integrity and geospatial metadata."""
+    """Validate GeoTIFF file integrity and basic geospatial metadata.
+
+    Opens the file with rasterio and checks that dimensions are non-zero
+    and that a small sample window can be read without error.  Logs a
+    warning when the CRS is absent but still returns ``True``.
+
+    Parameters
+    ----------
+    filepath : str
+        Absolute path to the GeoTIFF file to validate.
+
+    Returns
+    -------
+    bool
+        ``True`` if the file is readable and dimensions are valid,
+        ``False`` on any error or if rasterio is unavailable.
+    """
     if not RASTERIO_AVAILABLE:
         return False
 
@@ -182,7 +236,21 @@ def validate_tiff_file(filepath: str) -> bool:
 
 # Shapefile Operations (for BÜK soil classification)
 def read_shapefile_data(filepath: str) -> dict[str, Any]:
-    """Read shapefile data for soil classification (BÜK support)."""
+    """Read all features from a shapefile into a dict.
+
+    Parameters
+    ----------
+    filepath : str
+        Absolute path to the ``.shp`` file.
+
+    Returns
+    -------
+    dict[str, Any]
+        Dict with keys ``crs``, ``bounds``, ``schema``, ``features``
+        (list of ``{geometry, properties}`` dicts), and ``count``.
+        Returns an empty dict when fiona or shapely is unavailable or the
+        file cannot be read.
+    """
     if not VECTOR_AVAILABLE:
         logger.error("fiona/shapely not available - cannot read shapefiles")
         return {}
@@ -214,7 +282,28 @@ def read_shapefile_data(filepath: str) -> dict[str, Any]:
 def query_shapefile_by_coords(
     filepath: str, coords: np.ndarray
 ) -> list[dict[str, Any]]:
-    """Query shapefile features by coordinate points (for BÜK classification)."""
+    """Find shapefile features that contain each query coordinate.
+
+    For each point in *coords*, returns the first feature whose geometry
+    contains the point.  Points not contained by any feature are omitted
+    from the result.
+
+    Parameters
+    ----------
+    filepath : str
+        Absolute path to the ``.shp`` file.
+    coords : np.ndarray
+        Array of shape ``(N, 2)`` with ``(longitude, latitude)`` pairs in
+        the shapefile's native CRS.
+
+    Returns
+    -------
+    list[dict[str, Any]]
+        One dict per matched point with keys ``properties`` (feature
+        attribute dict) and ``coordinates`` (``[x, y]`` list).
+        Returns an empty list when no points match or dependencies are
+        unavailable.
+    """
     if not VECTOR_AVAILABLE:
         return []
 
@@ -245,7 +334,23 @@ def query_shapefile_by_coords(
 
 # NetCDF Operations (for weather/radiation data)
 def read_netcdf_metadata(filepath: str) -> dict[str, Any]:
-    """Read NetCDF metadata for weather/radiation data."""
+    """Read high-level metadata from a NetCDF file without loading data arrays.
+
+    Parameters
+    ----------
+    filepath : str
+        Absolute path to the NetCDF file.
+
+    Returns
+    -------
+    dict[str, Any]
+        Dict with keys ``dimensions``, ``variables``, ``coordinates``,
+        ``attributes``, ``time_range`` (dict with ``start``, ``end``,
+        ``count`` or ``None``), and ``spatial_bounds`` (dict with
+        ``west``, ``east``, ``south``, ``north`` or ``None``).
+        Returns an empty dict when the file cannot be read or xarray is
+        unavailable.
+    """
     if not NETCDF_AVAILABLE:
         logger.error("xarray/netCDF4 not available - cannot read NetCDF")
         return {}
@@ -495,7 +600,30 @@ def process_temporal_netcdf(
     coords: np.ndarray,
     time_range: tuple[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Process NetCDF file for temporal weather/radiation data extraction."""
+    """Extract time-series data for a variable at given coordinates from a NetCDF file.
+
+    Parameters
+    ----------
+    filepath : str
+        Absolute path to the NetCDF file.
+    variable : str
+        Name of the variable to extract, e.g. ``"tas"`` or ``"pr"``.
+    coords : np.ndarray
+        Array of shape ``(N, 2)`` with ``(longitude, latitude)`` pairs.
+    time_range : tuple[str, str], optional
+        ``(start, end)`` ISO-8601 datetime strings used to slice the time
+        dimension.  When ``None`` all time steps are included.
+
+    Returns
+    -------
+    dict[str, Any]
+        Dict with keys ``variable`` (str), ``results`` (dict mapping
+        ``"point_<i>"`` to ``{coordinates, values, time}`` or ``None``
+        on extraction failure), and ``metadata`` (dict with ``units`` and
+        ``long_name``).
+        Returns an empty dict when the file cannot be read, the variable
+        does not exist, or xarray is unavailable.
+    """
     if not NETCDF_AVAILABLE:
         return {}
 

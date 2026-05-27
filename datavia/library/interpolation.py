@@ -207,7 +207,7 @@ def _build_spatial_interp_coords(
     """
     grid_mapping_name = ds[variable].attrs.get("grid_mapping")
 
-    # Projected grid (e.g. HYRAS EPSG:3035): dimensions are x/y in metres.
+    # Projected grid (e.g. HYRAS EPSG:3035): dimensions are x/y in meters.
     if (
         grid_mapping_name
         and grid_mapping_name in ds
@@ -266,7 +266,7 @@ def interpolate_netcdf(
 
     Supports both geographic coordinate files (ERA5: ``latitude``/``longitude``
     dimensions in degrees) and projected coordinate files (HYRAS: ``x``/``y``
-    dimensions in metres with a CF ``grid_mapping`` attribute).  The correct
+    dimensions in meters with a CF ``grid_mapping`` attribute).  The correct
     interpolation path is selected automatically; ``pyproj`` is used for
     reprojection when the file carries a ``grid_mapping``.
 
@@ -437,7 +437,7 @@ def interpolate_station_parquet(
     datetime_utc : datetime-like
         Target UTC timestamp; the nearest available timestamp is used.
     radius_km : float, optional
-        Search radius in kilometres.  Defaults to 50 km.
+        Search radius in kilometers.  Defaults to 50 km.
 
     Returns
     -------

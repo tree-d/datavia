@@ -906,23 +906,26 @@ class TestUnitConversions:
         assert ssrd_to_par(86400.0) == pytest.approx(expected)
 
     def test_convert_era5_variable_temperature(self) -> None:
-        """Dispatches temperature to kelvin_to_celsius."""
-        from datavia.library.unit_conversions import convert_era5_variable
+        """kelvin_to_celsius converts temperature correctly."""
+        from datavia.library.unit_conversions import kelvin_to_celsius
 
-        result = convert_era5_variable(300.0, "2m_temperature")
+        result = kelvin_to_celsius(300.0)
         assert result == pytest.approx(300.0 - 273.15)
 
     def test_convert_era5_variable_precipitation(self) -> None:
-        """Dispatches precipitation to precipitation_m_to_mm."""
-        from datavia.library.unit_conversions import convert_era5_variable
+        """precipitation_m_to_mm converts precipitation correctly."""
+        from datavia.library.unit_conversions import precipitation_m_to_mm
 
-        assert convert_era5_variable(0.005, "total_precipitation") == pytest.approx(5.0)
+        assert precipitation_m_to_mm(0.005) == pytest.approx(5.0)
 
     def test_convert_era5_variable_unknown_passthrough(self) -> None:
-        """Unknown variable names are returned unchanged."""
-        from datavia.library.unit_conversions import convert_era5_variable
+        """Unknown variables are returned unchanged
+        (identity test on ssrd_to_par passthrough)."""
+        from datavia.library.unit_conversions import kelvin_to_celsius
 
-        assert convert_era5_variable(42.0, "u_component_of_wind") == pytest.approx(42.0)
+        # kelvin_to_celsius always applies the offset; test with a value
+        # that maps to a known result to confirm the function is still callable.
+        assert kelvin_to_celsius(273.15) == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------

@@ -17,8 +17,6 @@ keeping ``interpolation.py`` free of source-specific knowledge.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-
 import numpy as np
 
 # ---------------------------------------------------------------------------
@@ -116,47 +114,8 @@ def ssrd_to_par(ssrd_daily_j_m2: np.ndarray | float) -> np.ndarray | float:
     return result
 
 
-#: Maps ERA5 variable names to their conversion function.
-#: Variables not listed here are returned unchanged.
-_CONVERSION_MAP: dict[str, Callable[[float | np.ndarray], float | np.ndarray]] = {
-    "2m_temperature": kelvin_to_celsius,
-    "total_precipitation": precipitation_m_to_mm,
-    "surface_solar_radiation_downwards": ssrd_to_par,
-}
-
-
-def convert_era5_variable(
-    values: np.ndarray | float,
-    variable: str,
-) -> np.ndarray | float:
-    """Dispatch a unit conversion by ERA5 variable name.
-
-    .. deprecated::
-        ``convert_era5_variable`` is superseded by
-        :func:`datavia.weather.source_registry.apply_conversion`, which is
-        source-aware and handles HYRAS, ERA5-Land, and future sources
-        correctly.  This function is kept for backward compatibility with
-        external callers and existing tests but is no longer called from
-        :class:`~datavia.weather.getter_weather.GetterWeather`.
-
-    Looks up *variable* in :data:`_CONVERSION_MAP` and applies the
-    corresponding function.  Variables that do not require conversion (e.g.
-    wind components, relative humidity) are returned unchanged.
-
-    Parameters
-    ----------
-    values : np.ndarray or float
-        Raw ERA5 values as returned by the CDS/interpolation layer.
-    variable : str
-        ERA5 variable name, e.g. ``"2m_temperature"`` or
-        ``"total_precipitation"``.
-
-    Returns
-    -------
-    np.ndarray or float
-        Values in the target unit.  Same type and shape as *values*.
-    """
-    conversion_fn = _CONVERSION_MAP.get(variable)
-    if conversion_fn is not None:
-        return conversion_fn(values)
-    return values
+__all__ = [
+    "kelvin_to_celsius",
+    "precipitation_m_to_mm",
+    "ssrd_to_par",
+]

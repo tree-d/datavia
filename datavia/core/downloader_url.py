@@ -145,18 +145,13 @@ class URLDownloader(Downloader):
     ) -> bool:
         """Download file with robust retry logic.
 
-        A ``tqdm`` byte-level progress bar is shown when ``tqdm`` is installed.
-        The bar uses binary unit scaling (``unit='B'``, ``unit_scale=True``) so
-        it renders as KB/MB/GB.  On resume it starts at the number of bytes
-        already on disk rather than at zero.
-
         Parameters
         ----------
         working_filename : str
             Path to the temporary file being written.
         content_length : str | None
             Value of the HTTP ``Content-Length`` header, or ``None`` when the
-            server did not provide it.  Used to set the ``total=`` of the bar.
+            server did not provide it.
 
         Returns
         -------
@@ -268,6 +263,7 @@ class URLDownloader(Downloader):
                 except Exception as e:
                     logger.error("Download failed: %s", e)
                     return False
+
             logger.error("Max retries reached without successful download.")
             return False
         finally:

@@ -44,7 +44,7 @@ class CompositeDownloader(Downloader, ABC):
     """
 
     def __init__(self) -> None:
-        """Initialise the composite downloader."""
+        """Initialize the composite downloader."""
         pass
 
     @property

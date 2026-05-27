@@ -17,14 +17,18 @@ logger = logging.getLogger(__name__)
 
 
 def get_raster_paths(source_name: str) -> list[str]:
-    """
-    Get file paths for raster layers filtered by source_name.
+    """Return file paths for raster layers filtered by source name.
 
-    Args:
-        source_name: Source identifier to filter layers
+    Parameters
+    ----------
+    source_name : str
+        Source identifier to filter layers.
 
-    Returns:
-        List[str]: List of file paths (URIs) for the source
+    Returns
+    -------
+    list[str]
+        File paths (URIs) for the source.  Returns an empty list when none
+        are found or the database is unavailable.
     """
     session = session_local()
     try:
@@ -45,14 +49,21 @@ def get_raster_paths(source_name: str) -> list[str]:
 
 
 def get_raster_metadata(source_name: str) -> list[dict]:
-    """
-    Get complete metadata for raster layers filtered by source_name.
+    """Return complete metadata for raster layers filtered by source name.
 
-    Args:
-        source_name: Source identifier to filter layers
+    Parameters
+    ----------
+    source_name : str
+        Source identifier to filter layers.
 
-    Returns:
-        List[Dict]: List of metadata dictionaries with layer information
+    Returns
+    -------
+    list[dict]
+        Metadata dictionaries with layer information.  Each dict contains
+        ``layer_name``, ``uri``, ``crs``, ``resolution_x``, ``resolution_y``,
+        ``bbox_wkt``, and ``acquisition_time``.
+        Returns an empty list when no layers exist or the database is
+        unavailable.
     """
     session = session_local()
     try:
@@ -97,14 +108,20 @@ def get_raster_metadata(source_name: str) -> list[dict]:
 
 
 def get_band_metadata(source_name: str) -> dict[str, list[dict]]:
-    """
-    Get band metadata for multi-band rasters filtered by source_name.
+    """Return per-band metadata for multi-band rasters filtered by source name.
 
-    Args:
-        source_name: Source identifier to filter layers
+    Parameters
+    ----------
+    source_name : str
+        Source identifier to filter layers.
 
-    Returns:
-        Dict[str, List[Dict]]: Dictionary mapping layer_name to list of band metadata
+    Returns
+    -------
+    dict[str, list[dict]]
+        Mapping of ``layer_name`` to a list of band metadata dicts.  Each
+        band dict contains ``band_index`` and ``description``.
+        Returns an empty dict when no band metadata exists or the database is
+        unavailable.
     """
     session = session_local()
     try:
@@ -144,15 +161,21 @@ def get_band_metadata(source_name: str) -> dict[str, list[dict]]:
 
 
 def get_layer_by_name(layer_name: str, source_name: str | None = None) -> dict | None:
-    """
-    Get metadata for a specific layer, optionally filtered by source.
+    """Return metadata for a specific layer, optionally filtered by source.
 
-    Args:
-        layer_name: Name of the layer to retrieve
-        source_name: Optional source filter
+    Parameters
+    ----------
+    layer_name : str
+        Name of the layer to retrieve.
+    source_name : str, optional
+        When supplied, restricts the lookup to this source.
 
-    Returns:
-        Optional[Dict]: Layer metadata dictionary or None if not found
+    Returns
+    -------
+    dict or None
+        Layer metadata dict with keys ``layer_name``, ``uri``, ``crs``,
+        ``resolution_x``, ``resolution_y``, ``bbox_wkt``, ``acquisition_time``,
+        and ``source_name``.  Returns ``None`` when no matching layer is found.
     """
     session = session_local()
     try:
@@ -206,14 +229,18 @@ def get_layer_by_name(layer_name: str, source_name: str | None = None) -> dict |
 
 
 def check_source_exists(source_name: str) -> bool:
-    """
-    Check if any raster layers exist for the given source_name.
+    """Return whether any raster layers exist for the given source name.
 
-    Args:
-        source_name: Source identifier to check
+    Parameters
+    ----------
+    source_name : str
+        Source identifier to check.
 
-    Returns:
-        bool: True if source has raster layers, False otherwise
+    Returns
+    -------
+    bool
+        ``True`` if the source has at least one raster layer registered,
+        ``False`` otherwise.
     """
     session = session_local()
     try:
@@ -252,14 +279,21 @@ def get_weather_paths(
     Both boundary comparisons rely on ISO-8601 lexicographic ordering, which
     is valid for both SQLite (text) and PostgreSQL (text / timestamptz).
 
-    Args:
-        source_name: Source identifier, e.g. ``"era5"`` or ``"dwd_stations"``.
-        variable: Variable name, e.g. ``"temperature_2m"``.
-        from_dt: Start of the requested time window (ISO-8601 datetime string).
-        to_dt: End of the requested time window (ISO-8601 datetime string).
+    Parameters
+    ----------
+    source_name : str
+        Source identifier, e.g. ``"era5"`` or ``"dwd_stations"``.
+    variable : str
+        Variable name, e.g. ``"temperature_2m"``.
+    from_dt : str
+        Start of the requested time window (ISO-8601 datetime string).
+    to_dt : str
+        End of the requested time window (ISO-8601 datetime string).
 
-    Returns:
-        List of absolute file paths (URIs) for matching weather layers.
+    Returns
+    -------
+    list[str]
+        Absolute file paths (URIs) for matching weather layers.
         Returns an empty list when no matching layers are found.
     """
     session = session_local()
@@ -306,16 +340,20 @@ def get_weather_paths(
 def get_weather_metadata(source_name: str, variable: str | None = None) -> list[dict]:
     """Return metadata dicts for weather layers filtered by source and variable.
 
-    Args:
-        source_name: Source identifier to filter layers.
-        variable: Optional variable filter. When ``None`` all variables for the
-            source are returned.
+    Parameters
+    ----------
+    source_name : str
+        Source identifier to filter layers.
+    variable : str, optional
+        Variable filter.  When ``None`` all variables for the source are
+        returned.
 
-    Returns:
-        List of metadata dictionaries, each containing
-        ``layer_name``, ``variable``, ``file_format``, ``valid_from``,
-        ``valid_until``, ``uri``, ``crs``, ``bbox``, ``acquisition_time``,
-        and ``metadata`` (raw JSON string).
+    Returns
+    -------
+    list[dict]
+        Metadata dicts, each containing ``layer_name``, ``variable``,
+        ``file_format``, ``valid_from``, ``valid_until``, ``uri``, ``crs``,
+        ``bbox``, ``acquisition_time``, and ``metadata`` (raw JSON string).
         Returns an empty list when no matching layers exist.
     """
     session = session_local()
@@ -391,13 +429,20 @@ def check_weather_source_exists(
     whose time window overlaps the requested range (same logic as
     :func:`get_weather_paths`).
 
-    Args:
-        source_name: Source identifier to check.
-        variable: Optional variable name filter.
-        from_dt: Optional start of time window (ISO-8601 datetime string).
-        to_dt: Optional end of time window (ISO-8601 datetime string).
+    Parameters
+    ----------
+    source_name : str
+        Source identifier to check.
+    variable : str, optional
+        Variable name filter.
+    from_dt : str, optional
+        Start of time window (ISO-8601 datetime string).
+    to_dt : str, optional
+        End of time window (ISO-8601 datetime string).
 
-    Returns:
+    Returns
+    -------
+    bool
         ``True`` if at least one matching weather layer exists, ``False``
         otherwise.
     """
