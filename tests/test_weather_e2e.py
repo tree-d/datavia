@@ -142,7 +142,7 @@ class TestDWDStationE2E:
             date_start=str(_DATE_START),
             date_end=str(_DATE_END),
             stations=[
-                {"name": "Berlin", "latitude": _BERLIN_LAT, "longitude": _BERLIN_LON}
+                {"id": "Berlin", "latitude": _BERLIN_LAT, "longitude": _BERLIN_LON}
             ],
         )
         output_path = downloader.download()
@@ -178,7 +178,7 @@ class TestDWDStationE2E:
             date_start=str(_DATE_START),
             date_end=str(_DATE_END),
             stations=[
-                {"name": "Berlin", "latitude": _BERLIN_LAT, "longitude": _BERLIN_LON}
+                {"id": "Berlin", "latitude": _BERLIN_LAT, "longitude": _BERLIN_LON}
             ],
         )
         raw_path = downloader.download()
@@ -215,9 +215,9 @@ class TestDWDStationE2E:
             date_start=str(_DATE_START),
             date_end=str(_DATE_END),
             stations=[
-                {"name": "Berlin", "latitude": _BERLIN_LAT, "longitude": _BERLIN_LON},
-                {"name": "Munich", "latitude": 48.14, "longitude": 11.58},
-                {"name": "Hamburg", "latitude": 53.55, "longitude": 10.0},
+                {"id": "Berlin", "latitude": _BERLIN_LAT, "longitude": _BERLIN_LON},
+                {"id": "Munich", "latitude": 48.14, "longitude": 11.58},
+                {"id": "Hamburg", "latitude": 53.55, "longitude": 10.0},
             ],
         )
         raw_path = downloader.download()
@@ -262,9 +262,9 @@ class TestDWDStationE2E:
             date_start=str(_DATE_START),
             date_end=str(_DATE_END),
             stations=[
-                {"name": "Berlin", "latitude": _BERLIN_LAT, "longitude": _BERLIN_LON},
-                {"name": "Frankfurt", "latitude": 50.11, "longitude": 8.68},
-                {"name": "Cologne", "latitude": 50.94, "longitude": 6.96},
+                {"id": "Berlin", "latitude": _BERLIN_LAT, "longitude": _BERLIN_LON},
+                {"id": "Frankfurt", "latitude": 50.11, "longitude": 8.68},
+                {"id": "Cologne", "latitude": 50.94, "longitude": 6.96},
             ],
         )
         raw_path = downloader.download()

@@ -142,7 +142,7 @@ class WeatherPipeline(Pipeline):
         )
         self._config: dict[str, Any] = dict(config)
 
-    def __call__(self, *args: Any, **kwargs: Any) -> WeatherPipeline:
+    def __call__(self, *args: Any, **kwargs: Any) -> Pipeline:
         """Instantiate the composite downloader, saver, and getter.
 
         Overrides the base :meth:`~datavia.core.interfaces.Pipeline.__call__`
@@ -152,7 +152,7 @@ class WeatherPipeline(Pipeline):
 
         Returns
         -------
-        WeatherPipeline
+        Pipeline
             Self for method chaining.
         """
         self.downloader = CompositeWeatherDownloader(config=self._config)
