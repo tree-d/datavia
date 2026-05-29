@@ -47,6 +47,7 @@ from .composite_downloader import CompositeWeatherDownloader
 from .coverage_manager import CoverageCell, CoverageManager
 from .getter_weather import GetterWeather
 from .saver_weather import SaverWeather
+from .source_registry import get_valid_variables
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +124,8 @@ class WeatherPipeline(Pipeline):
         Raises
         ------
         ValueError
-            If required keys are missing or unknown keys are present.
+            If required keys are missing, unknown keys are present, or any
+            requested variable is not valid for the configured source.
         """
         # Validate before any attribute assignment so errors surface immediately.
         Pipeline.validate_pipeline_config(
@@ -134,6 +136,21 @@ class WeatherPipeline(Pipeline):
         )
         # The source value becomes the pipeline name and DB source_name.
         source_name: str = config["source"]
+
+        # Cross-reference the requested variables against the source's known
+        # variable set.  This catches typos and cross-source variable name
+        # confusion (e.g. HYRAS-only "temperature_2m_max" in an ERA5 pipeline)
+        # at construction time before any network access.
+        valid_variables = get_valid_variables(source_name)
+        if valid_variables is not None:
+            requested: list[str] = config["variables"]
+            invalid = [v for v in requested if v not in valid_variables]
+            if invalid:
+                raise ValueError(
+                    f"WeatherPipeline: variable(s) {invalid} are not valid for "
+                    f"source '{source_name}'. "
+                    f"Valid variables: {sorted(valid_variables)}"
+                )
         super().__init__(
             name=source_name,
             downloader=CompositeWeatherDownloader,
@@ -291,6 +308,13 @@ class WeatherPipeline(Pipeline):
         -------
         bool
             ``True`` when all files were saved successfully.
+
+        Raises
+        ------
+        RuntimeError
+            If one or more cells failed to download or save.  All cells are
+            always attempted so that partial data is still registered in the
+            database and available to the caller before the error is raised.
         """
         if not self.downloader or not self.saver:
             self()
@@ -334,7 +358,10 @@ class WeatherPipeline(Pipeline):
             len(missing_cells),
         )
 
-        all_saved = True
+        # Collect failures without aborting: all cells are always attempted so
+        # that successfully downloaded data is still registered in the database
+        # and queryable even when one cell fails.
+        failed_items: list[str] = []
         for cell in missing_cells:
             cell_config = self._build_cell_config(cell)
             cell_downloader = CompositeWeatherDownloader(config=cell_config)
@@ -345,7 +372,7 @@ class WeatherPipeline(Pipeline):
                     self.name,
                     cell,
                 )
-                all_saved = False
+                failed_items.append(str(cell))
                 continue
 
             for raw_path in combined_paths.splitlines():
@@ -354,9 +381,15 @@ class WeatherPipeline(Pipeline):
                     success = self.saver.save(file_path)
                     if not success:
                         logger.error("Failed to save weather file: %s", file_path)
-                        all_saved = False
+                        failed_items.append(file_path)
 
-        return all_saved
+        if failed_items:
+            raise RuntimeError(
+                f"WeatherPipeline '{self.name}': {len(failed_items)} item(s) failed "
+                f"to download or save: {failed_items}. "
+                "Successfully registered cells remain available in the database."
+            )
+        return True
 
     # ------------------------------------------------------------------
     # Private helpers

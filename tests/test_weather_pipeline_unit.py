@@ -647,8 +647,13 @@ class TestWeatherPipeline:
         assert "/tmp/era5.nc" in saved_paths
         assert "/tmp/dwd.parquet" in saved_paths
 
-    def test_update_data_returns_false_on_download_failure(self) -> None:
-        """update_data() returns False when the per-cell download() returns 'failed'."""
+    def test_update_data_raises_on_download_failure(self) -> None:
+        """update_data() raises RuntimeError
+        when the per-cell download() returns 'failed'.
+
+        All cells are still attempted before raising so that partial data
+        from successful cells remains in the database.
+        """
         from datavia.weather.coverage_manager import CoverageCell
         from datavia.weather.pipeline import WeatherPipeline
 
@@ -683,13 +688,17 @@ class TestWeatherPipeline:
             patch.object(pipe, "sync_files_and_database"),
         ):
             mock_cm_cls.return_value.missing_spatiotemporal.return_value = [fake_cell]
-            result = pipe.update_data()
+            with pytest.raises(RuntimeError, match="failed to download or save"):
+                pipe.update_data()
 
-        assert result is False
         pipe.saver.save.assert_not_called()
 
-    def test_update_data_returns_false_on_partial_save_failure(self) -> None:
-        """update_data() returns False when at least one save() fails."""
+    def test_update_data_raises_on_partial_save_failure(self) -> None:
+        """update_data() raises RuntimeError when at least one save() fails.
+
+        The successfully saved file is still processed; only the failure causes
+        the exception, raised after the full loop completes.
+        """
         from datavia.weather.pipeline import WeatherPipeline
 
         pipe = WeatherPipeline(
@@ -726,9 +735,52 @@ class TestWeatherPipeline:
             patch.object(pipe, "sync_files_and_database"),
         ):
             mock_cm_cls.return_value.missing_spatiotemporal.return_value = [fake_cell]
-            result = pipe.update_data()
+            with pytest.raises(RuntimeError, match="failed to download or save"):
+                pipe.update_data()
 
-        assert result is False
+    def test_invalid_variable_for_era5_raises_at_init(self) -> None:
+        """Passing a HYRAS-only variable to an ERA5 pipeline
+        raises ValueError at __init__.
+
+        ``temperature_2m_max`` and ``temperature_2m_min`` are defined only in
+        the HYRAS ``nc_variable_map``.  Constructing a ``WeatherPipeline`` with
+        ``source='ERA5_land'`` and either of those variables must raise
+        ``ValueError`` immediately, before any network access.
+
+        This prevents the silent failure mode where the CDS API receives an
+        unrecognised variable name, the download is skipped, and
+        ``get_data()`` later raises ``RuntimeError: No weather files found``.
+        """
+        from datavia.weather.pipeline import WeatherPipeline
+
+        with pytest.raises(ValueError, match="temperature_2m_max"):
+            WeatherPipeline(
+                config={
+                    "source": "ERA5_land",
+                    "variables": ["temperature_2m_max", "temperature_2m_min"],
+                    "date_start": "2024-06-01",
+                    "date_end": "2024-06-30",
+                }
+            )
+
+    def test_invalid_variable_error_message_includes_valid_set(self) -> None:
+        """The ValueError for an invalid variable lists the valid options.
+
+        Ensures the error message is actionable: the user can read which
+        variables are actually supported without consulting the source registry
+        manually.
+        """
+        from datavia.weather.pipeline import WeatherPipeline
+
+        with pytest.raises(ValueError, match="2m_temperature"):
+            WeatherPipeline(
+                config={
+                    "source": "ERA5_land",
+                    "variables": ["temperature_2m_max"],
+                    "date_start": "2024-06-01",
+                    "date_end": "2024-06-30",
+                }
+            )
 
 
 # ---------------------------------------------------------------------------

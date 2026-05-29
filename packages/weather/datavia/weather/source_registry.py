@@ -258,3 +258,43 @@ def apply_conversion(
         return value
 
     return conversion_fn(value)
+
+
+def get_valid_variables(source_name: str) -> frozenset[str] | None:
+    """Return the set of pipeline variable names supported by *source_name*.
+
+    Reads the ``nc_variable_map`` values from :data:`SOURCE_REGISTRY`.  These
+    are the human-readable pipeline variable names (e.g. ``"2m_temperature"``,
+    ``"total_precipitation"``) that callers may pass to
+    :class:`~datavia.weather.pipeline.WeatherPipeline`.
+
+    Returns ``None`` for sources that have no ``nc_variable_map`` (currently
+    ``"DWD_stations"``), indicating that no compile-time variable validation is
+    possible for that source.
+
+    Parameters
+    ----------
+    source_name : str
+        A key in :data:`SOURCE_REGISTRY`, e.g. ``"ERA5_land"`` or
+        ``"DWD_stations"``.
+
+    Returns
+    -------
+    frozenset[str] or None
+        Frozenset of valid pipeline variable names when the source has a known
+        variable map, or ``None`` when validation is not applicable.
+
+    Raises
+    ------
+    KeyError
+        If *source_name* is not present in :data:`SOURCE_REGISTRY`.
+    """
+    if source_name not in SOURCE_REGISTRY:
+        raise KeyError(
+            f"Unknown weather source '{source_name}'. "
+            f"Valid sources: {sorted(SOURCE_REGISTRY)}"
+        )
+    nc_var_map: dict[str, str] = SOURCE_REGISTRY[source_name].get("nc_variable_map", {})
+    if not nc_var_map:
+        return None
+    return frozenset(nc_var_map.values())

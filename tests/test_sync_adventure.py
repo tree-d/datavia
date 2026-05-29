@@ -409,7 +409,7 @@ class TestWeatherSyncAdventure:
         "valid_until": "2024-01-31T23:00:00",
         "bbox": "POLYGON ((5.9 47.3, 15.0 47.3, 15.0 55.1, 5.9 55.1, 5.9 47.3))",
         "crs": "EPSG:4326",
-        "variables": ["temperature_2m"],
+        "variables": ["2m_temperature"],
     }
 
     def _build_weather_pipeline(self, data_dir: str) -> tuple:
@@ -438,7 +438,7 @@ class TestWeatherSyncAdventure:
         pipeline = WeatherPipeline(
             config={
                 "source": self._SOURCE,
-                "variables": ["temperature_2m"],
+                "variables": ["2m_temperature"],
                 "date_start": "2024-01-01",
                 "date_end": "2024-01-31",
             }
@@ -469,10 +469,10 @@ class TestWeatherSyncAdventure:
         # the deterministic destination name (BUG-07 fix).
         src_file = tmp_path / "temperature_jan.nc"
         src_file.write_bytes(b"FAKE_NC_CONTENT")
-        # _FAKE_NC_META: variable=temperature_2m, Jan 2024, Germany bbox
-        # → _build_dest_stem produces ERA5_land_temperature_2m_202401_202401_11dae5.nc
+        # _FAKE_NC_META: variable=2m_temperature, Jan 2024, Germany bbox
+        # → _build_dest_stem produces ERA5_land_2m_temperature_202401_202401_11dae5.nc
         expected_dest = str(
-            tmp_path / f"{self._SOURCE}_temperature_2m_202401_202401_11dae5.nc"
+            tmp_path / f"{self._SOURCE}_2m_temperature_202401_202401_11dae5.nc"
         )
 
         with patch(
@@ -481,7 +481,7 @@ class TestWeatherSyncAdventure:
         ):
             # Full save (not register_only) so that the copy is made and the
             # registered URI is the destination path.
-            assert saver.save(str(src_file), variable="temperature_2m")
+            assert saver.save(str(src_file), variable="2m_temperature")
 
         disk_files = set(saver.list_managed_files())
         db_uris = getter.get_registered_uris()
@@ -502,7 +502,7 @@ class TestWeatherSyncAdventure:
 
         phantom_uri = str(tmp_path / f"{self._SOURCE}_vanished_jan.nc")
         _insert_weather_layer(
-            self._SOURCE, f"{self._SOURCE}_vanished_jan", "temperature_2m", phantom_uri
+            self._SOURCE, f"{self._SOURCE}_vanished_jan", "2m_temperature", phantom_uri
         )
 
         assert phantom_uri in getter.get_registered_uris()
@@ -550,7 +550,7 @@ class TestWeatherSyncAdventure:
         # The ghost: DB row, file deleted.
         phantom_uri = str(tmp_path / f"{self._SOURCE}_vanished_feb.nc")
         _insert_weather_layer(
-            self._SOURCE, f"{self._SOURCE}_vanished_feb", "temperature_2m", phantom_uri
+            self._SOURCE, f"{self._SOURCE}_vanished_feb", "2m_temperature", phantom_uri
         )
 
         # The orphan: file on disk, no DB row.
