@@ -323,6 +323,13 @@ def interpolate_netcdf(
         If *variable* does not exist in the NetCDF file.
     ValueError
         If *temporal_resolution* is not ``"daily"`` or ``"hourly"``.
+
+    Notes
+    -----
+    Spatial dimension coordinates are sorted to ascending order before
+    gap-filling with :meth:`~xarray.DataArray.interpolate_na`.  This ensures
+    compatibility with ERA5-Land files, which store the latitude dimension in
+    descending order (North → South) as delivered by the CDS API.
     """
     if not XARRAY_AVAILABLE:
         raise ImportError(
@@ -356,6 +363,16 @@ def interpolate_netcdf(
         y_dim = (
             "y" if "y" in da.dims else ("latitude" if "latitude" in da.dims else "lat")
         )
+        # ERA5-Land stores latitude in descending order (North → South).
+        # xarray's interpolate_na with method="nearest" requires the dimension
+        # coordinate to be monotonically increasing, so each spatial dimension
+        # is sorted to ascending order first.  sortby() is order-agnostic: it
+        # is a no-op when the coordinate is already ascending (HYRAS) and
+        # reverses it when descending (ERA5).  The subsequent da.interp() call
+        # handles both orderings transparently, so the sort does not affect
+        # the interpolated values.
+        da = da.sortby(x_dim)
+        da = da.sortby(y_dim)
         # Two sequential 1-D fills (x then y) approximate a 2-D nearest-
         # neighbour fill.  A true 2-D solution exists via
         # scipy.ndimage.distance_transform_edt, but it requires extracting raw

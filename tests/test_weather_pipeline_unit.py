@@ -1618,6 +1618,51 @@ class TestInterpolateNetcdf:
         with pytest.raises(KeyError, match="no_such_var"):
             interpolate_netcdf(nc, 49.0, 11.0, "no_such_var", "2024-06-15T12:00:00")
 
+    def test_descending_latitude_produces_non_nan_result(self, tmp_path) -> None:
+        """ERA5-style descending latitude does not cause all-NaN output (Bug 3).
+
+        ERA5-Land files from the CDS API store the latitude dimension in
+        descending order (North to South).  Before the fix, calling
+        ``interpolate_na`` on such a grid raised
+        ``ValueError: Index 'latitude' must be monotonically increasing``,
+        which was silently swallowed and caused the caller to receive all-NaN.
+
+        This test constructs a synthetic 5x5 grid with latitude running from
+        55.0 down to 47.0, exactly mirroring the ERA5 orientation, and verifies
+        that ``interpolate_netcdf`` returns a finite value.
+
+        Parameters
+        ----------
+        tmp_path : pathlib.Path
+            pytest-provided temporary directory.
+        """
+        import xarray as xr
+
+        from datavia.library.interpolation import interpolate_netcdf
+
+        # Descending latitudes: North → South, as delivered by the CDS API.
+        lats = np.array([55.0, 53.0, 51.0, 49.0, 47.0], dtype=float)
+        lons = np.array([9.0, 10.0, 11.0, 12.0, 13.0], dtype=float)
+        times = np.array(["2024-06-15T12:00:00"], dtype="datetime64[ns]")
+
+        data = np.full((1, len(lats), len(lons)), 18.5, dtype=float)
+        da = xr.DataArray(
+            data,
+            dims=["time", "latitude", "longitude"],
+            coords={"time": times, "latitude": lats, "longitude": lons},
+        )
+        ds = xr.Dataset({"t2m": da})
+        nc_path = str(tmp_path / "era5_descending_lat.nc")
+        ds.to_netcdf(nc_path)
+
+        result = interpolate_netcdf(nc_path, 51.0, 11.0, "t2m", "2024-06-15T12:00:00")
+
+        assert np.isfinite(result), (
+            "Expected a finite interpolated value for a descending-latitude "
+            f"ERA5-style grid; got {result!r}"
+        )
+        assert result == pytest.approx(18.5)
+
 
 # ---------------------------------------------------------------------------
 # interpolate_netcdf — input_crs parameter (Enhancement 1 / Step 5)

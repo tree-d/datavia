@@ -300,7 +300,15 @@ class GetterWeather(Getter):
                                 )
                             )
             except Exception as exc:
-                logger.warning("NetCDF batch interpolation failed: %s", exc)
+                logger.error(
+                    "NetCDF batch interpolation failed for source='%s',"
+                    " variable='%s': %s",
+                    self.source_name,
+                    variable,
+                    exc,
+                    exc_info=True,
+                )
+                raise
 
         # --- Station Parquet path: per-coord; only supported for a single timestamp ---
         # Multi-timestamp station blending is not yet implemented; skip the station
