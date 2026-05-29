@@ -248,7 +248,7 @@ def _build_spatial_interp_coords(
 
 
 def interpolate_netcdf(
-    nc_path: str,
+    nc_path: str | list[str],
     lats: float | np.ndarray,
     lons: float | np.ndarray,
     variable: str,
@@ -275,8 +275,13 @@ def interpolate_netcdf(
 
     Parameters
     ----------
-    nc_path : str
-        Absolute path to the NetCDF file (``*.nc``).
+    nc_path : str or list[str]
+        Absolute path to a NetCDF file (``*.nc``), or a list of paths that
+        will each be opened with :func:`xarray.open_dataset` and concatenated
+        along the ``"time"`` dimension with :func:`xarray.concat`.  Use a
+        list when the query time range spans multiple monthly chunks.
+        A plain string is opened with :func:`xarray.open_dataset` (unchanged
+        single-file behaviour).
     lats : float or np.ndarray
         Latitude(s) of the query point(s) in *input_crs*.  A scalar float
         produces a scalar (or 1-D time-series) return value; an array of
@@ -330,6 +335,11 @@ def interpolate_netcdf(
     gap-filling with :meth:`~xarray.DataArray.interpolate_na`.  This ensures
     compatibility with ERA5-Land files, which store the latitude dimension in
     descending order (North → South) as delivered by the CDS API.
+
+    When *nc_path* is a list, each file is opened individually with
+    :func:`xarray.open_dataset` and the results are concatenated in-memory
+    using :func:`xarray.concat` (dimension ``"time"``).  This avoids any
+    dependency on ``dask`` while still supporting multi-file queries.
     """
     if not XARRAY_AVAILABLE:
         raise ImportError(
@@ -341,10 +351,21 @@ def interpolate_netcdf(
     lats_arr = np.atleast_1d(np.asarray(lats, dtype=float))
     lons_arr = np.atleast_1d(np.asarray(lons, dtype=float))
 
-    with xr.open_dataset(nc_path) as ds:
+    # Open one file or eagerly concatenate several files along the time
+    # dimension.  A plain string uses open_dataset (existing single-file path,
+    # unchanged).  A list opens each file individually and merges them in
+    # memory with xr.concat — no dask dependency required.
+    if isinstance(nc_path, list):
+        _parts = [xr.open_dataset(f) for f in nc_path]
+        _ds_ctx = xr.concat(_parts, dim="time")
+        for _d in _parts:
+            _d.close()
+    else:
+        _ds_ctx = xr.open_dataset(nc_path)
+    with _ds_ctx as ds:
         if variable not in ds.data_vars:
             raise KeyError(
-                f"Variable '{variable}' not found in '{nc_path}'. "
+                f"Variable '{variable}' not found in {nc_path!r}. "
                 f"Available variables: {list(ds.data_vars)}"
             )
 

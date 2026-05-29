@@ -264,7 +264,7 @@ class GetterWeather(Getter):
                 lats = coords_arr[:, 1]
                 lons = coords_arr[:, 0]
                 raw_batch = interpolate_netcdf(
-                    nc_files[0],
+                    nc_files,
                     lats,
                     lons,
                     nc_variable,

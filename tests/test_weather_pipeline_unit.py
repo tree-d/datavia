@@ -1715,6 +1715,67 @@ class TestInterpolateNetcdf:
         )
         assert result == pytest.approx(18.5)
 
+    def test_multi_file_nc_returns_data_from_all_files(self, tmp_path) -> None:
+        """A list of NetCDF paths is opened as a combined dataset (Bug 5).
+
+        ERA5 monthly chunks are stored as separate ``.nc`` files.  Before the
+        fix, ``interpolate_netcdf`` only opened ``nc_files[0]`` and returned
+        NaN for any timestamp that lived in a subsequent file.  After the fix,
+        passing a list opens all files with ``xr.open_mfdataset`` and timestamps
+        from any file in the list are returned correctly.
+
+        Parameters
+        ----------
+        tmp_path : pathlib.Path
+            pytest-provided temporary directory.
+        """
+        import xarray as xr
+
+        from datavia.library.interpolation import interpolate_netcdf
+
+        lats = np.array([47.0, 48.0, 49.0, 50.0, 51.0], dtype=float)
+        lons = np.array([9.0, 10.0, 11.0, 12.0, 13.0], dtype=float)
+
+        # June file — constant value 20.0
+        june_ts = np.array(["2024-06-15T12:00:00"], dtype="datetime64[ns]")
+        june_data = np.full((1, len(lats), len(lons)), 20.0)
+        june_da = xr.DataArray(
+            june_data,
+            dims=["time", "latitude", "longitude"],
+            coords={"time": june_ts, "latitude": lats, "longitude": lons},
+        )
+        june_path = str(tmp_path / "era5_june.nc")
+        xr.Dataset({"t2m": june_da}).to_netcdf(june_path)
+
+        # July file — constant value 25.0
+        july_ts = np.array(["2024-07-15T12:00:00"], dtype="datetime64[ns]")
+        july_data = np.full((1, len(lats), len(lons)), 25.0)
+        july_da = xr.DataArray(
+            july_data,
+            dims=["time", "latitude", "longitude"],
+            coords={"time": july_ts, "latitude": lats, "longitude": lons},
+        )
+        july_path = str(tmp_path / "era5_july.nc")
+        xr.Dataset({"t2m": july_da}).to_netcdf(july_path)
+
+        result_june = interpolate_netcdf(
+            [june_path, july_path], 49.0, 11.0, "t2m", "2024-06-15T12:00:00"
+        )
+        result_july = interpolate_netcdf(
+            [june_path, july_path], 49.0, 11.0, "t2m", "2024-07-15T12:00:00"
+        )
+
+        assert np.isfinite(result_june), (
+            f"Expected finite result for June timestamp "
+            f"from multi-file list; got {result_june!r}"
+        )
+        assert np.isfinite(result_july), (
+            f"Expected finite result for July timestamp "
+            f"from multi-file list; got {result_july!r}"
+        )
+        assert result_june == pytest.approx(20.0)
+        assert result_july == pytest.approx(25.0)
+
 
 # ---------------------------------------------------------------------------
 # interpolate_netcdf — input_crs parameter (Enhancement 1 / Step 5)
