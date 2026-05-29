@@ -475,12 +475,15 @@ def _build_dest_stem(
     - Multiple data variables:
       ``{source_name}_{YYYYmm_start}_{YYYYmm_end}_{bbox_hash}``
       (encoding all variable names would produce an impractically long stem).
+    - Parquet with ``station_id`` column:
+      ``{source_name}_{year_start}_{year_end}_{station_hash}``
+      e.g. ``DWD_stations_2024_2024_a3f91c``.  ``station_hash`` is the first
+      6 hex digits of the MD5 of the sorted station-ID list, so two downloads
+      with different station sets always receive different stems.
+    - Parquet without ``station_id`` column: ``{source_name}_{year}``
+      (backward-compatible fallback for files that pre-date this convention).
     - Unreadable NC / Parquet: ``{source_name}_{temp_stem}`` as a safe
       fallback so existing behaviour for Parquet station files is preserved.
-    - ``bbox_hash`` is the first 6 hex digits of the MD5 of the WKT bounding
-      box string, ensuring spatially distinct fragments for the same variable
-      and period receive unique filenames.  Falls back to ``nobbox`` when the
-      file has no spatial coordinates.
 
     Parameters
     ----------
@@ -519,13 +522,27 @@ def _build_dest_stem(
         # Multiple variables or metadata unreadable — omit variable name.
         return f"{source_name}_{time_range}_{bbox_tag}"
 
-    # Parquet (DWD station files): derive a year from the datetime column so
-    # the filename is descriptive rather than random.  Falls back to the temp
-    # stem only when the datetime column cannot be read.
+    # Parquet (DWD station files): derive a unique stem from the station set
+    # and date range so that two downloads with different station sets never
+    # produce the same filename.  Falls back gracefully when the station_id
+    # column is absent (backward compatibility) or the file is unreadable.
     try:
-        df = pd.read_parquet(data_path, columns=["datetime"])
+        df = pd.read_parquet(data_path, columns=["datetime", "station_id"])
         df["datetime"] = pd.to_datetime(df["datetime"])
-        year = str(df["datetime"].min().year)
+        year_start = str(df["datetime"].min().year)
+        year_end = str(df["datetime"].max().year)
+        station_ids = sorted(df["station_id"].unique().tolist())
+        station_hash = hashlib.md5(
+            str(station_ids).encode(), usedforsecurity=False
+        ).hexdigest()[:6]
+        return f"{source_name}_{year_start}_{year_end}_{station_hash}"
+    except Exception:
+        pass
+
+    try:
+        df_dt = pd.read_parquet(data_path, columns=["datetime"])
+        df_dt["datetime"] = pd.to_datetime(df_dt["datetime"])
+        year = str(df_dt["datetime"].min().year)
         return f"{source_name}_{year}"
     except Exception:
         stem = os.path.splitext(os.path.basename(data_path))[0]

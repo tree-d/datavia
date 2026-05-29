@@ -8,8 +8,6 @@ def weather_analysis():
             "source": "ERA5_land",
             "variables": [
                 "2m_temperature",
-                "temperature_2m_max",
-                "temperature_2m_min",
                 "total_precipitation",
             ],
             "date_start": "2024-06-01",

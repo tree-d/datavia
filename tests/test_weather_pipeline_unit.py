@@ -1289,11 +1289,15 @@ class TestSaverWeatherDestNaming:
     def test_parquet_uses_datetime_year_not_temp_stem(
         self, sqlite_db: None, tmp_path
     ) -> None:
-        """A Parquet station file is copied as ``{source}_{year}.parquet``.
+        """A Parquet station file is copied as
+        ``{source}_{year_start}_{year_end}_{hash}.parquet``.
 
-        The year is derived from the ``datetime`` column minimum, so the
-        destination name is deterministic and human-readable rather than
-        inheriting the random ``tmp*`` temp stem.
+        The year range is derived from the ``datetime`` column and the station
+        hash from the sorted ``station_id`` list, so the destination name is
+        deterministic and human-readable rather than inheriting the random
+        ``tmp*`` temp stem.  Two downloads with the same station set in the same
+        year produce the same stem; different station sets produce different
+        stems (Bug 6 fix).
 
         Parameters
         ----------
@@ -1302,6 +1306,8 @@ class TestSaverWeatherDestNaming:
         tmp_path : pathlib.Path
             pytest-provided temporary directory.
         """
+        import hashlib
+
         import pandas as pd
         from datavia.weather.saver_weather import SaverWeather
 
@@ -1321,8 +1327,72 @@ class TestSaverWeatherDestNaming:
 
         saver.save(str(parquet_file))
 
+        station_hash = hashlib.md5(
+            str([1]).encode(), usedforsecurity=False
+        ).hexdigest()[:6]
+        expected_name = f"DWD_2023_2023_{station_hash}.parquet"
+
         assert not (tmp_path / "DWD_tmpABCDEF.parquet").exists()
-        assert (tmp_path / "DWD_2023.parquet").exists()
+        assert (tmp_path / expected_name).exists(), (
+            f"Expected '{expected_name}' in {tmp_path}, "
+            f"found: {list(tmp_path.glob('*.parquet'))}"
+        )
+
+    def test_parquet_different_station_sets_produce_unique_stems(
+        self, tmp_path
+    ) -> None:
+        """Two DWD downloads with different station sets
+        in the same year get different stems.
+
+        Before the fix, both UC3 (8 German cities) and UC5 (6 Munich-centric
+        cities) produced ``DWD_stations_2024`` — the same filename — because
+        the stem was derived from the year alone.  UC5's save then silently
+        overwrote UC3's cached file.
+
+        This test verifies that the station hash makes the stems structurally
+        distinct so that no two downloads with different station sets can
+        collide.
+
+        Parameters
+        ----------
+        tmp_path : pathlib.Path
+            pytest-provided temporary directory.
+        """
+        import pandas as pd
+        from datavia.weather.saver_weather import _build_dest_stem
+
+        # UC3 — 8 German cities, July 2024
+        df_uc3 = pd.DataFrame(
+            {
+                "datetime": pd.to_datetime(["2024-07-17"] * 8),
+                "station_id": [101, 102, 103, 104, 105, 106, 107, 108],
+                "temperature_2m": [20.0, 19.5, 21.0, 18.0, 22.0, 17.5, 23.0, 16.0],
+            }
+        )
+        parquet_uc3 = str(tmp_path / "uc3.parquet")
+        df_uc3.to_parquet(parquet_uc3)
+
+        # UC5 — 4 Munich-centric cities, August 2024
+        df_uc5 = pd.DataFrame(
+            {
+                "datetime": pd.to_datetime(["2024-08-05"] * 4),
+                "station_id": [201, 202, 203, 204],
+                "temperature_2m": [24.0, 25.0, 23.0, 26.0],
+            }
+        )
+        parquet_uc5 = str(tmp_path / "uc5.parquet")
+        df_uc5.to_parquet(parquet_uc5)
+
+        stem_uc3 = _build_dest_stem(parquet_uc3, "parquet", "DWD_stations")
+        stem_uc5 = _build_dest_stem(parquet_uc5, "parquet", "DWD_stations")
+
+        assert stem_uc3 != stem_uc5, (
+            f"Expected different stems for different station sets; "
+            f"UC3: '{stem_uc3}', UC5: '{stem_uc5}'"
+        )
+        # Both stems must include the year so the name is still human-readable.
+        assert "2024" in stem_uc3
+        assert "2024" in stem_uc5
 
 
 # ---------------------------------------------------------------------------
