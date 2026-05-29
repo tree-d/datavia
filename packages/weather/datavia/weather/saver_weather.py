@@ -169,6 +169,10 @@ class SaverWeather(Saver):
             valid_from, valid_until, bbox, crs = _read_temporal_metadata(
                 dest_path, file_format, variables_to_register[0]
             )
+            # Station IDs are only meaningful for parquet files (DWD station
+            # data).  Persisting them in the metadata JSON enables the
+            # station-aware cache check in check_data_exists().
+            station_ids = _read_station_ids(dest_path, file_format)
 
             for var in variables_to_register:
                 # Use a per-variable layer name so each row is uniquely
@@ -187,6 +191,7 @@ class SaverWeather(Saver):
                     uri=dest_path,
                     bbox=bbox,
                     crs=crs,
+                    station_ids=station_ids,
                 )
                 logger.info(
                     "Registered weather layer '%s' (variable='%s') in database.",
@@ -236,8 +241,14 @@ class SaverWeather(Saver):
         variable: str,
         from_dt: str | None = None,
         to_dt: str | None = None,
+        station_ids: list[str] | None = None,
     ) -> bool:
         """Check whether data for a variable exists in the configured time window.
+
+        When *station_ids* is supplied the check also verifies that at least
+        one registered layer covers every requested station.  This prevents
+        false positives for DWD parquet sources where a prior download for a
+        different station set would otherwise satisfy the time-overlap check.
 
         Parameters
         ----------
@@ -247,18 +258,23 @@ class SaverWeather(Saver):
             Start of the time window (ISO-8601 datetime string).
         to_dt : str, optional
             End of the time window (ISO-8601 datetime string).
+        station_ids : list[str], optional
+            Station identifiers that must all be present in a registered layer.
+            When ``None`` only the time-overlap check is applied, preserving
+            existing behaviour for ERA5/HYRAS callers.
 
         Returns
         -------
         bool
             ``True`` when at least one weather layer exists for the requested
-            variable and time range.
+            variable, time range, and (if given) station set.
         """
         return check_weather_source_exists(
             source_name=self.source_name,
             variable=variable,
             from_dt=from_dt,
             to_dt=to_dt,
+            station_ids=station_ids,
         )
 
     # ------------------------------------------------------------------
@@ -275,6 +291,7 @@ class SaverWeather(Saver):
         uri: str,
         bbox: str | None,
         crs: str | None,
+        station_ids: list[str] | None = None,
     ) -> None:
         """Insert or replace a row in weather_layers for the given file.
 
@@ -300,6 +317,9 @@ class SaverWeather(Saver):
             WKT POLYGON bounding box in EPSG:4326.
         crs : str or None
             CRS string, e.g. ``"EPSG:4326"``.
+        station_ids : list[str] or None, optional
+            Sorted list of station identifiers stored in the parquet file.
+            ``None`` for non-parquet (e.g. NetCDF) sources.
         """
         acquisition_time = datetime.datetime.now(datetime.UTC).isoformat()
 
@@ -338,7 +358,12 @@ class SaverWeather(Saver):
                     "acquisition_time": acquisition_time,
                     "bbox": bbox,
                     "crs": crs,
-                    "metadata": json.dumps({"file_format": file_format}),
+                    "metadata": json.dumps(
+                        {
+                            "file_format": file_format,
+                            "station_ids": station_ids,
+                        }
+                    ),
                 },
             )
             session.commit()
@@ -536,8 +561,13 @@ def _build_dest_stem(
             str(station_ids).encode(), usedforsecurity=False
         ).hexdigest()[:6]
         return f"{source_name}_{year_start}_{year_end}_{station_hash}"
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning(
+            "Could not derive station-hash stem from '%s': %s; "
+            "falling back to datetime-only stem.",
+            data_path,
+            exc,
+        )
 
     try:
         df_dt = pd.read_parquet(data_path, columns=["datetime"])
@@ -677,3 +707,36 @@ def _read_temporal_metadata(
         valid_until = None
 
     return valid_from, valid_until, None, "EPSG:4326"
+
+
+def _read_station_ids(path: str, file_format: str) -> list[str] | None:
+    """Return sorted unique station IDs from a parquet weather file.
+
+    Called during :meth:`SaverWeather.save` so that station identifiers are
+    persisted in the ``metadata`` JSON column.  This enables the
+    station-aware cache check in
+    :func:`~datavia.library.database.query.check_weather_source_exists`.
+
+    Parameters
+    ----------
+    path : str
+        Absolute path to the file.
+    file_format : str
+        ``"netcdf"`` or ``"parquet"``.  NetCDF files have no station IDs;
+        ``None`` is returned immediately for them.
+
+    Returns
+    -------
+    list[str] or None
+        Sorted list of unique station ID strings for parquet files, or
+        ``None`` when the file is NetCDF, the column is absent, or the
+        file cannot be read.
+    """
+    if file_format != "parquet":
+        return None
+    try:
+        df = pd.read_parquet(path, columns=["station_id"])
+        return sorted(str(sid) for sid in df["station_id"].unique())
+    except Exception as exc:
+        logger.warning("Could not read station_id column from '%s': %s", path, exc)
+        return None

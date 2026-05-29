@@ -333,24 +333,55 @@ class WeatherPipeline(Pipeline):
         # Reconcile disk with DB before checking what to download.
         self.sync_files_and_database()
 
-        # Compute the uncovered (bbox, date_range) cells before issuing any
-        # requests.  This avoids redundant downloads on repeated update_data()
-        # calls and supports incremental spatial or temporal extension.
-        coverage_manager = CoverageManager(self.name, self._config["variables"])
-        req_bbox = self._get_request_bbox()
-        missing_cells = coverage_manager.missing_spatiotemporal(
-            req_bbox,
-            self._config["date_start"],
-            self._config["date_end"],
-        )
-
-        if not missing_cells:
+        # DWD station sources have no grid bbox: CoverageManager falls back to
+        # the Germany default and would report "all covered" after any prior
+        # DWD download, regardless of which stations were requested.  Use a
+        # direct station-aware DB check instead and, when data is missing,
+        # issue a single download cell for the full configured date range.
+        if self._is_dwd_source():
+            station_ids = self._get_dwd_station_ids()
+            variable = self._config["variables"][0]
+            if self.saver.check_data_exists(
+                variable=variable,
+                from_dt=self._config["date_start"],
+                to_dt=self._config["date_end"],
+                station_ids=station_ids,
+            ):
+                logger.info(
+                    "WeatherPipeline '%s': all requested data already registered. "
+                    "Nothing to download.",
+                    self.name,
+                )
+                return True
             logger.info(
-                "WeatherPipeline '%s': all requested data already registered. "
-                "Nothing to download.",
+                "WeatherPipeline '%s': DWD data not yet registered; downloading.",
                 self.name,
             )
-            return True
+            missing_cells: list[CoverageCell] = [
+                CoverageCell(
+                    bbox=_GERMANY_BBOX_WSNE,
+                    date_start=self._config["date_start"],
+                    date_end=self._config["date_end"],
+                )
+            ]
+        else:
+            # Non-DWD sources: use CoverageManager for spatiotemporal delta so
+            # that only uncovered (bbox, date_range) cells are downloaded.
+            coverage_manager = CoverageManager(self.name, self._config["variables"])
+            req_bbox = self._get_request_bbox()
+            missing_cells = coverage_manager.missing_spatiotemporal(
+                req_bbox,
+                self._config["date_start"],
+                self._config["date_end"],
+            )
+
+            if not missing_cells:
+                logger.info(
+                    "WeatherPipeline '%s': all requested data already registered. "
+                    "Nothing to download.",
+                    self.name,
+                )
+                return True
 
         logger.info(
             "WeatherPipeline '%s': %d cell(s) to download.",
@@ -445,6 +476,41 @@ class WeatherPipeline(Pipeline):
             # Convert back to CDS API convention: [north, west, south, east].
             cell_config["era5_bbox"] = [n, w, s, e]
         return cell_config
+
+    def _is_dwd_source(self) -> bool:
+        """Return ``True`` when this pipeline targets DWD station data.
+
+        A pipeline is considered a DWD source when either:
+
+        - ``config["source"]`` is ``"DWD_stations"`` (DWD-only mode), or
+        - ``"dwd_stations"`` is present in the config (hybrid ERA5/DWD mode).
+
+        Returns
+        -------
+        bool
+            ``True`` for DWD station pipelines, ``False`` otherwise.
+        """
+        return (
+            self._config.get("source") == "DWD_stations"
+            or "dwd_stations" in self._config
+        )
+
+    def _get_dwd_station_ids(self) -> list[str] | None:
+        """Return sorted station IDs from the configured DWD station list.
+
+        Reads ``config["dwd_stations"]``, which is a list of dicts each
+        containing an ``"id"`` key (station identifier).
+
+        Returns
+        -------
+        list[str] or None
+            Sorted string station IDs, or ``None`` when the station list is
+            absent or empty.
+        """
+        stations: list[dict] = self._config.get("dwd_stations", [])
+        if not stations:
+            return None
+        return sorted(str(station["id"]) for station in stations)
 
     def get_weather_data(
         self,

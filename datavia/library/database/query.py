@@ -6,6 +6,7 @@ components.  Uses plain SQL compatible with both SQLite and PostgreSQL:
 bbox values are stored and returned as WKT text strings.
 """
 
+import json as _json
 import logging
 from typing import Any
 
@@ -422,12 +423,19 @@ def check_weather_source_exists(
     variable: str | None = None,
     from_dt: str | None = None,
     to_dt: str | None = None,
+    station_ids: list[str] | None = None,
 ) -> bool:
     """Check whether weather layers exist for a given source and optional filters.
 
     When *from_dt* and *to_dt* are supplied the check is narrowed to layers
     whose time window overlaps the requested range (same logic as
     :func:`get_weather_paths`).
+
+    When *station_ids* is supplied the function additionally verifies that at
+    least one matching layer contains all requested station IDs in its stored
+    ``metadata`` JSON.  This prevents false positives for DWD parquet sources
+    where a prior download for a different station set would otherwise satisfy
+    the time-overlap check alone.
 
     Parameters
     ----------
@@ -439,16 +447,29 @@ def check_weather_source_exists(
         Start of time window (ISO-8601 datetime string).
     to_dt : str, optional
         End of time window (ISO-8601 datetime string).
+    station_ids : list[str], optional
+        Station identifiers that must all be present in a registered layer.
+        When ``None`` only the time-overlap check is applied, preserving
+        existing behaviour for ERA5/HYRAS callers.
 
     Returns
     -------
     bool
-        ``True`` if at least one matching weather layer exists, ``False``
+        ``True`` if at least one matching weather layer exists (and covers
+        all requested station IDs when *station_ids* is provided), ``False``
         otherwise.
     """
+
     session = session_local()
     try:
-        sql = "SELECT COUNT(*) FROM weather_layers WHERE source_name = :source_name"
+        # When a station-ID filter is needed we must retrieve the metadata
+        # column so we can evaluate the subset check in Python.  Otherwise
+        # a simple COUNT query is sufficient and cheaper.
+        if station_ids is not None:
+            sql = "SELECT metadata FROM weather_layers WHERE source_name = :source_name"
+        else:
+            sql = "SELECT COUNT(*) FROM weather_layers WHERE source_name = :source_name"
+
         params: dict[str, str] = {"source_name": source_name}
 
         if variable is not None:
@@ -459,6 +480,33 @@ def check_weather_source_exists(
             sql += " AND valid_from <= :to_dt AND valid_until >= :from_dt"
             params["from_dt"] = from_dt
             params["to_dt"] = to_dt
+
+        if station_ids is not None:
+            rows = session.execute(text(sql), params).fetchall()
+            requested = set(station_ids)
+            for (metadata_raw,) in rows:
+                try:
+                    meta = _json.loads(metadata_raw) if metadata_raw else {}
+                except (ValueError, TypeError):
+                    meta = {}
+                stored_ids = set(meta.get("station_ids") or [])
+                if requested.issubset(stored_ids):
+                    logger.debug(
+                        "Weather source '%s' (variable=%s) station check: "
+                        "all %d requested station(s) found.",
+                        source_name,
+                        variable,
+                        len(requested),
+                    )
+                    return True
+            logger.debug(
+                "Weather source '%s' (variable=%s): no layer covers all "
+                "requested station IDs %s.",
+                source_name,
+                variable,
+                sorted(requested),
+            )
+            return False
 
         result = session.execute(text(sql), params).fetchone()
         count = result[0] if result else 0

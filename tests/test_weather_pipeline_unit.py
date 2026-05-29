@@ -178,6 +178,89 @@ class TestWeatherQueryHelpers:
         assert check_weather_source_exists("era5", variable="temperature_2m") is True
         assert check_weather_source_exists("era5", variable="precipitation") is False
 
+    def test_check_source_station_filter(self, sqlite_db: None) -> None:
+        """station_ids filter matches only layers that cover all requested stations.
+
+        A layer with stations ["S1", "S2"] satisfies queries for ["S1"],
+        ["S1", "S2"], but not ["S3"] or ["S1", "S3"].
+        Calling without station_ids preserves the original time-overlap
+        behaviour and still returns True.
+        """
+        import json as _json
+
+        from sqlalchemy import text
+
+        from datavia.library.database.connection import session_local
+        from datavia.library.database.query import check_weather_source_exists
+
+        session = session_local()
+        try:
+            session.execute(
+                text(
+                    """
+                    INSERT INTO weather_layers
+                        (layer_name, source_name, variable, file_format,
+                         valid_from, valid_until, uri, crs, bbox, metadata)
+                    VALUES
+                        (:layer_name, :source_name, :variable, :file_format,
+                         :valid_from, :valid_until, :uri, 'EPSG:4326', NULL, :metadata)
+                    """
+                ),
+                {
+                    "layer_name": "dwd_2024_s1_s2",
+                    "source_name": "DWD_stations",
+                    "variable": "temperature_2m",
+                    "file_format": "parquet",
+                    "valid_from": "2024-07-01T00:00:00",
+                    "valid_until": "2024-07-31T23:00:00",
+                    "uri": "/data/dwd_2024.parquet",
+                    "metadata": _json.dumps(
+                        {"file_format": "parquet", "station_ids": ["S1", "S2"]}
+                    ),
+                },
+            )
+            session.commit()
+        finally:
+            session.close()
+
+        assert (
+            check_weather_source_exists(
+                "DWD_stations",
+                variable="temperature_2m",
+                station_ids=["S1"],
+            )
+            is True
+        )
+        assert (
+            check_weather_source_exists(
+                "DWD_stations",
+                variable="temperature_2m",
+                station_ids=["S1", "S2"],
+            )
+            is True
+        )
+        assert (
+            check_weather_source_exists(
+                "DWD_stations",
+                variable="temperature_2m",
+                station_ids=["S3"],
+            )
+            is False
+        )
+        assert (
+            check_weather_source_exists(
+                "DWD_stations",
+                variable="temperature_2m",
+                station_ids=["S1", "S3"],
+            )
+            is False
+        )
+        # Without station_ids the existing check still returns True.
+        assert (
+            check_weather_source_exists("DWD_stations", variable="temperature_2m")
+            is True
+        )
+
     def test_get_weather_paths_overlap(self, sqlite_db: None) -> None:
         """Overlapping layers are returned; non-overlapping layers are excluded."""
         from datavia.library.database.query import get_weather_paths
@@ -314,6 +397,63 @@ class TestSaverWeather:
 
         assert saver.check_data_exists("temperature_2m") is True
         assert saver.check_data_exists("precipitation") is False
+
+    def test_check_data_exists_with_station_ids(
+        self, sqlite_db: None, tmp_path
+    ) -> None:
+        """check_data_exists with station_ids returns True only when the layer
+        covers all requested stations.
+
+        A layer registered with ["A", "B"] satisfies queries for ["A"] and
+        ["A", "B"] but not ["C"].  A call without station_ids (legacy callers)
+        still returns True.
+        """
+        import json as _json
+
+        from datavia.weather.saver_weather import SaverWeather
+        from sqlalchemy import text
+
+        from datavia.library.database.connection import session_local
+
+        saver = SaverWeather.__new__(SaverWeather)
+        saver.source_name = "DWD_stations"
+        saver.data_dir = str(tmp_path)
+
+        session = session_local()
+        try:
+            session.execute(
+                text(
+                    """
+                    INSERT INTO weather_layers
+                        (layer_name, source_name, variable, file_format,
+                         valid_from, valid_until, uri, crs, bbox, metadata)
+                    VALUES
+                        (:layer_name, :source_name, :variable, :file_format,
+                         :valid_from, :valid_until, :uri, 'EPSG:4326', NULL, :metadata)
+                    """
+                ),
+                {
+                    "layer_name": "DWD_stations_2024_a_b",
+                    "source_name": "DWD_stations",
+                    "variable": "temperature_2m",
+                    "file_format": "parquet",
+                    "valid_from": "2024-07-01T00:00:00",
+                    "valid_until": "2024-07-31T23:00:00",
+                    "uri": str(tmp_path / "DWD_stations_2024.parquet"),
+                    "metadata": _json.dumps(
+                        {"file_format": "parquet", "station_ids": ["A", "B"]}
+                    ),
+                },
+            )
+            session.commit()
+        finally:
+            session.close()
+
+        assert saver.check_data_exists("temperature_2m", station_ids=["A"]) is True
+        assert saver.check_data_exists("temperature_2m", station_ids=["A", "B"]) is True
+        assert saver.check_data_exists("temperature_2m", station_ids=["C"]) is False
+        # Legacy call without station_ids preserves True.
+        assert saver.check_data_exists("temperature_2m") is True
 
 
 # ---------------------------------------------------------------------------
@@ -781,6 +921,83 @@ class TestWeatherPipeline:
                     "date_end": "2024-06-30",
                 }
             )
+
+    def test_update_data_skips_dwd_when_stations_covered(self) -> None:
+        """update_data() returns True without downloading when DWD data is cached.
+
+        When saver.check_data_exists() returns True for the configured station
+        set and date range, update_data() must not call the downloader.
+        """
+        from datavia.weather.pipeline import WeatherPipeline
+
+        pipe = WeatherPipeline(
+            config={
+                "source": "DWD_stations",
+                "variables": ["temperature_2m"],
+                "date_start": "2024-07-01",
+                "date_end": "2024-07-31",
+                "dwd_stations": [
+                    {"id": "01234", "latitude": 53.5, "longitude": 10.0},
+                ],
+            }
+        )
+        pipe.downloader = MagicMock()
+        pipe.saver = MagicMock()
+        pipe.saver.check_data_exists.return_value = True
+        pipe.getter = MagicMock()
+
+        with patch.object(pipe, "sync_files_and_database"):
+            result = pipe.update_data()
+
+        assert result is True
+        pipe.saver.check_data_exists.assert_called_once_with(
+            variable="temperature_2m",
+            from_dt="2024-07-01",
+            to_dt="2024-07-31",
+            station_ids=["01234"],
+        )
+        pipe.downloader.download.assert_not_called()
+
+    def test_update_data_downloads_dwd_when_station_set_differs(self) -> None:
+        """update_data() proceeds to download when the requested DWD stations
+        are not yet cached.
+
+        When saver.check_data_exists() returns False, update_data() must call
+        the downloader exactly once and save the returned file path.
+        """
+        from datavia.weather.pipeline import WeatherPipeline
+
+        pipe = WeatherPipeline(
+            config={
+                "source": "DWD_stations",
+                "variables": ["temperature_2m"],
+                "date_start": "2024-07-01",
+                "date_end": "2024-07-31",
+                "dwd_stations": [
+                    {"id": "99999", "latitude": 48.1, "longitude": 11.6},
+                ],
+            }
+        )
+        mock_cell_dl = MagicMock()
+        mock_cell_dl.download.return_value = "/tmp/dwd.parquet"
+        pipe.downloader = MagicMock()
+        pipe.saver = MagicMock()
+        pipe.saver.check_data_exists.return_value = False
+        pipe.saver.save.return_value = True
+        pipe.getter = MagicMock()
+
+        with (
+            patch.object(pipe, "sync_files_and_database"),
+            patch(
+                "datavia.weather.pipeline.CompositeWeatherDownloader",
+                return_value=mock_cell_dl,
+            ),
+        ):
+            result = pipe.update_data()
+
+        assert result is True
+        mock_cell_dl.download.assert_called_once()
+        pipe.saver.save.assert_called_once_with("/tmp/dwd.parquet")
 
 
 # ---------------------------------------------------------------------------
