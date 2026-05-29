@@ -19,6 +19,7 @@ import logging
 from typing import Any
 
 import numpy as np
+import pandas as pd
 
 from datavia.core.interfaces import Getter
 from datavia.library.database.query import get_weather_metadata, get_weather_paths
@@ -175,8 +176,14 @@ class GetterWeather(Getter):
             - ``variable`` (str): Variable name, e.g. ``"temperature_2m"``.
             - ``datetime_utc`` (datetime-like or list): Target UTC timestamp
               (single) or list of T timestamps for a batched time-series
-              query.  When a list is passed the return shape is ``(N, T)``
-              instead of ``(N,)``.
+              query.  Timezone-aware values (e.g. strings ending in ``"Z"``
+              or :class:`~datetime.datetime` objects with a
+              :attr:`~datetime.datetime.tzinfo`) are accepted: they are
+              converted to UTC and stripped of timezone information before
+              any file look-up or interpolation, so they are always
+              comparable with the timezone-naive time axes stored in
+              ERA5/HYRAS NetCDF files.  When a list is passed the return
+              shape is ``(N, T)`` instead of ``(N,)``.
             - ``radius_km`` (float, optional): Station search radius in km.
               Defaults to :data:`_DEFAULT_RADIUS_KM`.  Ignored when
               ``datetime_utc`` is a list (multi-timestamp station blending
@@ -222,6 +229,35 @@ class GetterWeather(Getter):
         # least two entries (multi-time), avoiding shape mismatches.
         if isinstance(datetime_utc, (list, tuple)) and len(datetime_utc) == 1:
             datetime_utc = datetime_utc[0]
+
+        # Normalise timezone-aware timestamps to timezone-naive UTC so they are
+        # always comparable with the naive datetime64 time axes in NetCDF files.
+        # This handles ISO-8601 strings ending in 'Z' as well as datetime objects
+        # with tzinfo.  Elements in a list are normalised individually.
+        def _to_naive_utc(dt: Any) -> Any:
+            """Strip timezone from a single timestamp value, converting to UTC.
+
+            Parameters
+            ----------
+            dt : Any
+                A datetime-like value (string, Timestamp, datetime, etc.).
+
+            Returns
+            -------
+            Any
+                A timezone-naive :class:`pandas.Timestamp` if *dt* carried
+                timezone information; otherwise *dt* is returned unchanged.
+            """
+            ts = pd.Timestamp(str(dt))
+            if ts.tzinfo is not None:
+                return ts.tz_convert("UTC").tz_localize(None)
+            return dt
+
+        if isinstance(datetime_utc, (list, tuple)):
+            datetime_utc = [_to_naive_utc(dt) for dt in datetime_utc]
+        else:
+            datetime_utc = _to_naive_utc(datetime_utc)
+
         is_multi_time = isinstance(datetime_utc, (list, tuple))
         n_times = len(datetime_utc) if is_multi_time else 1
 

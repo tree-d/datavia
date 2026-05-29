@@ -292,10 +292,16 @@ def interpolate_netcdf(
     variable : str
         Name of the variable to sample, e.g. ``"tas"`` or ``"2m_temperature"``.
     datetime_utc : datetime-like or sequence of datetime-like
-        One or more UTC timestamps.  Used with ``method="nearest"`` for
-        ``temporal_resolution="daily"``.  For ``temporal_resolution="hourly"``,
-        used to identify the calendar day from which all sub-daily time steps
-        are returned.
+        One or more UTC timestamps, supplied as a string
+        (e.g. ``"2024-06-15T12:00:00"`` or ``"2024-06-15T12:00:00Z"``), a
+        :class:`numpy.datetime64`, a :class:`pandas.Timestamp`, or a Python
+        :class:`datetime.datetime`.  Timezone-aware values (including the
+        trailing ``Z`` notation) are accepted: they are converted to UTC and
+        then stripped of timezone information before comparison with the
+        timezone-naive time axis stored in ERA5/HYRAS NetCDF files.
+        Used with ``method="nearest"`` for ``temporal_resolution="daily"``.
+        For ``temporal_resolution="hourly"``, used to identify the calendar
+        day from which all sub-daily time steps are returned.
     input_crs : str, optional
         CRS of the input *lats*/*lons* coordinates, as an EPSG string
         (e.g. ``"EPSG:4326"`` or ``"EPSG:3035"``).  Defaults to
@@ -338,8 +344,15 @@ def interpolate_netcdf(
 
     When *nc_path* is a list, each file is opened individually with
     :func:`xarray.open_dataset` and the results are concatenated in-memory
-    using :func:`xarray.concat` (dimension ``"time"``).  This avoids any
-    dependency on ``dask`` while still supporting multi-file queries.
+    using :func:`xarray.concat` along the detected time dimension (``"time"``
+    or ``"valid_time"``).  This avoids any dependency on ``dask`` while still
+    supporting multi-file queries.
+
+    ERA5-Land NetCDF files store their time axis as timezone-naive
+    ``datetime64`` values.  A timezone-aware *datetime_utc* value (e.g. one
+    ending in ``"Z"`` or carrying a :attr:`~datetime.datetime.tzinfo`) is
+    converted to UTC and then made timezone-naive before the nearest-neighbour
+    lookup so that the types are always comparable.
     """
     if not XARRAY_AVAILABLE:
         raise ImportError(
@@ -353,13 +366,24 @@ def interpolate_netcdf(
 
     # Open one file or eagerly concatenate several files along the time
     # dimension.  A plain string uses open_dataset (existing single-file path,
-    # unchanged).  A list opens each file individually and merges them in
-    # memory with xr.concat — no dask dependency required.
-    if isinstance(nc_path, list):
+    # unchanged).  A list with one entry is also opened directly to avoid a
+    # spurious outer dimension.  A list with 2+ entries opens each file
+    # individually and concatenates in memory with xr.concat — no dask
+    # required.  The time dimension name is detected from the first file so
+    # that ERA5 files (which use 'valid_time' from cdsapi >= 0.7) are handled
+    # correctly; using dim="time" blindly would create a new outer dimension
+    # instead of concatenating along the existing one.
+    if isinstance(nc_path, list) and len(nc_path) > 1:
         _parts = [xr.open_dataset(f) for f in nc_path]
-        _ds_ctx = xr.concat(_parts, dim="time")
+        _time_dim_nc = next(
+            (d for d in _parts[0].dims if d in ("time", "valid_time")),
+            "time",
+        )
+        _ds_ctx = xr.concat(_parts, dim=_time_dim_nc)
         for _d in _parts:
             _d.close()
+    elif isinstance(nc_path, list):
+        _ds_ctx = xr.open_dataset(nc_path[0])
     else:
         _ds_ctx = xr.open_dataset(nc_path)
     with _ds_ctx as ds:
@@ -427,11 +451,17 @@ def interpolate_netcdf(
                         "pandas is required for temporal_resolution='hourly'. "
                         "Install with `pip install pandas`."
                     )
-                day_start = pd.Timestamp(str(datetime_utc)).normalize()
+                day_start = pd.Timestamp(str(datetime_utc))
+                if day_start.tzinfo is not None:
+                    day_start = day_start.tz_convert("UTC").tz_localize(None)
+                day_start = day_start.normalize()
                 day_end = day_start + pd.Timedelta(days=1) - pd.Timedelta(nanoseconds=1)
                 point = point.sel({time_dim: slice(day_start, day_end)})
             else:
-                point = point.sel({time_dim: datetime_utc}, method="nearest")
+                _ts = pd.Timestamp(str(datetime_utc))
+                if _ts.tzinfo is not None:
+                    _ts = _ts.tz_convert("UTC").tz_localize(None)
+                point = point.sel({time_dim: _ts}, method="nearest")
 
         values = np.asarray(point.values, dtype=float)
 
