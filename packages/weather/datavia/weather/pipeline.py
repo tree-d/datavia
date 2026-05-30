@@ -42,6 +42,7 @@ from typing import Any
 import numpy as np
 
 from datavia.core.interfaces import Pipeline
+from datavia.library.database.start import initialize_database
 
 from .composite_downloader import CompositeWeatherDownloader
 from .coverage_manager import CoverageCell, CoverageManager
@@ -172,6 +173,7 @@ class WeatherPipeline(Pipeline):
         Pipeline
             Self for method chaining.
         """
+        initialize_database()
         self.downloader = CompositeWeatherDownloader(config=self._config)
         self.saver = SaverWeather(self.name)
         # Forward any user-provided unit conversion overrides so the getter
