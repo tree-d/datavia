@@ -497,21 +497,30 @@ address this and related lifecycle issues:
   evaluated to prevent conflicting audits or concurrent writes from corrupting
   the `weather_layers` table.
 
-- **CLI support** — the `datavia` command-line tool should expose a
-  `reconfigure` sub-command so operators can adjust pipeline settings without
-  writing Python code:
+- **CLI support** — the `datavia` command-line tool exposes a `weather`
+  sub-command under `update`.  The optional `--source` flag lets you target a
+  single weather pipeline by its `source` name; omitting it updates every
+  `WeatherPipeline` registered in your `datavia_config.py`:
 
   ```bash
-  datavia pipeline reconfigure --name my_pipeline \
-      --date-end 2025-03-31
+  # Update all weather pipelines defined in datavia_config.py
+  datavia update weather
 
-  # Rename and extend in one step
-  datavia pipeline reconfigure --name my_pipeline \
-      --new-name era5_germany_2024 --date-end 2025-03-31
+  # Update only the HYRAS pipeline
+  datavia update weather --source HYRAS
 
-  # Audit all registered pipelines for inconsistencies
-  datavia pipeline check
+  # Update only ERA5-Land
+  datavia update weather --source ERA5_land
+
+  # Update only DWD stations
+  datavia update weather --source DWD_stations
+
+  # Use a non-default config file
+  datavia update weather --source HYRAS --config-file /path/to/datavia_config.py
   ```
+
+  If `--source` does not match any registered pipeline, the CLI lists the
+  available source names and exits with a non-zero status code.
 
 
 

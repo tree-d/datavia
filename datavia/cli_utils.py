@@ -138,6 +138,100 @@ def update_pipeline(pipeline_name: str, config_file: str = "datavia_config.py") 
         return False
 
 
+def _is_weather_pipeline(pipeline: Any) -> bool:
+    """Return True when *pipeline* is a WeatherPipeline instance.
+
+    Uses a class-name check so that ``cli_utils`` does not need to import
+    ``WeatherPipeline`` directly (which would create a hard dependency on the
+    optional ``datavia-weather`` package).
+
+    Parameters
+    ----------
+    pipeline : Any
+        A pipeline instance from the Datavia registry.
+
+    Returns
+    -------
+    bool
+        ``True`` when the MRO of *pipeline* contains a class named
+        ``"WeatherPipeline"``.
+    """
+    return any(cls.__name__ == "WeatherPipeline" for cls in type(pipeline).__mro__)
+
+
+def update_weather_pipelines(
+    source: str | None,
+    config_file: str = "datavia_config.py",
+) -> bool:
+    """Update one or all WeatherPipeline instances registered in *config_file*.
+
+    When *source* is provided, only the pipeline whose ``name`` matches
+    *source* (e.g. ``"ERA5_land"``, ``"HYRAS"``, ``"DWD_stations"``) is
+    updated.  When *source* is ``None`` every ``WeatherPipeline`` found in the
+    configuration is updated and the function returns ``True`` only if all
+    of them succeed.
+
+    Parameters
+    ----------
+    source : str or None
+        ``source_name`` of the weather pipeline to update, e.g.
+        ``"ERA5_land"``.  Pass ``None`` to update all weather pipelines.
+    config_file : str, optional
+        Path to the Python configuration file.  Defaults to
+        ``"datavia_config.py"``.
+
+    Returns
+    -------
+    bool
+        ``True`` if every targeted pipeline reported success; ``False`` if any
+        failed or if no matching pipeline was found.
+    """
+    datavia_instance = get_datavia_instance(config_file)
+    if not datavia_instance:
+        logger.error(f"Could not load Datavia instance from {config_file}")
+        return False
+
+    weather_pipelines = [
+        p for p in datavia_instance.pipelines if _is_weather_pipeline(p)
+    ]
+
+    if not weather_pipelines:
+        logger.error(
+            "No WeatherPipeline instances found in configuration. "
+            "Add a WeatherPipeline to your datavia_config.py."
+        )
+        return False
+
+    if source is not None:
+        matched = [p for p in weather_pipelines if p.name == source]
+        if not matched:
+            available = [p.name for p in weather_pipelines]
+            logger.error(
+                f"No weather pipeline named '{source}' found. "
+                f"Available weather sources: {available}"
+            )
+            return False
+        targets = matched
+    else:
+        targets = weather_pipelines
+
+    all_succeeded = True
+    for pipeline in targets:
+        logger.info(f"Updating weather pipeline '{pipeline.name}'...")
+        try:
+            result = pipeline.update_data()
+            if result:
+                logger.info(f"✅ '{pipeline.name}' updated successfully")
+            else:
+                logger.error(f"❌ '{pipeline.name}'.update_data() reported a failure")
+                all_succeeded = False
+        except Exception as exc:
+            logger.error(f"❌ Error updating '{pipeline.name}': {exc}")
+            all_succeeded = False
+
+    return all_succeeded
+
+
 def validate_config_file(config_file: str) -> tuple[bool, str]:
     """Validate Python config file and return (is_valid, error_message)."""
     if not os.path.exists(config_file):

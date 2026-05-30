@@ -230,6 +230,10 @@ datavia config status                    # Show installation status
 # Data updates
 datavia update elevation                 # Download / refresh elevation data
 datavia update soil                      # Download / refresh soil data
+datavia update weather                   # Update all configured weather pipelines
+datavia update weather --source HYRAS   # Update only the HYRAS source
+datavia update weather --source ERA5_land      # Update only ERA5
+datavia update weather --source DWD_stations   # Update only DWD stations
 
 # Development/Testing
 python -m datavia.cli update elevation   # Alternative CLI access
