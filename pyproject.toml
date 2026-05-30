@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "datavia"
-version = "1.0.0-dev"
+version = "1.0.4-dev"
 description = "Pipeline based Geospatial Data Integration System"
 authors = [
     {name = "Michael Berg", email = "michael.berg@ufz.de"},
