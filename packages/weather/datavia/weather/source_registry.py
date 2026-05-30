@@ -100,7 +100,10 @@ SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
         # not degrade at the exact boundary.  Lat runs north-to-south to match
         # ERA5's native array layout and avoid a flip on write.
         "zarr_grid": {
-            "latitude": np.arange(55.2, 47.1, -0.1).round(1),  # 82 points
+            "crs": "EPSG:4326",
+            "latitude": np.arange(55.6, 47.0, -0.1).round(
+                1
+            ),  # 87 points — extended to 55.6°N to cover any plausible Germany bbox
             "longitude": np.arange(5.9, 15.1, 0.1).round(1),  # 92 points
             "time_freq": "1h",
             "dtype": "float32",
@@ -127,16 +130,18 @@ SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
             "rsds": "surface_solar_radiation_downwards",
             "hurs": "relative_humidity_2m",
         },
-        # Fixed Germany-extent grid for ZarrStoreManager.  0.045° ≈ 5 km
-        # corresponds to the native HYRAS raster resolution on WGS84.
+        # HYRAS stores are kept in their native ETRS89-LAEA (EPSG:3035)
+        # projection.  The x/y coordinate arrays are derived from the
+        # downloaded .nc files at write time — no pre-defined grid is required.
+        # Coordinate reprojection happens at query time inside
+        # interpolate_dataset / _build_spatial_interp_coords.
         "zarr_grid": {
-            "latitude": np.arange(55.1, 47.2, -0.045).round(3),
-            "longitude": np.arange(5.9, 15.1, 0.045).round(3),
+            "crs": "EPSG:3035",
             "time_freq": "1D",
             "dtype": "float32",
             "fill_value": float("nan"),
-            # Spatial-snapshot optimised: 365 days x 10x10 cells.
-            "chunks": {"time": 365, "latitude": 10, "longitude": 10},
+            # Chunk keys use x/y (projected) instead of longitude/latitude.
+            "chunks": {"time": 365, "y": 10, "x": 10},
             "codec": {"cname": "zstd", "clevel": 3, "shuffle": "shuffle"},
         },
     },

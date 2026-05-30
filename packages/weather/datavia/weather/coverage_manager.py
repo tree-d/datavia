@@ -408,25 +408,36 @@ class CoverageManager:
             WKT POLYGON in EPSG:4326, or the full grid extent as fallback.
         """
         has_data = da.notnull().any(dim="time").compute()
-        lat_mask = has_data.any(dim="longitude")
-        lon_mask = has_data.any(dim="latitude")
 
-        lats = has_data.latitude.values[lat_mask.values]
-        lons = has_data.longitude.values[lon_mask.values]
+        if "latitude" in da.dims and "longitude" in da.dims:
+            # Geographic store (EPSG:4326): dimensions are lat/lon in degrees.
+            lat_mask = has_data.any(dim="longitude")
+            lon_mask = has_data.any(dim="latitude")
+            lats = has_data.latitude.values[lat_mask.values]
+            lons = has_data.longitude.values[lon_mask.values]
+            if len(lats) == 0 or len(lons) == 0:
+                lats = da.latitude.values
+                lons = da.longitude.values
+            west = float(lons.min())
+            east = float(lons.max())
+            south = float(lats.min())
+            north = float(lats.max())
+            return (
+                f"POLYGON (({west} {south}, {east} {south}, "
+                f"{east} {north}, {west} {north}, {west} {south}))"
+            )
 
-        if len(lats) == 0 or len(lons) == 0:
-            # Fallback: use full grid extent
-            lats = da.latitude.values
-            lons = da.longitude.values
+        # Projected store (e.g. HYRAS EPSG:3035): dimensions are x/y in metres.
+        # Reproject the bbox corners to WGS84 for database storage.
+        from .source_registry import SOURCE_REGISTRY
+        from .zarr_store_manager import _projected_bbox_to_wgs84
 
-        west = float(lons.min())
-        east = float(lons.max())
-        south = float(lats.min())
-        north = float(lats.max())
-        return (
-            f"POLYGON (({west} {south}, {east} {south}, "
-            f"{east} {north}, {west} {north}, {west} {south}))"
+        zarr_crs = (
+            SOURCE_REGISTRY.get(self._source_name, {})
+            .get("zarr_grid", {})
+            .get("crs", "EPSG:3035")
         )
+        return _projected_bbox_to_wgs84(has_data, crs=zarr_crs, as_tuple=False)
 
     def _insert_coverage_row(
         self,

@@ -1,16 +1,21 @@
 """
-GetterWeather — Getter implementation for NetCDF and Parquet weather data.
+GetterWeather — Getter implementation for Zarr-backed and Parquet weather data.
 
-Retrieves interpolated weather values at requested coordinates and datetimes
-by querying the ``weather_layers`` database table for relevant files and
-delegating to the library interpolation functions.
+Retrieves interpolated weather values at requested coordinates and datetimes.
 
-Unit conversions are source-aware: each source (``ERA5_land``, ``HYRAS``,
-etc.) has its own conversion rules in the source registry.  HYRAS data is
-already in target units and passes through unchanged.  ERA5 raw values
-(Kelvin, metres, J m⁻²) are converted automatically.
+For sources with a ``zarr_grid`` entry in ``SOURCE_REGISTRY`` (e.g.
+``"HYRAS"``, ``"ERA5_land"``), data is read directly from the per-(source,
+variable, year) Zarr store via
+:class:`~datavia.weather.zarr_store_manager.ZarrStoreManager`.
+For other sources, the ``weather_layers`` database table is queried and the
+result is read from a NetCDF file.
 
-When both gridded (NetCDF) and station (Parquet / DWD) files cover the
+Unit conversions are source-aware: each source has its own conversion rules
+in ``SOURCE_REGISTRY``.  HYRAS data is already in target units and passes
+through unchanged.  ERA5 raw values (Kelvin, metres, J m⁻²) are converted
+automatically.
+
+When both gridded (Zarr) and station (Parquet / DWD) files cover the
 requested time window the results are blended via
 :func:`datavia.library.interpolation.blend_gridded_and_station`.
 """
@@ -48,15 +53,18 @@ _DEFAULT_STATION_WEIGHT: float = 0.6
 class GetterWeather(Getter):
     """Retrieve weather data from NetCDF or Parquet files by coordinate and time.
 
-    Supports three retrieval modes based on the files registered in
-    ``weather_layers`` for the configured source:
+    Supports three retrieval modes:
 
-    1. **NetCDF only** — bilinear spatial + nearest-time interpolation via
+    1. **Zarr** (sources with ``zarr_grid`` in ``SOURCE_REGISTRY``) —
+       bilinear spatial + nearest-time interpolation from the Zarr store via
+       :func:`~datavia.library.interpolation.interpolate_dataset`.
+    2. **NetCDF** (sources without ``zarr_grid``) — bilinear spatial +
+       nearest-time interpolation via
        :func:`~datavia.library.interpolation.interpolate_netcdf`.
-    2. **Parquet only** — inverse-distance-weighted station average via
-       :func:`~datavia.library.interpolation.interpolate_station_parquet`.
-    3. **Both** — blended result via
-       :func:`~datavia.library.interpolation.blend_gridded_and_station`.
+    3. **Station Parquet** (all sources) — inverse-distance-weighted station
+       average via
+       :func:`~datavia.library.interpolation.interpolate_station_parquet`,
+       optionally blended with gridded results.
 
     After gridded interpolation, source-aware unit conversions are applied
     via :func:`~datavia.weather.source_registry.apply_conversion`.  ERA5
@@ -291,14 +299,19 @@ class GetterWeather(Getter):
             else pd.Timestamp(datetime_utc[-1]).isoformat()
         )
 
+        # For Zarr-enabled sources the store is the primary data backend.
+        # The DB is only queried to find station Parquet paths; the Zarr store
+        # path is constructed directly from source_name / variable / year.
+        has_zarr_grid = "zarr_grid" in SOURCE_REGISTRY.get(self.source_name, {})
+
         nc_paths = get_weather_paths(self.source_name, variable, from_dt, to_dt)
 
-        # Separate by format (query returns all; filter by extension).
-        # A single call is made and split to avoid a redundant DB query.
+        # Separate by format. For Zarr sources nc_files will typically be
+        # empty; the Zarr open is independent of the DB.
         nc_files = [p for p in nc_paths if p.endswith(".nc")]
         parquet_files = [p for p in nc_paths if p.endswith(".parquet")]
 
-        if not nc_files and not parquet_files:
+        if not has_zarr_grid and not nc_files and not parquet_files:
             raise RuntimeError(
                 f"No weather files found for source='{self.source_name}', "
                 f"variable='{variable}', time=[{from_dt}, {to_dt}]. "
@@ -312,26 +325,53 @@ class GetterWeather(Getter):
             else np.full(n_coords, np.nan)
         )
 
-        # --- Gridded path: Zarr store (preferred) or legacy NetCDF fallback ---
-        if nc_files:
+        # --- Gridded path ---
+        if nc_files or has_zarr_grid:
             try:
-                nc_variable = get_nc_variable_name(self.source_name, variable)
                 lats = coords_arr[:, 1]
                 lons = coords_arr[:, 0]
+                raw_batch = None
 
-                zarr_ds = _try_open_zarr(self.source_name, variable, from_dt, to_dt)
-                if zarr_ds is not None:
-                    with zarr_ds:
-                        raw_batch = interpolate_dataset(
-                            zarr_ds,
+                if has_zarr_grid:
+                    zarr_ds = _try_open_zarr(self.source_name, variable, from_dt, to_dt)
+                    if zarr_ds is not None:
+                        with zarr_ds:
+                            raw_batch = interpolate_dataset(
+                                zarr_ds,
+                                lats,
+                                lons,
+                                variable,
+                                datetime_utc,
+                                input_crs=crs_coords,
+                                temporal_resolution=self._temporal_resolution,
+                            )
+                    elif nc_files:
+                        # Zarr store not yet written (e.g. first run not completed or
+                        # legacy .nc rows still registered).  Fall back to NetCDF so
+                        # that data already on disk is not silently unavailable.
+                        logger.debug(
+                            "No Zarr store for %s/%s — falling back to NetCDF.",
+                            self.source_name,
+                            variable,
+                        )
+                        nc_variable = get_nc_variable_name(self.source_name, variable)
+                        raw_batch = interpolate_netcdf(
+                            nc_files[0],
                             lats,
                             lons,
-                            variable,
+                            nc_variable,
                             datetime_utc,
                             input_crs=crs_coords,
                             temporal_resolution=self._temporal_resolution,
                         )
+                    elif not parquet_files:
+                        raise RuntimeError(
+                            f"No Zarr store found for source='{self.source_name}', "
+                            f"variable='{variable}', time=[{from_dt}, {to_dt}]. "
+                            "Run the pipeline update first."
+                        )
                 else:
+                    nc_variable = get_nc_variable_name(self.source_name, variable)
                     raw_batch = interpolate_netcdf(
                         nc_files[0],
                         lats,
@@ -342,33 +382,34 @@ class GetterWeather(Getter):
                         temporal_resolution=self._temporal_resolution,
                     )
 
-                if is_multi_time:
-                    # interpolate_netcdf returns (T, N) when timestamps is a list;
-                    # normalise to (N, T) so callers always get coords-first layout.
-                    raw_arr = np.asarray(raw_batch, dtype=float)
-                    if (
-                        raw_arr.ndim == 2
-                        and raw_arr.shape[0] == n_times
-                        and raw_arr.shape[0] != n_coords
-                    ):
-                        raw_arr = raw_arr.T  # (T, N) → (N, T)
-                    converted = apply_conversion(
-                        self.source_name, variable, raw_arr, self._unit_overrides
-                    )
-                    results = np.asarray(converted, dtype=float)
-                else:
-                    # raw_batch shape: (N,) for a single timestamp; scalar when N=1.
-                    raw_arr = np.atleast_1d(np.asarray(raw_batch, dtype=float))
-                    for i, raw_val in enumerate(raw_arr):
-                        if not np.isnan(raw_val):
-                            results[i] = float(
-                                apply_conversion(
-                                    self.source_name,
-                                    variable,
-                                    raw_val,
-                                    self._unit_overrides,
+                if raw_batch is not None:
+                    if is_multi_time:
+                        # interpolate_dataset returns (T, N) when timestamps is a list;
+                        # normalise to (N, T) so callers always get coords-first layout.
+                        raw_arr = np.asarray(raw_batch, dtype=float)
+                        if (
+                            raw_arr.ndim == 2
+                            and raw_arr.shape[0] == n_times
+                            and raw_arr.shape[0] != n_coords
+                        ):
+                            raw_arr = raw_arr.T  # (T, N) → (N, T)
+                        converted = apply_conversion(
+                            self.source_name, variable, raw_arr, self._unit_overrides
+                        )
+                        results = np.asarray(converted, dtype=float)
+                    else:
+                        # raw_batch shape: (N,) for single timestamp; scalar when N=1.
+                        raw_arr = np.atleast_1d(np.asarray(raw_batch, dtype=float))
+                        for i, raw_val in enumerate(raw_arr):
+                            if not np.isnan(raw_val):
+                                results[i] = float(
+                                    apply_conversion(
+                                        self.source_name,
+                                        variable,
+                                        raw_val,
+                                        self._unit_overrides,
+                                    )
                                 )
-                            )
             except Exception as exc:
                 logger.error(
                     "NetCDF batch interpolation failed for source='%s',"

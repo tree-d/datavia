@@ -123,15 +123,35 @@ class ZarrStoreManager:
     # Store lifecycle
     # -------------------------------------------------------------------------
 
+    def _is_projected(self) -> bool:
+        """Return ``True`` when the store uses a projected (non-WGS84) CRS.
+
+        Checks the ``"crs"`` entry in ``zarr_grid``.  Geographic stores
+        (``EPSG:4326``) use a pre-defined latitude/longitude skeleton and
+        partial-region writes.  Projected stores (e.g. HYRAS ``EPSG:3035``)
+        write full-year slabs from the downloaded dataset using its native
+        x/y coordinates — no skeleton or alignment step is required.
+
+        Returns
+        -------
+        bool
+            ``True`` when the source's native CRS is not ``EPSG:4326``.
+        """
+        return self._grid.get("crs", "EPSG:4326") != "EPSG:4326"
+
     def ensure_store(self, variable: str, year: int) -> None:
         """Create the Zarr store skeleton for *variable* / *year* if it does not exist.
 
-        Writes store metadata and all three coordinate arrays (``time``,
-        ``latitude``, ``longitude``) to disk, but defers writing the data
-        variable chunks (``compute=False``) so that no NaN chunk files are
-        created.  Unwritten chunks return ``fill_value`` at zero disk cost.
+        For **geographic** sources (``crs="EPSG:4326"``): writes store
+        metadata and all three coordinate arrays (``time``, ``latitude``,
+        ``longitude``) to disk, but defers writing the data variable chunks
+        (``compute=False``) so that no NaN chunk files are created.  Unwritten
+        chunks return ``fill_value`` at zero disk cost.  Safe to call multiple
+        times — a no-op when the store already exists.
 
-        Safe to call multiple times — a no-op when the store already exists.
+        For **projected** sources (e.g. ``crs="EPSG:3035"``): the store is
+        created wholesale from the downloaded dataset in :meth:`write_dataset`
+        and no skeleton is needed, so this method is a no-op.
 
         Parameters
         ----------
@@ -140,6 +160,9 @@ class ZarrStoreManager:
         year : int
             Calendar year for which to create the store.
         """
+        if self._is_projected():
+            return
+
         path = self.store_path(variable, year)
         if path.exists():
             return
@@ -235,24 +258,45 @@ class ZarrStoreManager:
 
         for year in years:
             ds_year = ds.sel(time=str(year))
-            self.ensure_store(variable, year)
+
+            if not self._is_projected():
+                # Create (or verify) the pre-defined grid skeleton before
+                # locking so concurrent writers converge on the same skeleton.
+                self.ensure_store(variable, year)
 
             path = self.store_path(variable, year)
             sentinel = path / _SENTINEL
             lock = fasteners.InterProcessLock(str(path) + ".lock")
 
             with lock:
-                sentinel.write_text("write in progress\n", encoding="utf-8")
-                try:
-                    ds_aligned = self._align_to_store(ds_year, variable, year)
-                    ds_aligned.to_zarr(
-                        str(path),
-                        region="auto",
-                        consolidated=False,
-                    )
-                finally:
-                    if sentinel.exists():
-                        sentinel.unlink()
+                if self._is_projected():
+                    # Projected source (e.g. HYRAS EPSG:3035): write the
+                    # full-year slab wholesale from the downloaded dataset
+                    # using its native x/y coordinates.  The store directory
+                    # is created here because ensure_store is a no-op for
+                    # projected sources.
+                    path.mkdir(parents=True, exist_ok=True)
+                    sentinel.write_text("write in progress\n", encoding="utf-8")
+                    try:
+                        ds_year.to_zarr(str(path), mode="w", consolidated=False)
+                    finally:
+                        if sentinel.exists():
+                            sentinel.unlink()
+                else:
+                    # Geographic source (e.g. ERA5_land EPSG:4326): snap
+                    # coordinates to the pre-defined grid and write the
+                    # region into the skeleton via region="auto".
+                    sentinel.write_text("write in progress\n", encoding="utf-8")
+                    try:
+                        ds_aligned = self._align_to_store(ds_year, variable, year)
+                        ds_aligned.to_zarr(
+                            str(path),
+                            region="auto",
+                            consolidated=False,
+                        )
+                    finally:
+                        if sentinel.exists():
+                            sentinel.unlink()
 
     def open_store(self, variable: str, year: int) -> xr.Dataset:
         """Open an existing Zarr store as a lazy xarray Dataset.
@@ -418,6 +462,13 @@ class ZarrStoreManager:
         if not bool(has_data.any()):
             return None
 
+        if self._is_projected():
+            return _projected_bbox_to_wgs84(
+                has_data,
+                crs=self._grid.get("crs", "EPSG:3035"),
+                as_tuple=True,
+            )  # type: ignore[return-value]
+
         lat_mask = has_data.any(dim="longitude")
         lon_mask = has_data.any(dim="latitude")
 
@@ -552,17 +603,49 @@ class ZarrStoreManager:
             ``nc_variable_map``.
         """
         if variable in ds:
-            return ds[[variable]]
+            selected = ds[[variable]]
+        else:
+            nc_name = self._variable_to_nc.get(variable)
+            if nc_name and nc_name in ds:
+                selected = ds[[nc_name]].rename({nc_name: variable})
+            else:
+                raise KeyError(
+                    f"Variable '{variable}' not found in dataset.  "
+                    f"Available data variables: {list(ds.data_vars)}.  "
+                    f"nc_variable_map: {self._nc_variable_map}."
+                )
 
-        nc_name = self._variable_to_nc.get(variable)
-        if nc_name and nc_name in ds:
-            return ds[[nc_name]].rename({nc_name: variable})
+        if self._is_projected():
+            # Carry the CF grid_mapping variable along so that
+            # interpolate_dataset / _build_spatial_interp_coords can detect
+            # the native CRS and reproject query coordinates accordingly.
+            gm_name = selected[variable].attrs.get("grid_mapping")
+            if gm_name and gm_name in ds and gm_name not in selected:
+                selected = selected.assign({gm_name: ds[gm_name]})
 
-        raise KeyError(
-            f"Variable '{variable}' not found in dataset.  "
-            f"Available data variables: {list(ds.data_vars)}.  "
-            f"nc_variable_map: {self._nc_variable_map}."
-        )
+        # Drop every coordinate and data variable that is not part of the
+        # pre-defined skeleton store.  ERA5 downloads contain GRIB metadata
+        # keys (`number`, `expver`, …) that are absent from the skeleton and
+        # cause zarr to raise on region writes:
+        #
+        #   - `number` (ensemble member) is a scalar coordinate (ndim == 0).
+        #   - `expver` (experiment version) is a 1-D coordinate whose
+        #     dimension is `valid_time`; after _normalise_time() that becomes
+        #     `time`, so a dimension-intersection filter incorrectly keeps it.
+        #
+        # A whitelist is the correct approach: retain only the target data
+        # variable and the three skeleton coordinates.  Anything else is a
+        # GRIB metadata artefact that must not reach to_zarr().
+        skeleton_coords = {"time", "latitude", "longitude"}
+        extra = [
+            name
+            for name in list(selected.coords) + list(selected.data_vars)
+            if name != variable and name not in skeleton_coords
+        ]
+        if extra:
+            selected = selected.drop_vars(extra)
+
+        return selected
 
     def _align_to_store(self, ds: xr.Dataset, variable: str, year: int) -> xr.Dataset:
         """Snap *ds* coordinates to the store grid and verify alignment.
@@ -625,6 +708,67 @@ class ZarrStoreManager:
 # ---------------------------------------------------------------------------
 # Module-level helpers
 # ---------------------------------------------------------------------------
+
+
+def _projected_bbox_to_wgs84(
+    has_data: "xr.DataArray",
+    crs: str,
+    as_tuple: bool,
+) -> "tuple[float, float, float, float] | str":
+    """Convert the non-null spatial extent of a projected DataArray to WGS84.
+
+    Extracts the x/y extent of cells with at least one non-NaN value and
+    reprojects the four bbox corners to EPSG:4326 using ``pyproj``.
+
+    Parameters
+    ----------
+    has_data : xr.DataArray
+        Boolean 2-D DataArray with ``x`` and ``y`` dimensions indicating
+        which cells contain valid data.
+    crs : str
+        Native CRS of the store, e.g. ``"EPSG:3035"``.
+    as_tuple : bool
+        When ``True`` return ``(west, south, east, north)`` floats.
+        When ``False`` return a WKT ``POLYGON ((...))`` string.
+
+    Returns
+    -------
+    tuple[float, float, float, float] or str
+        Bounding box in EPSG:4326, in the format selected by *as_tuple*.
+    """
+    try:
+        import pyproj
+    except ImportError as exc:
+        raise ImportError(
+            "pyproj is required to compute bounding boxes from projected Zarr stores. "
+            "Install with `pip install pyproj`."
+        ) from exc
+
+    x_mask = has_data.any(dim="y")
+    y_mask = has_data.any(dim="x")
+    xs = has_data.x.values[x_mask.values]
+    ys = has_data.y.values[y_mask.values]
+    if len(xs) == 0 or len(ys) == 0:
+        xs = has_data.x.values
+        ys = has_data.y.values
+
+    x_min, x_max = float(xs.min()), float(xs.max())
+    y_min, y_max = float(ys.min()), float(ys.max())
+
+    transformer = pyproj.Transformer.from_crs(crs, "EPSG:4326", always_xy=True)
+    # Reproject all four corners and take the envelope.
+    corners_x = [x_min, x_max, x_max, x_min]
+    corners_y = [y_min, y_min, y_max, y_max]
+    lons, lats = transformer.transform(corners_x, corners_y)
+    west, east = min(lons), max(lons)
+    south, north = min(lats), max(lats)
+
+    if as_tuple:
+        return (west, south, east, north)
+    return (
+        f"POLYGON (({west} {south}, {east} {south}, "
+        f"{east} {north}, {west} {north}, {west} {south}))"
+    )
 
 
 def _snap_coords(

@@ -1,15 +1,19 @@
 """
-SaverWeather — Saver implementation for NetCDF and Parquet weather files.
+SaverWeather — Saver implementation for weather data.
 
-Copies downloaded files to the configured data directory, extracts temporal
-and spatial metadata, and registers each file as a row in the
-``weather_layers`` SQLite table.  The orphan-removal sync follows the same
-pattern as :class:`datavia.core.saver_tiff.TiffSaver`.
+For sources that declare a ``zarr_grid`` in ``SOURCE_REGISTRY`` (e.g.
+``"HYRAS"``, ``"ERA5_land"``), downloaded NetCDF files are ingested directly
+into the per-(source, variable, year) Zarr store via
+:class:`~datavia.weather.zarr_store_manager.ZarrStoreManager`.  No ``.nc``
+copy is retained on disk; the Zarr store is the authoritative data backend.
+Coverage tracking is handled by
+:class:`~datavia.weather.coverage_manager.CoverageManager`, which rebuilds
+``weather_layers`` DB rows from the store on the next ``update_data`` call
+when no rows exist for a variable.
 
-File format is inferred automatically from the file extension:
-
-- ``.nc``      → ``"netcdf"``
-- ``.parquet`` → ``"parquet"``
+For sources without a ``zarr_grid`` entry (e.g. DWD station Parquet files),
+the original copy-and-register behaviour is preserved: the file is copied to
+the configured data directory and a row is inserted in ``weather_layers``.
 """
 
 import datetime
@@ -30,6 +34,7 @@ from datavia.library.database.query import check_weather_source_exists
 from datavia.library.formats import extract_netcdf_layer_metadata
 
 from .source_registry import SOURCE_REGISTRY
+from .zarr_store_manager import ZarrStoreManager
 
 logger = logging.getLogger(__name__)
 
@@ -82,59 +87,61 @@ class SaverWeather(Saver):
     ) -> bool:
         """Copy a weather file to the data directory and register it in the DB.
 
-        The file format is inferred from the extension (``.nc`` → netcdf,
-        ``.parquet`` → parquet).  Temporal metadata is extracted from the
-        file content:
+        The behaviour depends on the source:
 
-        - **NetCDF**: reads ``valid_from`` / ``valid_until`` from the ``time``
-          dimension via
-          :func:`datavia.library.formats.extract_netcdf_layer_metadata`.
-          When *variable* is ``None`` a DB row is inserted for every variable
-          found in the file so that per-variable path lookups work correctly
-          for multi-variable ERA5 downloads.
-        - **Parquet**: infers ``valid_from`` / ``valid_until`` from the
-          ``datetime`` column.
+        - **Zarr-enabled sources** (``.nc`` input, ``zarr_grid`` in
+          ``SOURCE_REGISTRY``): the NetCDF file is ingested directly into the
+          per-(variable, year) Zarr store via :meth:`_ingest_nc_to_zarr`.
+          No ``.nc`` copy is kept; no DB row is inserted here.  Coverage
+          tracking is handled automatically by
+          :class:`~datavia.weather.coverage_manager.CoverageManager` on the
+          next ``update_data`` call.
+        - **Parquet sources** (e.g. DWD station files): file is copied to the
+          data directory and a row is inserted in ``weather_layers``.
 
         The *reproject* and *resolution_m* parameters are accepted for
-        interface compatibility but are not applied to weather files (NetCDF
-        and Parquet carry their own coordinate information).
+        interface compatibility but are not applied to weather files.
 
-        When *register_only* is ``True`` the file-copy step is skipped and
-        only the database registration is performed.  Use this when the file
-        is already in the data directory, e.g. when re-registering an orphan
-        file discovered by
-        :meth:`~datavia.core.interfaces.Pipeline.sync_files_and_database`.
+        When *register_only* is ``True`` and *data_path* points to a Zarr
+        store directory (extension ``.zarr``), the DB registration is rebuilt
+        from the store contents via :meth:`_rebuild_zarr_registration`.
 
         Parameters
         ----------
         data_path : str
-            Absolute path to the downloaded file to save.  When
-            *register_only* is ``True`` this must already be the path
-            inside the data directory.
+            Absolute path to the downloaded file (or Zarr store directory).
         reproject : bool, optional
-            Ignored for weather files; present for
-            :class:`~datavia.core.interfaces.Saver` interface compatibility.
+            Ignored for weather files; present for interface compatibility.
             Defaults to ``False``.
         resolution_m : int, optional
             Ignored for weather files. Defaults to ``None``.
         variable : str, optional
-            Explicit variable name to register in the database, e.g.
-            ``"2m_temperature"``.  When ``None`` the variable is read from
-            the file content (NetCDF: all data-variable names; Parquet: the
-            source name).  Passing an explicit value is strongly preferred to
-            avoid relying on temp-file stem conventions.
+            Explicit variable name for Parquet DB registration.  Not used for
+            Zarr-enabled sources (variables are read from the dataset).
         register_only : bool, optional
-            When ``True`` skip the file-copy step and only register metadata.
+            When ``True`` skip the file-copy step.  For Zarr store paths this
+            triggers :meth:`_rebuild_zarr_registration` instead.
             Defaults to ``False``.
 
         Returns
         -------
         bool
-            ``True`` when all DB rows were inserted successfully,
-            ``False`` on any error.
+            ``True`` on success, ``False`` on any error.
         """
         try:
             ext = os.path.splitext(data_path)[1].lower()
+
+            # Zarr-enabled sources: ingest .nc directly into the Zarr store.
+            # No .nc copy is kept; coverage DB rows are rebuilt automatically
+            # by CoverageManager on the next update_data() call.
+            if ext == ".nc" and _has_zarr_grid(self.source_name):
+                return self._ingest_nc_to_zarr(data_path)
+
+            # Orphan Zarr store re-discovered by sync_files_and_database:
+            # rebuild DB registration from the store contents.
+            if ext == ".zarr" and _has_zarr_grid(self.source_name):
+                return self._rebuild_zarr_registration(data_path)
+
             file_format = _infer_file_format(ext)
 
             if register_only:
@@ -374,24 +381,53 @@ class SaverWeather(Saver):
             session.close()
 
     def _list_weather_files(self) -> list[str]:
-        """Return absolute paths of all weather files for this source in data_dir.
+        """Return absolute paths of all weather data managed by this saver.
+
+        For Zarr-enabled sources the authoritative data backend is the Zarr
+        store, not NetCDF files.  Only ``.zarr`` store directories and
+        ``.parquet`` files are returned; ``.nc`` files are intentionally
+        excluded.  This allows
+        :meth:`~datavia.core.interfaces.Pipeline.sync_files_and_database` to
+        detect any legacy ``.nc``-based DB rows as orphans and remove them,
+        forcing CoverageManager to re-compute coverage from the Zarr stores.
+
+        For non-Zarr sources, scans the data directory for
+        ``<source_name>_*.nc`` and ``<source_name>_*.parquet`` files as before.
 
         Returns
         -------
         list[str]
-            Absolute paths to ``<source_name>_*.nc`` and
-            ``<source_name>_*.parquet`` files.
+            Absolute paths to all managed weather files and Zarr stores.
         """
+        is_zarr = _has_zarr_grid(self.source_name)
         prefix = f"{self.source_name}_"
         result: list[str] = []
+
         try:
             for fname in os.listdir(self.data_dir):
-                if fname.startswith(prefix) and (
-                    fname.endswith(".nc") or fname.endswith(".parquet")
-                ):
+                if not fname.startswith(prefix):
+                    continue
+                # For Zarr sources, skip .nc files — Zarr stores are canonical.
+                if is_zarr and fname.endswith(".nc"):
+                    continue
+                if fname.endswith(".nc") or fname.endswith(".parquet"):
                     result.append(os.path.join(self.data_dir, fname))
         except FileNotFoundError:
             logger.warning("Data directory not found: %s", self.data_dir)
+
+        if is_zarr:
+            source_root = os.path.join(self.data_dir, self.source_name)
+            try:
+                for var_name in os.listdir(source_root):
+                    var_dir = os.path.join(source_root, var_name)
+                    if not os.path.isdir(var_dir):
+                        continue
+                    for store_name in os.listdir(var_dir):
+                        if store_name.endswith(".zarr"):
+                            result.append(os.path.join(var_dir, store_name))
+            except FileNotFoundError:
+                pass
+
         return result
 
     def _get_all_db_rows(self) -> list[dict[str, str]]:
@@ -447,10 +483,101 @@ class SaverWeather(Saver):
         finally:
             session.close()
 
+    def _ingest_nc_to_zarr(self, nc_path: str) -> bool:
+        """Ingest a downloaded NetCDF file into the Zarr store for each variable.
+
+        Opens *nc_path* with :func:`xarray.open_dataset`, resolves the
+        pipeline variable names from ``SOURCE_REGISTRY``, and calls
+        :meth:`~datavia.weather.zarr_store_manager.ZarrStoreManager.write_dataset`
+        for each variable.  The source NetCDF file is not retained; all data
+        is preserved in the Zarr store.
+
+        Parameters
+        ----------
+        nc_path : str
+            Absolute path to the downloaded ``.nc`` file to ingest.
+
+        Returns
+        -------
+        bool
+            ``True`` when every variable was written successfully,
+            ``False`` on any error.
+        """
+        import xarray as xr
+
+        try:
+            mgr = ZarrStoreManager(self.data_dir, self.source_name)
+            variables = _resolve_variables(nc_path, "netcdf", None, self.source_name)
+            with xr.open_dataset(nc_path) as ds:
+                for var in variables:
+                    mgr.write_dataset(ds, var)
+                    logger.info(
+                        "Ingested %s/%s into Zarr store.", self.source_name, var
+                    )
+            return True
+        except Exception as exc:
+            logger.error(
+                "Failed to ingest NetCDF '%s' into Zarr store: %s", nc_path, exc
+            )
+            return False
+
+    def _rebuild_zarr_registration(self, zarr_path: str) -> bool:
+        """Repopulate ``weather_layers`` from an orphan Zarr store.
+
+        Called when :meth:`save` receives a ``.zarr`` directory path, which
+        happens when
+        :meth:`~datavia.core.interfaces.Pipeline.sync_files_and_database`
+        discovers a Zarr store on disk that has no DB rows.
+
+        Parameters
+        ----------
+        zarr_path : str
+            Absolute path to the Zarr store directory, e.g.
+            ``<data_dir>/HYRAS/2m_temperature/2023.zarr``.
+
+        Returns
+        -------
+        bool
+            ``True`` when at least one DB row was inserted, ``False`` on error.
+        """
+        from .coverage_manager import CoverageManager
+
+        try:
+            variable = os.path.basename(os.path.dirname(zarr_path))
+            mgr = CoverageManager(
+                self.source_name,
+                [variable],
+                data_dir=self.data_dir,
+            )
+            rows = mgr.rebuild_from_store(variable)
+            logger.info("Rebuilt %d DB row(s) from Zarr store: %s", rows, zarr_path)
+            return True
+        except Exception as exc:
+            logger.error(
+                "Failed to rebuild Zarr registration for '%s': %s", zarr_path, exc
+            )
+            return False
+
 
 # ---------------------------------------------------------------------------
 # Module-level helpers (not part of the public API)
 # ---------------------------------------------------------------------------
+
+
+def _has_zarr_grid(source_name: str) -> bool:
+    """Return ``True`` when *source_name* has a ``zarr_grid`` entry in ``SOURCE_REGISTRY``.
+
+    Parameters
+    ----------
+    source_name : str
+        Source identifier to look up in ``SOURCE_REGISTRY``.
+
+    Returns
+    -------
+    bool
+        ``True`` when the source is configured for Zarr storage.
+    """
+    return "zarr_grid" in SOURCE_REGISTRY.get(source_name, {})
 
 
 def _infer_file_format(ext: str) -> str:

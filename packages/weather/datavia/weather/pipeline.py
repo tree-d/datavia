@@ -286,17 +286,19 @@ class WeatherPipeline(Pipeline):
     ) -> bool:
         """Download and register weather data.
 
-        First reconciles on-disk files with the database by calling
-        :meth:`~datavia.core.interfaces.Pipeline.sync_files_and_database`
-        (inherited from :class:`~datavia.core.interfaces.Pipeline`).  This
-        removes stale DB rows for deleted files and re-registers any files
-        that exist on disk but were not yet recorded, ensuring the DB
-        accurately reflects the current state before the download delta is
-        computed.
+        Steps:
 
-        Then runs the composite downloader (ERA5 + DWD), splits the returned
-        newline-joined paths, and calls :meth:`SaverWeather.save` for each
-        individual file.
+        1. **Reconcile** disk with DB via
+           :meth:`~datavia.core.interfaces.Pipeline.sync_files_and_database`:
+           removes stale DB rows and re-registers orphan disk files.
+        2. **Migrate legacy NetCDF** — for Zarr-enabled sources, any ``.nc``
+           files still in the data directory are ingested into their Zarr
+           store by :meth:`_migrate_legacy_nc_files` so that CoverageManager
+           can compute coverage from the store and avoid redundant downloads.
+        3. **Download delta** — computes uncovered cells and issues the
+           minimum number of downloader calls.
+        4. **Save** — calls :meth:`SaverWeather.save` for each downloaded
+           file, writing directly into the Zarr store for Zarr-enabled sources.
 
         Parameters
         ----------
@@ -355,6 +357,22 @@ class WeatherPipeline(Pipeline):
                     self.name,
                 )
                 return True
+        # Migrate any legacy .nc files to Zarr before the coverage check so
+        # that already-downloaded data is not re-fetched from the network.
+        self._migrate_legacy_nc_files()
+
+        # Compute the uncovered (bbox, date_range) cells before issuing any
+        # requests.  This avoids redundant downloads on repeated update_data()
+        # calls and supports incremental spatial or temporal extension.
+        coverage_manager = CoverageManager(self.name, self._config["variables"])
+        req_bbox = self._get_request_bbox()
+        missing_cells = coverage_manager.missing_spatiotemporal(
+            req_bbox,
+            self._config["date_start"],
+            self._config["date_end"],
+        )
+
+        if not missing_cells:
             logger.info(
                 "WeatherPipeline '%s': DWD data not yet registered; downloading.",
                 self.name,
@@ -427,6 +445,67 @@ class WeatherPipeline(Pipeline):
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _migrate_legacy_nc_files(self) -> None:
+        """Ingest any leftover ``.nc`` files into Zarr stores.
+
+        Scans the data directory for ``<source_name>_*.nc`` files that belong
+        to a Zarr-enabled source.  Each file is passed to
+        :meth:`~datavia.weather.saver_weather.SaverWeather._ingest_nc_to_zarr`
+        and removed from disk after a successful write so that:
+
+        - The Zarr store becomes the sole on-disk data backend.
+        - :class:`~datavia.weather.coverage_manager.CoverageManager`'s
+          auto-rebuild can reconstruct DB rows from the store without
+          triggering redundant network downloads.
+
+        A no-op when the source has no ``zarr_grid`` entry or no ``.nc``
+        files are present.
+        """
+        import os
+
+        from .saver_weather import SaverWeather, _has_zarr_grid
+
+        if not isinstance(self.saver, SaverWeather):
+            return
+        if not _has_zarr_grid(self.name):
+            return
+
+        data_dir = self.saver.data_dir
+        prefix = f"{self.name}_"
+        try:
+            nc_files = [
+                os.path.join(data_dir, fname)
+                for fname in os.listdir(data_dir)
+                if fname.startswith(prefix) and fname.endswith(".nc")
+            ]
+        except FileNotFoundError:
+            return
+
+        for nc_path in sorted(nc_files):
+            logger.info(
+                "WeatherPipeline '%s': migrating legacy NetCDF to Zarr: %s",
+                self.name,
+                nc_path,
+            )
+            success = self.saver._ingest_nc_to_zarr(nc_path)
+            if success:
+                try:
+                    os.remove(nc_path)
+                    logger.info(
+                        "Removed legacy NetCDF after Zarr migration: %s", nc_path
+                    )
+                except OSError as exc:
+                    logger.warning(
+                        "Could not remove legacy NetCDF '%s' after migration: %s",
+                        nc_path,
+                        exc,
+                    )
+            else:
+                logger.warning(
+                    "Zarr migration failed for '%s'; file retained for safety.",
+                    nc_path,
+                )
 
     def _get_request_bbox(self) -> tuple[float, float, float, float]:
         """Return the configured bounding box as ``(west, south, east, north)``.
