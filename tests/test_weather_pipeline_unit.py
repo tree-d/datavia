@@ -3701,3 +3701,719 @@ class TestWeatherPipelineChunkByConfig:
             # Must not raise.
             pipe = WeatherPipeline(config=config)
             assert pipe.get_config()["chunk_by"] == value
+
+
+# ---------------------------------------------------------------------------
+# SaverWeather — delete_registration()
+# ---------------------------------------------------------------------------
+
+
+class TestSaverWeatherDeleteRegistration:
+    """Tests for :meth:`SaverWeather.delete_registration`.
+
+    Verifies that rows are removed from ``weather_layers`` by URI, that the
+    deletion is scoped to the saver's ``source_name``, and that all rows for
+    a given URI (e.g. multi-variable NetCDF) are cleaned up together.
+    """
+
+    def test_delete_registration_removes_row(self, sqlite_db: None, tmp_path) -> None:
+        """A registered layer is absent from the DB after delete_registration.
+
+        Parameters
+        ----------
+        sqlite_db : None
+            In-memory SQLite fixture.
+        tmp_path : pathlib.Path
+            Temporary directory (provides a realistic URI path).
+        """
+        from datavia.weather.saver_weather import SaverWeather
+        from sqlalchemy import text
+
+        from datavia.library.database.connection import session_local
+
+        uri = str(tmp_path / "ERA5_land_2m_temperature_202401.nc")
+        _insert_weather_layer(
+            source_name="ERA5_land",
+            layer_name="ERA5_land_2m_temperature_202401",
+            variable="2m_temperature",
+            file_format="netcdf",
+            valid_from="2024-01-01T00:00:00",
+            valid_until="2024-01-31T23:00:00",
+            uri=uri,
+        )
+
+        saver = SaverWeather.__new__(SaverWeather)
+        saver.source_name = "ERA5_land"
+        saver.data_dir = str(tmp_path)
+
+        saver.delete_registration(uri)
+
+        session = session_local()
+        count = session.execute(
+            text("SELECT COUNT(*) FROM weather_layers WHERE uri = :uri"),
+            {"uri": uri},
+        ).fetchone()[0]
+        session.close()
+        assert count == 0
+
+    def test_delete_registration_no_op_for_unknown_uri(
+        self, sqlite_db: None, tmp_path
+    ) -> None:
+        """delete_registration does not raise when the URI has no matching rows.
+
+        Parameters
+        ----------
+        sqlite_db : None
+            In-memory SQLite fixture.
+        tmp_path : pathlib.Path
+            Temporary directory.
+        """
+        from datavia.weather.saver_weather import SaverWeather
+
+        saver = SaverWeather.__new__(SaverWeather)
+        saver.source_name = "ERA5_land"
+        saver.data_dir = str(tmp_path)
+
+        # Must not raise even when no row exists for this URI.
+        saver.delete_registration("/nonexistent/path.nc")
+
+    def test_delete_registration_is_source_scoped(
+        self, sqlite_db: None, tmp_path
+    ) -> None:
+        """delete_registration only removes rows for self.source_name.
+
+        A URI registered under two different sources must retain the row for
+        the other source after deletion.
+
+        Parameters
+        ----------
+        sqlite_db : None
+            In-memory SQLite fixture.
+        tmp_path : pathlib.Path
+            Temporary directory.
+        """
+        from datavia.weather.saver_weather import SaverWeather
+        from sqlalchemy import text
+
+        from datavia.library.database.connection import session_local
+
+        shared_uri = "/data/shared_temperature.nc"
+        _insert_weather_layer(
+            source_name="ERA5_land",
+            layer_name="ERA5_land_shared",
+            variable="2m_temperature",
+            file_format="netcdf",
+            valid_from="2024-01-01T00:00:00",
+            valid_until="2024-01-31T23:00:00",
+            uri=shared_uri,
+        )
+        _insert_weather_layer(
+            source_name="HYRAS",
+            layer_name="HYRAS_shared",
+            variable="2m_temperature",
+            file_format="netcdf",
+            valid_from="2024-01-01T00:00:00",
+            valid_until="2024-01-31T23:00:00",
+            uri=shared_uri,
+        )
+
+        saver = SaverWeather.__new__(SaverWeather)
+        saver.source_name = "ERA5_land"
+        saver.data_dir = str(tmp_path)
+        saver.delete_registration(shared_uri)
+
+        session = session_local()
+        remaining_sources = [
+            row[0]
+            for row in session.execute(
+                text("SELECT source_name FROM weather_layers WHERE uri = :uri"),
+                {"uri": shared_uri},
+            ).fetchall()
+        ]
+        session.close()
+
+        assert "ERA5_land" not in remaining_sources, (
+            "ERA5_land row should have been deleted."
+        )
+        assert "HYRAS" in remaining_sources, (
+            "HYRAS row must not be affected by an ERA5_land deletion."
+        )
+
+    def test_delete_registration_removes_all_variable_rows_for_uri(
+        self, sqlite_db: None, tmp_path
+    ) -> None:
+        """All rows for a URI are removed even when a file has multiple variables.
+
+        A multi-variable ERA5 NetCDF is registered once per variable; all
+        those rows must be gone after a single delete_registration call.
+
+        Parameters
+        ----------
+        sqlite_db : None
+            In-memory SQLite fixture.
+        tmp_path : pathlib.Path
+            Temporary directory.
+        """
+        from datavia.weather.saver_weather import SaverWeather
+        from sqlalchemy import text
+
+        from datavia.library.database.connection import session_local
+
+        uri = "/data/ERA5_land_multi_202401.nc"
+        for variable in ("2m_temperature", "total_precipitation"):
+            _insert_weather_layer(
+                source_name="ERA5_land",
+                layer_name=f"ERA5_land_multi_202401_{variable}",
+                variable=variable,
+                file_format="netcdf",
+                valid_from="2024-01-01T00:00:00",
+                valid_until="2024-01-31T23:00:00",
+                uri=uri,
+            )
+
+        saver = SaverWeather.__new__(SaverWeather)
+        saver.source_name = "ERA5_land"
+        saver.data_dir = str(tmp_path)
+        saver.delete_registration(uri)
+
+        session = session_local()
+        count = session.execute(
+            text(
+                "SELECT COUNT(*) FROM weather_layers "
+                "WHERE source_name = 'ERA5_land' AND uri = :uri"
+            ),
+            {"uri": uri},
+        ).fetchone()[0]
+        session.close()
+        assert count == 0, f"Expected 0 rows after delete_registration, found {count}."
+
+
+# ---------------------------------------------------------------------------
+# SaverWeather — list_managed_files()
+# ---------------------------------------------------------------------------
+
+
+class TestSaverWeatherListManagedFiles:
+    """Tests for :meth:`SaverWeather.list_managed_files`.
+
+    Verifies that the filesystem scan returns only files whose names start
+    with ``{source_name}_`` and end with ``.nc`` or ``.parquet``.
+    """
+
+    def test_matching_nc_and_parquet_files_returned(self, tmp_path) -> None:
+        """Files prefixed with the source name and using .nc/.parquet are returned.
+
+        Parameters
+        ----------
+        tmp_path : pathlib.Path
+            Temporary directory where files are created.
+        """
+        from datavia.weather.saver_weather import SaverWeather
+
+        saver = SaverWeather.__new__(SaverWeather)
+        saver.source_name = "ERA5_land"
+        saver.data_dir = str(tmp_path)
+
+        (tmp_path / "ERA5_land_2m_temperature_202401.nc").touch()
+        (tmp_path / "ERA5_land_precipitation_202401.parquet").touch()
+
+        files = saver.list_managed_files()
+        names = {f.split("/")[-1] for f in files}
+        assert "ERA5_land_2m_temperature_202401.nc" in names
+        assert "ERA5_land_precipitation_202401.parquet" in names
+
+    def test_wrong_source_prefix_excluded(self, tmp_path) -> None:
+        """Files belonging to a different source are not returned.
+
+        Parameters
+        ----------
+        tmp_path : pathlib.Path
+            Temporary directory.
+        """
+        from datavia.weather.saver_weather import SaverWeather
+
+        saver = SaverWeather.__new__(SaverWeather)
+        saver.source_name = "ERA5_land"
+        saver.data_dir = str(tmp_path)
+
+        (tmp_path / "ERA5_land_temperature.nc").touch()
+        (tmp_path / "HYRAS_temperature.nc").touch()
+
+        files = saver.list_managed_files()
+        names = {f.split("/")[-1] for f in files}
+        assert "HYRAS_temperature.nc" not in names
+        assert "ERA5_land_temperature.nc" in names
+
+    def test_unsupported_extensions_excluded(self, tmp_path) -> None:
+        """Files with extensions other than .nc and .parquet are excluded.
+
+        Parameters
+        ----------
+        tmp_path : pathlib.Path
+            Temporary directory.
+        """
+        from datavia.weather.saver_weather import SaverWeather
+
+        saver = SaverWeather.__new__(SaverWeather)
+        saver.source_name = "ERA5_land"
+        saver.data_dir = str(tmp_path)
+
+        (tmp_path / "ERA5_land_temperature.nc").touch()
+        (tmp_path / "ERA5_land_temperature.txt").touch()
+        (tmp_path / "ERA5_land_temperature.json").touch()
+
+        files = saver.list_managed_files()
+        names = {f.split("/")[-1] for f in files}
+        assert "ERA5_land_temperature.nc" in names
+        assert "ERA5_land_temperature.txt" not in names
+        assert "ERA5_land_temperature.json" not in names
+
+    def test_nonexistent_data_dir_returns_empty_list(self) -> None:
+        """Returns an empty list when the data directory does not exist.
+
+        No exception must be raised; the method gracefully handles a missing
+        directory.
+        """
+        from datavia.weather.saver_weather import SaverWeather
+
+        saver = SaverWeather.__new__(SaverWeather)
+        saver.source_name = "ERA5_land"
+        saver.data_dir = "/nonexistent/path/that/does/not/exist"
+
+        assert saver.list_managed_files() == []
+
+    def test_empty_directory_returns_empty_list(self, tmp_path) -> None:
+        """Returns an empty list when data_dir exists but contains no matching files.
+
+        Parameters
+        ----------
+        tmp_path : pathlib.Path
+            Empty temporary directory.
+        """
+        from datavia.weather.saver_weather import SaverWeather
+
+        saver = SaverWeather.__new__(SaverWeather)
+        saver.source_name = "ERA5_land"
+        saver.data_dir = str(tmp_path)
+
+        assert saver.list_managed_files() == []
+
+
+# ---------------------------------------------------------------------------
+# GetterWeather — get_registered_uris()
+# ---------------------------------------------------------------------------
+
+
+class TestGetterWeatherGetRegisteredUris:
+    """Tests for :meth:`GetterWeather.get_registered_uris`.
+
+    Verifies that the method returns only distinct URIs for ``self.source_name``
+    and correctly deduplicates a single file registered for multiple variables.
+    """
+
+    def test_empty_db_returns_empty_set(self, sqlite_db: None) -> None:
+        """Returns an empty set when no layers are registered.
+
+        Parameters
+        ----------
+        sqlite_db : None
+            In-memory SQLite fixture.
+        """
+        from datavia.weather.getter_weather import GetterWeather
+
+        getter = GetterWeather("ERA5_land")
+        assert getter.get_registered_uris() == set()
+
+    def test_registered_uris_returned(self, sqlite_db: None) -> None:
+        """All URIs registered for this source are present in the result.
+
+        Parameters
+        ----------
+        sqlite_db : None
+            In-memory SQLite fixture.
+        """
+        from datavia.weather.getter_weather import GetterWeather
+
+        uri_a = "/data/ERA5_land_2m_temperature_202401.nc"
+        uri_b = "/data/ERA5_land_2m_temperature_202402.nc"
+        for uri, month in ((uri_a, "01"), (uri_b, "02")):
+            _insert_weather_layer(
+                source_name="ERA5_land",
+                layer_name=f"ERA5_land_2m_temperature_2024{month}",
+                variable="2m_temperature",
+                file_format="netcdf",
+                valid_from=f"2024-{month}-01T00:00:00",
+                valid_until=f"2024-{month}-28T23:00:00",
+                uri=uri,
+            )
+
+        getter = GetterWeather("ERA5_land")
+        uris = getter.get_registered_uris()
+        assert uri_a in uris
+        assert uri_b in uris
+
+    def test_is_source_scoped(self, sqlite_db: None) -> None:
+        """Only URIs for self.source_name are included; other sources are excluded.
+
+        Parameters
+        ----------
+        sqlite_db : None
+            In-memory SQLite fixture.
+        """
+        from datavia.weather.getter_weather import GetterWeather
+
+        era5_uri = "/data/ERA5_land_temperature.nc"
+        hyras_uri = "/data/HYRAS_temperature.nc"
+        _insert_weather_layer(
+            source_name="ERA5_land",
+            layer_name="ERA5_land_temperature_2m",
+            variable="2m_temperature",
+            file_format="netcdf",
+            valid_from="2024-01-01T00:00:00",
+            valid_until="2024-01-31T23:00:00",
+            uri=era5_uri,
+        )
+        _insert_weather_layer(
+            source_name="HYRAS",
+            layer_name="HYRAS_temperature_2m",
+            variable="2m_temperature",
+            file_format="netcdf",
+            valid_from="2024-01-01T00:00:00",
+            valid_until="2024-01-31T23:00:00",
+            uri=hyras_uri,
+        )
+
+        era5_getter = GetterWeather("ERA5_land")
+        uris = era5_getter.get_registered_uris()
+        assert era5_uri in uris
+        assert hyras_uri not in uris, (
+            "URIs for other sources must not appear in the result."
+        )
+
+    def test_multi_variable_file_deduplicated(self, sqlite_db: None) -> None:
+        """A single file registered for two variables appears only once in the set.
+
+        When one NetCDF file covers two variables (two DB rows), the returned
+        set must contain the URI exactly once because Python sets deduplicate.
+
+        Parameters
+        ----------
+        sqlite_db : None
+            In-memory SQLite fixture.
+        """
+        from datavia.weather.getter_weather import GetterWeather
+
+        shared_uri = "/data/ERA5_land_multi_202401.nc"
+        for variable in ("2m_temperature", "total_precipitation"):
+            _insert_weather_layer(
+                source_name="ERA5_land",
+                layer_name=f"ERA5_land_multi_202401_{variable}",
+                variable=variable,
+                file_format="netcdf",
+                valid_from="2024-01-01T00:00:00",
+                valid_until="2024-01-31T23:00:00",
+                uri=shared_uri,
+            )
+
+        getter = GetterWeather("ERA5_land")
+        uris = getter.get_registered_uris()
+        assert shared_uri in uris
+        # A set never contains duplicates; count by converting back to list.
+        assert len([u for u in uris if u == shared_uri]) == 1
+
+
+# ---------------------------------------------------------------------------
+# SaverWeather — save(register_only=True)
+# ---------------------------------------------------------------------------
+
+
+class TestSaverWeatherSaveRegisterOnly:
+    """Tests for :meth:`SaverWeather.save` with ``register_only=True``.
+
+    When ``register_only=True`` the file must NOT be copied and the DB row
+    must use the original ``data_path`` as ``uri``.
+    """
+
+    def test_register_only_does_not_copy_file(self, sqlite_db: None, tmp_path) -> None:
+        """No additional file is created in data_dir when register_only=True.
+
+        The original file remains in place; no copy is written to a
+        descriptive destination stem.
+
+        Parameters
+        ----------
+        sqlite_db : None
+            In-memory SQLite fixture.
+        tmp_path : pathlib.Path
+            Temporary directory used as both the source location and data_dir.
+        """
+        from datavia.weather.saver_weather import SaverWeather
+
+        nc_file = tmp_path / "ERA5_land_2m_temperature_202401.nc"
+        nc_file.write_bytes(b"FAKE_NC")
+
+        saver = SaverWeather.__new__(SaverWeather)
+        saver.source_name = "ERA5_land"
+        saver.data_dir = str(tmp_path)
+
+        meta = {
+            "valid_from": "2024-01-01T00:00:00",
+            "valid_until": "2024-01-31T23:00:00",
+            "bbox": None,
+            "crs": "EPSG:4326",
+            "variables": ["2m_temperature"],
+        }
+        with patch(
+            "datavia.weather.saver_weather.extract_netcdf_layer_metadata",
+            return_value=meta,
+        ):
+            result = saver.save(str(nc_file), register_only=True)
+
+        assert result is True
+        # Source file must still exist (not moved or deleted).
+        assert nc_file.exists(), "Original file must still exist."
+        # Only the original file should be in the directory.
+        nc_files = list(tmp_path.glob("*.nc"))
+        assert len(nc_files) == 1, (
+            f"Expected exactly 1 .nc file (the original); found: {nc_files}"
+        )
+
+    def test_register_only_inserts_db_row_with_original_uri(
+        self, sqlite_db: None, tmp_path
+    ) -> None:
+        """The DB row uri equals data_path (no copy means no new path).
+
+        Parameters
+        ----------
+        sqlite_db : None
+            In-memory SQLite fixture.
+        tmp_path : pathlib.Path
+            Temporary directory.
+        """
+        from datavia.weather.saver_weather import SaverWeather
+        from sqlalchemy import text
+
+        from datavia.library.database.connection import session_local
+
+        nc_file = tmp_path / "ERA5_land_2m_temperature_202401.nc"
+        nc_file.write_bytes(b"FAKE")
+
+        saver = SaverWeather.__new__(SaverWeather)
+        saver.source_name = "ERA5_land"
+        saver.data_dir = str(tmp_path)
+
+        meta = {
+            "valid_from": "2024-01-01T00:00:00",
+            "valid_until": "2024-01-31T23:00:00",
+            "bbox": None,
+            "crs": "EPSG:4326",
+            "variables": ["2m_temperature"],
+        }
+        with patch(
+            "datavia.weather.saver_weather.extract_netcdf_layer_metadata",
+            return_value=meta,
+        ):
+            saver.save(str(nc_file), register_only=True)
+
+        session = session_local()
+        row = session.execute(
+            text(
+                "SELECT uri FROM weather_layers WHERE source_name = 'ERA5_land' LIMIT 1"
+            )
+        ).fetchone()
+        session.close()
+
+        assert row is not None, "A DB row must be inserted."
+        assert row[0] == str(nc_file), f"Expected URI={str(nc_file)!r}, got {row[0]!r}."
+
+    def test_register_only_layer_name_is_file_stem(
+        self, sqlite_db: None, tmp_path
+    ) -> None:
+        """The layer_name stored equals os.path.splitext(os.path.basename(path))[0].
+
+        Parameters
+        ----------
+        sqlite_db : None
+            In-memory SQLite fixture.
+        tmp_path : pathlib.Path
+            Temporary directory.
+        """
+        import os
+
+        from datavia.weather.saver_weather import SaverWeather
+        from sqlalchemy import text
+
+        from datavia.library.database.connection import session_local
+
+        nc_file = tmp_path / "ERA5_land_2m_temperature_202401.nc"
+        nc_file.write_bytes(b"FAKE")
+        expected_layer_name = os.path.splitext(os.path.basename(str(nc_file)))[0]
+
+        saver = SaverWeather.__new__(SaverWeather)
+        saver.source_name = "ERA5_land"
+        saver.data_dir = str(tmp_path)
+
+        meta = {
+            "valid_from": "2024-01-01T00:00:00",
+            "valid_until": "2024-01-31T23:00:00",
+            "bbox": None,
+            "crs": "EPSG:4326",
+            "variables": ["2m_temperature"],
+        }
+        with patch(
+            "datavia.weather.saver_weather.extract_netcdf_layer_metadata",
+            return_value=meta,
+        ):
+            saver.save(str(nc_file), register_only=True)
+
+        session = session_local()
+        row = session.execute(
+            text(
+                "SELECT layer_name FROM weather_layers "
+                "WHERE source_name = 'ERA5_land' LIMIT 1"
+            )
+        ).fetchone()
+        session.close()
+
+        assert row is not None
+        assert row[0] == expected_layer_name, (
+            f"Expected layer_name={expected_layer_name!r}, got {row[0]!r}."
+        )
+
+
+# ---------------------------------------------------------------------------
+# GetterWeather — apply_conversion applied correctly in get_data()
+# ---------------------------------------------------------------------------
+
+
+class TestGetterWeatherEra5KelvinToCelsiusConversion:
+    """Tests that the K→°C conversion from ``apply_conversion``
+    is applied in ``get_data()``.
+
+    The existing tests use ``variable="temperature_2m"`` (a HYRAS-only variable
+    name) for the ERA5_land source, which means ``apply_conversion`` finds no
+    conversion rule and returns the raw value unchanged.  These tests use the
+    correct ERA5_land variable name ``"2m_temperature"`` to verify that the
+    K→°C subtraction is actually applied end-to-end.
+    """
+
+    def test_raw_kelvin_converted_to_celsius(self, sqlite_db: None) -> None:
+        """Raw 300.15 K from the mocked interpolator becomes 27.0 °C.
+
+        ``apply_conversion("ERA5_land", "2m_temperature", 300.15, None)``
+        must subtract 273.15, yielding 27.0.  ``apply_conversion`` is NOT
+        mocked so the real conversion logic executes.
+
+        Parameters
+        ----------
+        sqlite_db : None
+            In-memory SQLite fixture.
+        """
+        from datavia.weather.getter_weather import GetterWeather
+
+        _insert_weather_layer(
+            source_name="ERA5_land",
+            layer_name="ERA5_land_2m_temperature_202401",
+            variable="2m_temperature",
+            file_format="netcdf",
+            valid_from="2024-01-01T00:00:00",
+            valid_until="2024-01-31T23:00:00",
+            uri="/data/era5_2m_temperature.nc",
+        )
+
+        getter = GetterWeather("ERA5_land")
+        coords = np.array([[13.4, 52.5]])
+
+        with (
+            patch(
+                "datavia.weather.getter_weather.interpolate_netcdf",
+                return_value=300.15,
+            ),
+            patch(
+                "datavia.weather.getter_weather.interpolate_station_parquet",
+                return_value=float("nan"),
+            ),
+        ):
+            result = getter.get_data(
+                coords,
+                variable="2m_temperature",
+                datetime_utc="2024-01-15T12:00:00",
+            )
+
+        # 300.15 K - 273.15 = 27.0 °C.
+        assert result[0] == pytest.approx(27.0), (
+            f"Expected 27.0 °C after K→°C conversion, got {result[0]}."
+        )
+
+
+# ---------------------------------------------------------------------------
+# GetterWeather — unit_overrides forwarded to apply_conversion
+# ---------------------------------------------------------------------------
+
+
+class TestGetterWeatherUnitOverrides:
+    """Tests that ``unit_overrides`` from :meth:`GetterWeather.__init__` are
+    forwarded as the fourth argument to ``apply_conversion`` in each query.
+    """
+
+    def test_unit_overrides_forwarded_to_apply_conversion(
+        self, sqlite_db: None
+    ) -> None:
+        """apply_conversion receives the unit_overrides dict passed at construction.
+
+        ``apply_conversion`` is patched to record its arguments.  The fourth
+        positional argument must be the same object that was supplied to
+        :class:`GetterWeather` at construction time.
+
+        Parameters
+        ----------
+        sqlite_db : None
+            In-memory SQLite fixture.
+        """
+        from datavia.weather.getter_weather import GetterWeather
+
+        overrides = {"2m_temperature": {"from": "K", "to": "degC"}}
+        _insert_weather_layer(
+            source_name="ERA5_land",
+            layer_name="ERA5_land_2m_temperature_202401",
+            variable="2m_temperature",
+            file_format="netcdf",
+            valid_from="2024-01-01T00:00:00",
+            valid_until="2024-01-31T23:00:00",
+            uri="/data/era5_2m_temperature.nc",
+        )
+
+        getter = GetterWeather("ERA5_land", unit_overrides=overrides)
+        coords = np.array([[13.4, 52.5]])
+
+        with (
+            patch(
+                "datavia.weather.getter_weather.interpolate_netcdf",
+                return_value=280.0,
+            ),
+            patch(
+                "datavia.weather.getter_weather.interpolate_station_parquet",
+                return_value=float("nan"),
+            ),
+            patch(
+                "datavia.weather.getter_weather.apply_conversion",
+                wraps=lambda s, v, val, u: val,
+            ) as mock_convert,
+        ):
+            getter.get_data(
+                coords,
+                variable="2m_temperature",
+                datetime_utc="2024-01-15T12:00:00",
+            )
+
+        mock_convert.assert_called_once()
+        call_args = mock_convert.call_args
+        assert call_args.args[0] == "ERA5_land", (
+            f"Expected source_name='ERA5_land', got {call_args.args[0]!r}."
+        )
+        assert call_args.args[1] == "2m_temperature", (
+            f"Expected variable='2m_temperature', got {call_args.args[1]!r}."
+        )
+        assert call_args.args[3] is overrides, (
+            "unit_overrides must be forwarded by reference to apply_conversion."
+        )
