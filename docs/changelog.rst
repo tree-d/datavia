@@ -191,8 +191,55 @@ Phase 2 (Core Implementation)
 Future Releases
 ---------------
 
-[1.0.5] - Planned
-~~~~~~~~~~~~~~~~~~
-- Extended geographic coverage beyond Germany.
-- Additional weather data sources.
-- Weather pipeline performance improvements.
+`[1.0.5] — Planned <https://github.com/tree-d/datavia/compare/v1.0.4...HEAD>`_
+---------------------------------------------------------------------------------
+
+The Zarr store migration release. Replaces the per-download ``.nc`` file model
+with a consolidated Zarr store per ``(source, variable, year)`` triple,
+eliminating file-proliferation and making point time-series queries
+significantly faster.
+
+Added
+~~~~~
+- ``ZarrStoreManager`` — new class encapsulating all Zarr I/O: store
+  creation, region writes, lazy reads, multi-year concatenation, and
+  NetCDF-to-Zarr migration.
+- ``zarr_grid`` entries in ``SOURCE_REGISTRY`` for every gridded source
+  (ERA5-Land and HYRAS), defining the fixed Germany-extent coordinate grid,
+  chunk layout, and Zstd/Blosc2 codec configuration used by all stores.
+- ``CoverageManager.rebuild_from_store(variable)`` — repopulates
+  ``weather_layers`` DB rows from Zarr store contents by scanning each year
+  store month by month.  Required so the coverage cache can be rebuilt
+  after DB loss or a fresh checkout without re-downloading from CDS.
+- Auto-rebuild in ``CoverageManager.__init__``: if a Zarr store exists on
+  disk for a ``(source, variable)`` pair that has no DB rows, rebuild is
+  triggered automatically before the first coverage query.
+- ``data_dir`` parameter on ``CoverageManager.__init__`` to allow injection
+  of the data directory independently of ``get_config()``.
+- ``ZarrStoreManager.migrate_nc_file(nc_path, variable)`` for importing
+  existing ``.nc`` files into the Zarr store.
+- ``interpolate_dataset`` overload in the interpolation library, allowing
+  ``GetterWeather`` to pass an already-open ``xr.Dataset`` without
+  re-opening from disk.
+- ``file_format="zarr"`` value accepted in the ``weather_layers`` DB table.
+- New database index ``idx_weather_source_variable_format`` on
+  ``(source_name, variable, file_format)`` to speed up per-variable store
+  lookups in ``CoverageManager``.
+- ``zarr>=3.0,<4``, ``numcodecs>=0.12,<1``, and ``fasteners>=0.19`` added
+  as direct dependencies of ``datavia-weather``.
+
+Changed
+~~~~~~~
+- ``GetterWeather.get_data()`` now tries to open a Zarr store first via
+  ``ZarrStoreManager.open_multi_year()``; falls back to the ``interpolate_netcdf``
+  path for legacy ``.nc`` rows, preserving full backward compatibility.
+- ``GetterWeather.get_existing_layers()`` scans Zarr store directories via
+  ``ZarrStoreManager.list_available_variables()`` instead of querying the DB.
+- ``CoverageManager`` no longer requires filename uniqueness for the
+  ``uri`` column — multiple DB rows may share the same Zarr store path.
+
+Fixed
+~~~~~
+- ``.write_in_progress`` sentinel left by an interrupted write is now
+  removed automatically by ``rebuild_from_store``, recovering partially
+  written stores without data loss.
