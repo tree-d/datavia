@@ -623,27 +623,29 @@ class ZarrStoreManager:
             if gm_name and gm_name in ds and gm_name not in selected:
                 selected = selected.assign({gm_name: ds[gm_name]})
 
-        # Drop every coordinate and data variable that is not part of the
-        # pre-defined skeleton store.  ERA5 downloads contain GRIB metadata
-        # keys (`number`, `expver`, …) that are absent from the skeleton and
-        # cause zarr to raise on region writes:
+        # For geographic sources (ERA5, EPSG:4326) only: drop any coordinate or
+        # variable that is not part of the pre-defined skeleton store.
+        # ERA5 downloads from the CDS API contain GRIB metadata artefacts that
+        # are absent from the skeleton and cause zarr to raise on region writes:
         #
         #   - `number` (ensemble member) is a scalar coordinate (ndim == 0).
         #   - `expver` (experiment version) is a 1-D coordinate whose
         #     dimension is `valid_time`; after _normalise_time() that becomes
         #     `time`, so a dimension-intersection filter incorrectly keeps it.
         #
-        # A whitelist is the correct approach: retain only the target data
-        # variable and the three skeleton coordinates.  Anything else is a
-        # GRIB metadata artefact that must not reach to_zarr().
-        skeleton_coords = {"time", "latitude", "longitude"}
-        extra = [
-            name
-            for name in list(selected.coords) + list(selected.data_vars)
-            if name != variable and name not in skeleton_coords
-        ]
-        if extra:
-            selected = selected.drop_vars(extra)
+        # A whitelist is the correct approach for the skeleton (region="auto")
+        # path.  Projected sources (HYRAS EPSG:3035) write wholesale via
+        # mode="w" and must NOT be filtered here — their native x/y/lat/lon/crs
+        # arrays are required by the interpolator.
+        if not self._is_projected():
+            skeleton_coords = {"time", "latitude", "longitude"}
+            extra = [
+                name
+                for name in list(selected.coords) + list(selected.data_vars)
+                if name != variable and name not in skeleton_coords
+            ]
+            if extra:
+                selected = selected.drop_vars(extra)
 
         return selected
 
