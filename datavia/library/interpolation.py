@@ -360,7 +360,29 @@ def interpolate_netcdf(
             "Install datavia-weather or run `pip install xarray netCDF4`."
         )
 
-    with xr.open_dataset(nc_path) as ds:
+    # Open one file or eagerly concatenate several files along the time
+    # dimension.  A plain string uses open_dataset (existing single-file path,
+    # unchanged).  A list with one entry is also opened directly to avoid a
+    # spurious outer dimension.  A list with 2+ entries opens each file
+    # individually and concatenates in memory with xr.concat — no dask
+    # required.  The time dimension name is detected from the first file so
+    # that ERA5 files (which use 'valid_time' from cdsapi >= 0.7) are handled
+    # correctly; using dim="time" blindly would create a new outer dimension
+    # instead of concatenating along the existing one.
+    if isinstance(nc_path, list) and len(nc_path) > 1:
+        _parts = [xr.open_dataset(f) for f in nc_path]
+        _time_dim_nc = next(
+            (d for d in _parts[0].dims if d in ("time", "valid_time")),
+            "time",
+        )
+        _ds_ctx = xr.concat(_parts, dim=_time_dim_nc)
+        for _d in _parts:
+            _d.close()
+    elif isinstance(nc_path, list):
+        _ds_ctx = xr.open_dataset(nc_path[0])
+    else:
+        _ds_ctx = xr.open_dataset(nc_path)
+    with _ds_ctx as ds:
         return interpolate_dataset(
             ds,
             lats=lats,
@@ -441,81 +463,53 @@ def interpolate_dataset(
     lats_arr = np.atleast_1d(np.asarray(lats, dtype=float))
     lons_arr = np.atleast_1d(np.asarray(lons, dtype=float))
 
-    # Open one file or eagerly concatenate several files along the time
-    # dimension.  A plain string uses open_dataset (existing single-file path,
-    # unchanged).  A list with one entry is also opened directly to avoid a
-    # spurious outer dimension.  A list with 2+ entries opens each file
-    # individually and concatenates in memory with xr.concat — no dask
-    # required.  The time dimension name is detected from the first file so
-    # that ERA5 files (which use 'valid_time' from cdsapi >= 0.7) are handled
-    # correctly; using dim="time" blindly would create a new outer dimension
-    # instead of concatenating along the existing one.
-    if isinstance(nc_path, list) and len(nc_path) > 1:
-        _parts = [xr.open_dataset(f) for f in nc_path]
-        _time_dim_nc = next(
-            (d for d in _parts[0].dims if d in ("time", "valid_time")),
-            "time",
-        )
-        _ds_ctx = xr.concat(_parts, dim=_time_dim_nc)
-        for _d in _parts:
-            _d.close()
-    elif isinstance(nc_path, list):
-        _ds_ctx = xr.open_dataset(nc_path[0])
-    else:
-        _ds_ctx = xr.open_dataset(nc_path)
-    with _ds_ctx as ds:
-        if variable not in ds.data_vars:
-            raise KeyError(
-                f"Variable '{variable}' not found in {nc_path!r}. "
-                f"Available variables: {list(ds.data_vars)}"
-            )
-
-        # Mask the fill sentinel and replace NaN cells with the nearest valid
-        # neighbour along each spatial dimension before bilinear interpolation,
-        # so stencils touching domain boundaries always receive a finite value.
-        da = ds[variable]
-        fill_val = da.attrs.get("_FillValue", None)
-        if fill_val is not None:
-            da = da.where(da != fill_val)
-        x_dim = (
-            "x"
-            if "x" in da.dims
-            else ("longitude" if "longitude" in da.dims else "lon")
-        )
-        y_dim = (
-            "y" if "y" in da.dims else ("latitude" if "latitude" in da.dims else "lat")
-        )
-        # ERA5-Land stores latitude in descending order (North → South).
-        # xarray's interpolate_na with method="nearest" requires the dimension
-        # coordinate to be monotonically increasing, so each spatial dimension
-        # is sorted to ascending order first.  sortby() is order-agnostic: it
-        # is a no-op when the coordinate is already ascending (HYRAS) and
-        # reverses it when descending (ERA5).  The subsequent da.interp() call
-        # handles both orderings transparently, so the sort does not affect
-        # the interpolated values.
-        da = da.sortby(x_dim)
-        da = da.sortby(y_dim)
-        # Two sequential 1-D fills (x then y) approximate a 2-D nearest-
-        # neighbour fill.  A true 2-D solution exists via
-        # scipy.ndimage.distance_transform_edt, but it requires extracting raw
-        # numpy arrays and iterating over time slices, making it considerably
-        # more complex.  For the convex HYRAS/ERA5 grids used here the
-        # directional approximation is adequate.
-        da = da.interpolate_na(dim=x_dim, method="nearest", fill_value="extrapolate")
-        da = da.interpolate_na(dim=y_dim, method="nearest", fill_value="extrapolate")
-
-        # Build vectorised spatial interpolation coordinates for all N points
-        # in one batch — single pyproj call, single xarray interp call.
-        interp_coords = _build_spatial_interp_coords(
-            ds, variable, lats_arr, lons_arr, input_crs
+    if variable not in ds.data_vars:
+        raise KeyError(
+            f"Variable '{variable}' not found in the dataset. "
+            f"Available variables: {list(ds.data_vars)}"
         )
 
-    # Pre-fill nodata cells so bilinear stencils at domain edges are
-    # always finite (BUG-08 fix).
-    da = _prefill_nodata(ds[variable])
+    # Mask the fill sentinel and replace NaN cells with the nearest valid
+    # neighbour along each spatial dimension before bilinear interpolation,
+    # so stencils touching domain boundaries always receive a finite value.
+    da = ds[variable]
+    fill_val = da.attrs.get("_FillValue", None)
+    if fill_val is not None:
+        da = da.where(da != fill_val)
+    x_dim = (
+        "x" if "x" in da.dims else ("longitude" if "longitude" in da.dims else "lon")
+    )
+    y_dim = "y" if "y" in da.dims else ("latitude" if "latitude" in da.dims else "lat")
+    # ERA5-Land stores latitude in descending order (North → South).
+    # xarray's interpolate_na with method="nearest" requires the dimension
+    # coordinate to be monotonically increasing, so each spatial dimension
+    # is sorted to ascending order first.  sortby() is order-agnostic: it
+    # is a no-op when the coordinate is already ascending (HYRAS) and
+    # reverses it when descending (ERA5).  The subsequent da.interp() call
+    # handles both orderings transparently, so the sort does not affect
+    # the interpolated values.
+    da = da.sortby(x_dim)
+    da = da.sortby(y_dim)
+    # Two sequential 1-D fills (x then y) approximate a 2-D nearest-
+    # neighbour fill.  A true 2-D solution exists via
+    # scipy.ndimage.distance_transform_edt, but it requires extracting raw
+    # numpy arrays and iterating over time slices, making it considerably
+    # more complex.  For the convex HYRAS/ERA5 grids used here the
+    # directional approximation is adequate.
+    #
+    # Zarr-backed DataArrays are dask-chunked along the spatial dimensions.
+    # interpolate_na with fill_value="extrapolate" uses apply_ufunc internally
+    # and requires each interpolated dimension to be a single contiguous chunk.
+    # Rechunk to -1 (one chunk per spatial dim) before filling so that dask
+    # does not raise "consists of multiple chunks" errors.  For in-memory
+    # arrays da.chunks is None/falsy and this branch is a no-op.
+    if da.chunks:
+        da = da.chunk({x_dim: -1, y_dim: -1})
+    da = da.interpolate_na(dim=x_dim, method="nearest", fill_value="extrapolate")
+    da = da.interpolate_na(dim=y_dim, method="nearest", fill_value="extrapolate")
 
     # Build vectorised spatial interpolation coordinates for all N points
-    # in one batch — single pyproj call, single xarray interp call (BUG-05).
+    # in one batch — single pyproj call, single xarray interp call.
     interp_coords = _build_spatial_interp_coords(
         ds, variable, lats_arr, lons_arr, input_crs
     )
@@ -523,47 +517,6 @@ def interpolate_dataset(
     # Bilinear spatial interpolation across all N points simultaneously.
     point = da.interp(interp_coords, method="linear")
 
-        # Temporal selection.
-        # ERA5 files from cdsapi >= 0.7 use 'valid_time' instead of 'time'.
-        if temporal_resolution not in ("daily", "hourly"):
-            raise ValueError(
-                f"temporal_resolution must be 'daily' or 'hourly', "
-                f"got '{temporal_resolution}'."
-            )
-        time_dim = "time" if "time" in point.coords else "valid_time"
-        if time_dim in point.coords:
-            if temporal_resolution == "hourly":
-                if not PANDAS_AVAILABLE:
-                    raise ImportError(
-                        "pandas is required for temporal_resolution='hourly'. "
-                        "Install with `pip install pandas`."
-                    )
-                _raw = (
-                    datetime_utc[0]
-                    if isinstance(datetime_utc, (list, tuple))
-                    else datetime_utc
-                )
-                day_start = pd.Timestamp(_raw)
-                if day_start.tzinfo is not None:
-                    day_start = day_start.tz_convert("UTC").tz_localize(None)
-                day_start = day_start.normalize()
-                day_end = day_start + pd.Timedelta(days=1) - pd.Timedelta(nanoseconds=1)
-                point = point.sel({time_dim: slice(day_start, day_end)})
-            else:
-
-                def _to_naive_ts(raw: Any) -> "pd.Timestamp":
-                    t = pd.Timestamp(raw)
-                    if t.tzinfo is not None:
-                        t = t.tz_convert("UTC").tz_localize(None)
-                    return t
-
-                if isinstance(datetime_utc, (list, tuple)):
-                    ts_list = [_to_naive_ts(t) for t in datetime_utc]
-                    point = point.sel({time_dim: ts_list}, method="nearest")
-                else:
-                    point = point.sel(
-                        {time_dim: _to_naive_ts(datetime_utc)}, method="nearest"
-                    )
     # Temporal selection.
     # ERA5 files from cdsapi >= 0.7 use 'valid_time' instead of 'time'.
     if temporal_resolution not in ("daily", "hourly"):
@@ -579,11 +532,32 @@ def interpolate_dataset(
                     "pandas is required for temporal_resolution='hourly'. "
                     "Install with `pip install pandas`."
                 )
-            day_start = pd.Timestamp(str(datetime_utc)).normalize()
+            _raw = (
+                datetime_utc[0]
+                if isinstance(datetime_utc, (list, tuple))
+                else datetime_utc
+            )
+            day_start = pd.Timestamp(_raw)
+            if day_start.tzinfo is not None:
+                day_start = day_start.tz_convert("UTC").tz_localize(None)
+            day_start = day_start.normalize()
             day_end = day_start + pd.Timedelta(days=1) - pd.Timedelta(nanoseconds=1)
             point = point.sel({time_dim: slice(day_start, day_end)})
         else:
-            point = point.sel({time_dim: datetime_utc}, method="nearest")
+
+            def _to_naive_ts(raw: Any) -> "pd.Timestamp":
+                t = pd.Timestamp(raw)
+                if t.tzinfo is not None:
+                    t = t.tz_convert("UTC").tz_localize(None)
+                return t
+
+            if isinstance(datetime_utc, (list, tuple)):
+                ts_list = [_to_naive_ts(t) for t in datetime_utc]
+                point = point.sel({time_dim: ts_list}, method="nearest")
+            else:
+                point = point.sel(
+                    {time_dim: _to_naive_ts(datetime_utc)}, method="nearest"
+                )
 
     values = np.asarray(point.values, dtype=float)
 
