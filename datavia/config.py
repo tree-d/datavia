@@ -284,8 +284,10 @@ class DataviaConfig:
         # base_directory explicitly in datavia.conf.
         self.config["paths"] = {
             "base_directory": "",
-            # storage = project (default) →  <cwd>/.datavia/  (per-project, self-contained)
-            # storage = global            →  ~/.datavia/      (shared across all projects)
+            # storage = project (default) -> <cwd>/.datavia/
+            # (per-project, self-contained)
+            # storage = global            -> ~/.datavia/
+            # (shared across all projects)
             "storage": "project",
             "data_directory": "data/",
             "log_directory": "logs/",
@@ -451,7 +453,7 @@ class DataviaConfig:
     _ROOT_GITIGNORE_ENTRY = ".datavia/\n"
 
     def _update_root_gitignore(self) -> None:
-        """Append ``.datavia/`` to the project root ``.gitignore`` if not already present.
+        """Append ``.datavia/`` to root ``.gitignore`` when it is missing.
 
         Walks up from the current working directory to locate the git
         repository root (identified by a ``.git`` entry).  Falls back to the
@@ -500,7 +502,8 @@ class DataviaConfig:
                 if needs_newline:
                     fh.write("\n")
                 fh.write(
-                    "\n# Datavia runtime directory — created automatically on first use\n"
+                    "\n# Datavia runtime directory "
+                    "- created automatically on first use\n"
                     + self._ROOT_GITIGNORE_ENTRY
                 )
             logger.debug("Added .datavia/ to root .gitignore at %s", gitignore_path)
@@ -510,7 +513,7 @@ class DataviaConfig:
             )
 
     def ensure_directories(self) -> None:
-        """Create data and log directories and write a .gitignore into the base directory.
+        """Create data/log directories and write ``.gitignore`` in the base directory.
 
         The ``.gitignore`` is written once when the base directory is first
         created, preventing accidental commits of large GeoTIFF files and logs.

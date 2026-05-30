@@ -8,7 +8,7 @@ if the tables are absent.  Works with both SQLite and PostgreSQL.
 import logging
 from pathlib import Path
 
-from sqlalchemy import inspect, text
+from sqlalchemy import text
 
 from .connection import get_engine
 
@@ -16,11 +16,17 @@ logger = logging.getLogger(__name__)
 
 
 def initialize_database() -> None:
-    """Run init.sql to create schema tables when they do not yet exist.
+    """Apply init.sql to ensure all schema tables exist.
 
-    Uses :func:`sqlalchemy.inspect` for a cross-backend table presence check
-    so the function works transparently with both SQLite and PostgreSQL without
-    relying on any PostGIS- or PostgreSQL-specific SQL.
+    Every statement in ``init.sql`` uses ``CREATE TABLE IF NOT EXISTS`` /
+    ``CREATE INDEX IF NOT EXISTS``, so this function is fully idempotent and
+    safe to call on every application start.  It no longer skips execution
+    when ``raster_layers`` already exists; that old guard prevented new tables
+    added in later versions (e.g. ``weather_layers``) from being created in
+    existing databases.
+
+    Works transparently with both SQLite and PostgreSQL without relying on any
+    PostGIS- or PostgreSQL-specific SQL.
     """
     init_sql_path = Path(__file__).parent / "init.sql"
     if not init_sql_path.exists():
@@ -28,11 +34,7 @@ def initialize_database() -> None:
         return
 
     engine = get_engine()
-    if inspect(engine).has_table("raster_layers"):
-        logger.info("Database already initialized.")
-        return
-
-    logger.info("Initializing database schema from init.sql...")
+    logger.debug("Applying init.sql schema (idempotent)...")
     with open(init_sql_path) as f:
         sql = f.read()
 
@@ -45,4 +47,4 @@ def initialize_database() -> None:
                 except Exception as e:
                     logger.error("Error executing statement: %s\n%s", stmt, e)
         conn.commit()
-    logger.info("Database initialized.")
+    logger.info("Database schema up to date.")

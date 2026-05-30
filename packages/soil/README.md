@@ -74,7 +74,7 @@ clay_values = soil.get_data(
 )
 
 # Reconfigure the pipeline for a different property set
-soil.configure(
+soil.reconfigure(
     properties=["clay", "ph", "field_capacity"],
     depths=["0-5cm", "5-15cm"],
 )

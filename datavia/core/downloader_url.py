@@ -14,6 +14,7 @@ from typing import Any
 import requests
 from requests.adapters import HTTPAdapter
 from requests.exceptions import ChunkedEncodingError
+from tqdm import tqdm
 from urllib3.exceptions import ProtocolError
 from urllib3.util.retry import Retry
 
@@ -23,15 +24,23 @@ logger = logging.getLogger(__name__)
 
 
 class URLDownloader(Downloader):
-    """Downloader implementation for URL-based file downloads with robust error handling."""
+    """Downloader for URL-based file downloads with robust error handling."""
 
-    def __init__(self, url: str):
-        """Initialize URLDownloader with URL and setup robust session."""
-        super().__init__(url)
+    def __init__(self, url: str) -> None:
+        """Initialize URLDownloader with URL and set up a robust HTTP session.
 
-        # Configuration from legacy proven approach
+        Parameters
+        ----------
+        url : str
+            URL to download data from.
+        """
+        self.url = url
+
+        # Retry and streaming configuration
         self.max_retries = 5
-        self.chunk_size = 4096  # Reduced chunk size for better handling of large files
+        self.chunk_size = (
+            65536  # 64 KB — aligns with typical TCP window sizes for streaming HTTP
+        )
 
         # Retry strategy for both HTTP and connection errors
         self.retry_strategy = Retry(
@@ -46,8 +55,6 @@ class URLDownloader(Downloader):
         self.session = requests.Session()
         self.session.mount("https://", self.adapter)
         self.session.mount("http://", self.adapter)
-
-        logger.info(f"URLDownloader initialized for URL: {url}")
 
     def download(self) -> str:
         """
@@ -103,7 +110,9 @@ class URLDownloader(Downloader):
 
             logger.info(
                 f"HEAD request successful. Content-Type: {content_type}, "
-                f"Content-Length: {int(content_length) / (1024 * 1024) if content_length else 'unknown'} MB"
+                "Content-Length: "
+                f"{int(content_length) / (1024 * 1024) if content_length else 'n/a'} "
+                "MB"
             )
             return content_type, content_length
 
@@ -134,105 +143,132 @@ class URLDownloader(Downloader):
     def _download_with_retries(
         self, working_filename: str, content_length: str | None
     ) -> bool:
-        """Download file with robust retry logic."""
+        """Download file with robust retry logic.
+
+        Parameters
+        ----------
+        working_filename : str
+            Path to the temporary file being written.
+        content_length : str | None
+            Value of the HTTP ``Content-Length`` header, or ``None`` when the
+            server did not provide it.
+
+        Returns
+        -------
+        bool
+            ``True`` when the download completed and passed size validation,
+            ``False`` on permanent failure.
+        """
         total_downloaded = 0
-        retry_count = 0
-        headers = {}
+        headers: dict[str, str] = {}
 
-        while retry_count < self.max_retries:
-            try:
-                # Resume download if partially completed
-                if total_downloaded > 0:
-                    file_size = (
-                        os.path.getsize(working_filename)
-                        if os.path.exists(working_filename)
-                        else 0
-                    )
-                    if file_size != total_downloaded:
-                        total_downloaded = file_size
-                    headers["Range"] = f"bytes={total_downloaded}-"
+        total_bytes = (
+            int(content_length) if content_length and content_length.isdigit() else None
+        )
 
-                with self.session.get(
-                    self.url, headers=headers, stream=True, timeout=30
-                ) as r:
-                    # Handle rate limiting
-                    if r.status_code in [202, 429]:
-                        retry_after = r.headers.get("Retry-After")
-                        wait_time = (
-                            int(retry_after)
-                            if retry_after and retry_after.isdigit()
-                            else 30
+        progress: tqdm | None = tqdm(
+            total=total_bytes,
+            unit="B",
+            unit_scale=True,
+            unit_divisor=1024,
+            desc="Downloading",
+            initial=0,
+        )
+
+        try:
+            for attempt in range(self.max_retries):
+                try:
+                    # Resume download if partially completed
+                    if total_downloaded > 0:
+                        file_size = (
+                            os.path.getsize(working_filename)
+                            if os.path.exists(working_filename)
+                            else 0
                         )
-                        logger.warning(
-                            f"Server asked to wait (status {r.status_code}). Waiting {wait_time} seconds..."
-                        )
-                        retry_count += 1
-                        if retry_count >= self.max_retries:
-                            logger.error("Max retries reached due to rate limiting.")
-                            return False
-                        time.sleep(wait_time)
-                        continue
+                        if file_size != total_downloaded:
+                            # Sync the progress bar when the on-disk size differs
+                            # (e.g. a partial truncation happened between retries).
+                            if progress is not None:
+                                progress.update(file_size - total_downloaded)
+                            total_downloaded = file_size
+                        headers["Range"] = f"bytes={total_downloaded}-"
 
-                    r.raise_for_status()
+                    with self.session.get(
+                        self.url, headers=headers, stream=True, timeout=30
+                    ) as r:
+                        # Handle rate limiting
+                        if r.status_code in [202, 429]:
+                            retry_after = r.headers.get("Retry-After")
+                            wait_time = (
+                                int(retry_after)
+                                if retry_after and retry_after.isdigit()
+                                else 30
+                            )
+                            logger.warning(
+                                "Server asked to wait (status %s). "
+                                "Waiting %s seconds...",
+                                r.status_code,
+                                wait_time,
+                            )
+                            time.sleep(wait_time)
+                            continue
 
-                    # Download chunks with retry logic
-                    skip_bytes = total_downloaded
-                    skipped = 0
+                        r.raise_for_status()
 
-                    with open(working_filename, "ab") as f:
-                        for chunk in r.iter_content(chunk_size=self.chunk_size):
-                            if chunk:
-                                # Skip already downloaded bytes on resume
-                                if skipped < skip_bytes:
-                                    to_skip = min(skip_bytes - skipped, len(chunk))
-                                    remaining_chunk = chunk[to_skip:]
-                                    skipped += to_skip
-                                    if not remaining_chunk:
-                                        continue
-                                else:
-                                    remaining_chunk = chunk
+                        # If the server honoured the Range header it returns 206;
+                        # the response starts at the requested offset so we append.
+                        # A 200 means the server ignored Range and sends from byte 0
+                        # — discard any partial data and rewrite from scratch.
+                        open_mode = "ab" if r.status_code == 206 else "wb"
+                        if open_mode == "wb" and total_downloaded > 0:
+                            total_downloaded = 0
+                            if progress is not None:
+                                progress.reset()
 
-                                # Write chunk with retries
-                                if not self._write_chunk_with_retries(
-                                    f, remaining_chunk
-                                ):
-                                    raise Exception("Chunk write failed repeatedly.")
-
-                                total_downloaded += len(remaining_chunk)
+                        with open(working_filename, open_mode) as f:
+                            for chunk in r.iter_content(chunk_size=self.chunk_size):
+                                if not chunk:
+                                    continue
+                                if not self._write_chunk_with_retries(f, chunk):
+                                    raise RuntimeError("Chunk write failed repeatedly.")
+                                total_downloaded += len(chunk)
+                                if progress is not None:
+                                    progress.update(len(chunk))
                                 logger.debug(
                                     "Downloaded: %.2f MB",
                                     total_downloaded / (1024 * 1024),
                                 )
 
-                # Validate download completion
-                return self._validate_download(total_downloaded, content_length)
+                    # Validate download completion
+                    return self._validate_download(total_downloaded, content_length)
 
-            except (
-                requests.ConnectionError,
-                requests.Timeout,
-                IncompleteRead,
-                ChunkedEncodingError,
-                ProtocolError,
-            ) as e:
-                retry_count += 1
-                wait_time = min(30, 5 * (2**retry_count))
-                wait_time = wait_time * (
-                    0.8 + 0.4 * random.random()  # nosec B311 - jitter, not crypto
-                )
-                logger.warning(
-                    f"Connection issue: {e} \nRetrying in {wait_time:.1f} seconds..."
-                )
-                if retry_count >= self.max_retries:
-                    logger.error("Max retries reached after connection errors.")
+                except (
+                    requests.ConnectionError,
+                    requests.Timeout,
+                    IncompleteRead,
+                    ChunkedEncodingError,
+                    ProtocolError,
+                ) as e:
+                    wait_time = min(30, 5 * (2 ** (attempt + 1)))
+                    wait_time = wait_time * (
+                        0.8 + 0.4 * random.random()  # nosec B311 - jitter, not crypto
+                    )
+                    logger.warning(
+                        "Connection issue: %s\nRetrying in %.1f seconds...",
+                        e,
+                        wait_time,
+                    )
+                    time.sleep(wait_time)
+
+                except Exception as e:
+                    logger.error("Download failed: %s", e)
                     return False
-                time.sleep(wait_time)
 
-            except Exception as e:
-                logger.error(f"Download failed: {e}")
-                return False
-
-        logger.error("Max retries reached without successful download.")
-        return False
+            logger.error("Max retries reached without successful download.")
+            return False
+        finally:
+            if progress is not None:
+                progress.close()
 
     def _write_chunk_with_retries(self, file_handle: Any, chunk: bytes) -> bool:
         """Write chunk to file with retry logic."""
@@ -259,7 +295,9 @@ class URLDownloader(Downloader):
                 return True
             else:
                 logger.warning(
-                    f"Size mismatch: downloaded {total_downloaded}, expected {expected_size}"
+                    "Size mismatch: downloaded %s, expected %s",
+                    total_downloaded,
+                    expected_size,
                 )
                 return False
         else:

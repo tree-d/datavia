@@ -1,7 +1,7 @@
 """Spatial and temporal interpolation methods for pipeline use."""
 
 import logging
-from typing import Literal
+from typing import Any, Literal
 
 import numpy as np
 
@@ -10,6 +10,30 @@ try:
 except ImportError:  # pragma: no cover - optional dependency
     rasterio = None
 from scipy.ndimage import distance_transform_edt, map_coordinates
+
+try:
+    import xarray as xr
+
+    XARRAY_AVAILABLE = True
+except ImportError:  # pragma: no cover - optional dependency
+    xr = None  # type: ignore[assignment]
+    XARRAY_AVAILABLE = False
+
+try:
+    import pandas as pd
+
+    PANDAS_AVAILABLE = True
+except ImportError:  # pragma: no cover - optional dependency
+    pd = None
+    PANDAS_AVAILABLE = False
+
+try:
+    import pyproj
+
+    PYPROJ_AVAILABLE = True
+except ImportError:  # pragma: no cover - optional dependency
+    pyproj = None  # type: ignore[assignment]
+    PYPROJ_AVAILABLE = False
 
 from .coordinate_transforms import transform_coordinates
 
@@ -32,15 +56,17 @@ def spatial_interpolate(
         Path to GeoTIFF raster file
     coords : np.ndarray
         Array of coordinates, shape (N, 2)
-        - For EPSG:4326: (lon, lat) pairs where coords[:, 0] = longitude, coords[:, 1] = latitude
-        - For EPSG:25832: (x, y) pairs where coords[:, 0] = easting, coords[:, 1] = northing
+                - For EPSG:4326: (lon, lat) pairs where
+                    coords[:, 0] = longitude and coords[:, 1] = latitude
+                - For EPSG:25832: (x, y) pairs where
+                    coords[:, 0] = easting and coords[:, 1] = northing
     coords_crs : str, default 'EPSG:4326'
         CRS of input coordinates
     interpolation_order : int, default 3
         Interpolation order (1=linear, 3=cubic)
     band : int, default 1
         Band number to interpolate (1-indexed). Use for multi-band TIFFs to
-        select a specific band; defaults to band 1 for backward compatibility.
+        select a specific band; defaults to band 1 (first band).
 
     Returns
     -------
@@ -98,7 +124,8 @@ def spatial_interpolate(
         cols, rows = ~transform * (coords[:, 0], coords[:, 1])
 
         # Stack coordinates for scipy.ndimage.map_coordinates
-        # Note: map_coordinates expects (row, col) order - handled by rowcol conversion above
+        # map_coordinates expects (row, col) order;
+        # rowcol conversion above already provides that order.
         coord_array = np.vstack([rows, cols])
 
         # Perform interpolation for all points simultaneously
@@ -131,3 +158,472 @@ def spatial_interpolate(
         result = np.asarray(interpolated_values)
 
         return result
+
+
+def _build_spatial_interp_coords(
+    ds: "xr.Dataset",
+    variable: str,
+    lats: np.ndarray,
+    lons: np.ndarray,
+    input_crs: str = "EPSG:4326",
+) -> dict[str, "xr.DataArray"]:
+    """Build vectorised xarray.DataArray.interp() coordinates for N input points.
+
+    Detects whether the dataset uses geographic coordinates (ERA5-style
+    ``latitude``/``longitude``) or projected coordinates (HYRAS-style ``x``/``y``
+    with a CF ``grid_mapping`` attribute).  Input coordinates are reprojected to
+    the dataset's native CRS as needed using a single ``pyproj`` batch call.
+
+    Parameters
+    ----------
+    ds : xr.Dataset
+        Open xarray dataset.
+    variable : str
+        Variable name; used to read the ``grid_mapping`` attribute.
+    lats : np.ndarray
+        Latitudes (or northing values) of input points, shape ``(N,)``.
+        Interpreted in *input_crs*.
+    lons : np.ndarray
+        Longitudes (or easting values) of input points, shape ``(N,)``.
+        Interpreted in *input_crs*.
+    input_crs : str, optional
+        CRS of the input *lats*/*lons* coordinates, given as an EPSG string
+        (e.g. ``"EPSG:4326"``, ``"EPSG:3035"``).  Defaults to
+        ``"EPSG:4326"``.  Any CRS understood by ``pyproj`` is accepted.
+
+    Returns
+    -------
+    dict[str, xr.DataArray]
+        Keyword arguments suitable for ``ds[variable].interp(**kwargs)`` where
+        each value is an ``xr.DataArray`` of shape ``(N,)`` with dim
+        ``"points"``.  For ERA5: ``{"latitude": ..., "longitude": ...}``;
+        for HYRAS: ``{"y": ..., "x": ...}``.
+
+    Raises
+    ------
+    ImportError
+        If coordinate reprojection is required but ``pyproj`` is not
+        installed.
+    """
+    grid_mapping_name = ds[variable].attrs.get("grid_mapping")
+
+    # Projected grid (e.g. HYRAS EPSG:3035): dimensions are x/y in meters.
+    if (
+        grid_mapping_name
+        and grid_mapping_name in ds
+        and "x" in ds.dims
+        and "y" in ds.dims
+    ):
+        if not PYPROJ_AVAILABLE:
+            raise ImportError(
+                "pyproj is required to interpolate projected NetCDF files "
+                "(e.g. HYRAS EPSG:3035). Install with `pip install pyproj`."
+            )
+        crs_file = pyproj.CRS.from_cf(ds[grid_mapping_name].attrs)
+        transformer = pyproj.Transformer.from_crs(input_crs, crs_file, always_xy=True)
+        # Batch-reproject all N points in a single transformer call.
+        x_arr, y_arr = transformer.transform(lons, lats)
+        return {
+            "y": xr.DataArray(y_arr, dims="points"),
+            "x": xr.DataArray(x_arr, dims="points"),
+        }
+
+    # Geographic grid (ERA5, ICON): dimensions are latitude/longitude in degrees.
+    # When input is not WGS84, reproject to EPSG:4326 degrees first.
+    lat_name = "latitude" if "latitude" in ds.coords else "lat"
+    lon_name = "longitude" if "longitude" in ds.coords else "lon"
+    if input_crs != "EPSG:4326":
+        if not PYPROJ_AVAILABLE:
+            raise ImportError(
+                "pyproj is required to reproject non-EPSG:4326 input "
+                "coordinates for geographic NetCDF files. "
+                "Install with `pip install pyproj`."
+            )
+        t = pyproj.Transformer.from_crs(input_crs, "EPSG:4326", always_xy=True)
+        lons, lats = t.transform(lons, lats)
+    return {
+        lat_name: xr.DataArray(lats, dims="points"),
+        lon_name: xr.DataArray(lons, dims="points"),
+    }
+
+
+def interpolate_netcdf(
+    nc_path: str | list[str],
+    lats: float | np.ndarray,
+    lons: float | np.ndarray,
+    variable: str,
+    datetime_utc: Any,
+    input_crs: str = "EPSG:4326",
+    temporal_resolution: str = "daily",
+) -> float | np.ndarray:
+    r"""Sample a NetCDF variable at one or more geographic points.
+
+    Opens the file **once** with xarray and interpolates all coordinates in a
+    single vectorised call, eliminating per-point file-open overhead.
+    Before interpolation, nodata cells are replaced with the nearest valid
+    neighbour so that bilinear stencils touching domain boundaries always have
+    finite values.
+
+    Supports both geographic coordinate files (ERA5: ``latitude``/``longitude``
+    dimensions in degrees) and projected coordinate files (HYRAS: ``x``/``y``
+    dimensions in meters with a CF ``grid_mapping`` attribute).  The correct
+    interpolation path is selected automatically; ``pyproj`` is used for
+    reprojection when the file carries a ``grid_mapping``.
+
+    ERA5 files produced by ``cdsapi >= 0.7`` name their time dimension
+    ``valid_time`` instead of ``time``; both names are handled transparently.
+
+    Parameters
+    ----------
+    nc_path : str or list[str]
+        Absolute path to a NetCDF file (``*.nc``), or a list of paths that
+        will each be opened with :func:`xarray.open_dataset` and concatenated
+        along the ``"time"`` dimension with :func:`xarray.concat`.  Use a
+        list when the query time range spans multiple monthly chunks.
+        A plain string is opened with :func:`xarray.open_dataset` (unchanged
+        single-file behaviour).
+    lats : float or np.ndarray
+        Latitude(s) of the query point(s) in *input_crs*.  A scalar float
+        produces a scalar (or 1-D time-series) return value; an array of
+        shape ``(N,)`` produces an ``(N,)`` array.
+    lons : float or np.ndarray
+        Longitude(s) (or easting values) of the query point(s) in
+        *input_crs*.  Must be the same shape as *lats*.
+    variable : str
+        Name of the variable to sample, e.g. ``"tas"`` or ``"2m_temperature"``.
+    datetime_utc : datetime-like or sequence of datetime-like
+        One or more UTC timestamps, supplied as a string
+        (e.g. ``"2024-06-15T12:00:00"`` or ``"2024-06-15T12:00:00Z"``), a
+        :class:`numpy.datetime64`, a :class:`pandas.Timestamp`, or a Python
+        :class:`datetime.datetime`.  Timezone-aware values (including the
+        trailing ``Z`` notation) are accepted: they are converted to UTC and
+        then stripped of timezone information before comparison with the
+        timezone-naive time axis stored in ERA5/HYRAS NetCDF files.
+        Used with ``method="nearest"`` for ``temporal_resolution="daily"``.
+        For ``temporal_resolution="hourly"``, used to identify the calendar
+        day from which all sub-daily time steps are returned.
+    input_crs : str, optional
+        CRS of the input *lats*/*lons* coordinates, as an EPSG string
+        (e.g. ``"EPSG:4326"`` or ``"EPSG:3035"``).  Defaults to
+        ``"EPSG:4326"``.  Coordinates are reprojected to the file's native
+        CRS automatically.
+    temporal_resolution : str, optional
+        ``"daily"`` (default) — return the single nearest time step.
+        ``"hourly"`` — return all sub-daily time steps for the requested day
+        as an extra trailing dimension.
+
+    Returns
+    -------
+    float
+        Interpolated scalar value when *lats*/*lons* are scalars,
+        ``temporal_resolution="daily"``, and a single timestamp is provided.
+    np.ndarray
+        - Shape ``(T,)`` — scalar coordinate, sequence of daily timestamps.
+        - Shape ``(N,)`` — array of coordinates, single daily timestamp.
+        - Shape ``(N, T)`` — array of coordinates, sequence of daily timestamps.
+        - Shape ``(T,)`` — scalar coordinate, ``temporal_resolution="hourly"``,
+          all *T* sub-daily steps for the requested day.
+        - Shape ``(N, T)`` — array of coordinates, ``temporal_resolution="hourly"``.
+
+    Raises
+    ------
+    ImportError
+        If xarray is not installed, or if the file uses projected coordinates
+        and pyproj is not installed.
+    KeyError
+        If *variable* does not exist in the NetCDF file.
+    ValueError
+        If *temporal_resolution* is not ``"daily"`` or ``"hourly"``.
+
+    Notes
+    -----
+    Spatial dimension coordinates are sorted to ascending order before
+    gap-filling with :meth:`~xarray.DataArray.interpolate_na`.  This ensures
+    compatibility with ERA5-Land files, which store the latitude dimension in
+    descending order (North → South) as delivered by the CDS API.
+
+    When *nc_path* is a list, each file is opened individually with
+    :func:`xarray.open_dataset` and the results are concatenated in-memory
+    using :func:`xarray.concat` along the detected time dimension (``"time"``
+    or ``"valid_time"``).  This avoids any dependency on ``dask`` while still
+    supporting multi-file queries.
+
+    ERA5-Land NetCDF files store their time axis as timezone-naive
+    ``datetime64`` values.  A timezone-aware *datetime_utc* value (e.g. one
+    ending in ``"Z"`` or carrying a :attr:`~datetime.datetime.tzinfo`) is
+    converted to UTC and then made timezone-naive before the nearest-neighbour
+    lookup so that the types are always comparable.
+    """
+    if not XARRAY_AVAILABLE:
+        raise ImportError(
+            "xarray is required for NetCDF interpolation. "
+            "Install datavia-weather or run `pip install xarray netCDF4`."
+        )
+
+    scalar_input = np.ndim(lats) == 0
+    lats_arr = np.atleast_1d(np.asarray(lats, dtype=float))
+    lons_arr = np.atleast_1d(np.asarray(lons, dtype=float))
+
+    # Open one file or eagerly concatenate several files along the time
+    # dimension.  A plain string uses open_dataset (existing single-file path,
+    # unchanged).  A list with one entry is also opened directly to avoid a
+    # spurious outer dimension.  A list with 2+ entries opens each file
+    # individually and concatenates in memory with xr.concat — no dask
+    # required.  The time dimension name is detected from the first file so
+    # that ERA5 files (which use 'valid_time' from cdsapi >= 0.7) are handled
+    # correctly; using dim="time" blindly would create a new outer dimension
+    # instead of concatenating along the existing one.
+    if isinstance(nc_path, list) and len(nc_path) > 1:
+        _parts = [xr.open_dataset(f) for f in nc_path]
+        _time_dim_nc = next(
+            (d for d in _parts[0].dims if d in ("time", "valid_time")),
+            "time",
+        )
+        _ds_ctx = xr.concat(_parts, dim=_time_dim_nc)
+        for _d in _parts:
+            _d.close()
+    elif isinstance(nc_path, list):
+        _ds_ctx = xr.open_dataset(nc_path[0])
+    else:
+        _ds_ctx = xr.open_dataset(nc_path)
+    with _ds_ctx as ds:
+        if variable not in ds.data_vars:
+            raise KeyError(
+                f"Variable '{variable}' not found in {nc_path!r}. "
+                f"Available variables: {list(ds.data_vars)}"
+            )
+
+        # Mask the fill sentinel and replace NaN cells with the nearest valid
+        # neighbour along each spatial dimension before bilinear interpolation,
+        # so stencils touching domain boundaries always receive a finite value.
+        da = ds[variable]
+        fill_val = da.attrs.get("_FillValue", None)
+        if fill_val is not None:
+            da = da.where(da != fill_val)
+        x_dim = (
+            "x"
+            if "x" in da.dims
+            else ("longitude" if "longitude" in da.dims else "lon")
+        )
+        y_dim = (
+            "y" if "y" in da.dims else ("latitude" if "latitude" in da.dims else "lat")
+        )
+        # ERA5-Land stores latitude in descending order (North → South).
+        # xarray's interpolate_na with method="nearest" requires the dimension
+        # coordinate to be monotonically increasing, so each spatial dimension
+        # is sorted to ascending order first.  sortby() is order-agnostic: it
+        # is a no-op when the coordinate is already ascending (HYRAS) and
+        # reverses it when descending (ERA5).  The subsequent da.interp() call
+        # handles both orderings transparently, so the sort does not affect
+        # the interpolated values.
+        da = da.sortby(x_dim)
+        da = da.sortby(y_dim)
+        # Two sequential 1-D fills (x then y) approximate a 2-D nearest-
+        # neighbour fill.  A true 2-D solution exists via
+        # scipy.ndimage.distance_transform_edt, but it requires extracting raw
+        # numpy arrays and iterating over time slices, making it considerably
+        # more complex.  For the convex HYRAS/ERA5 grids used here the
+        # directional approximation is adequate.
+        da = da.interpolate_na(dim=x_dim, method="nearest", fill_value="extrapolate")
+        da = da.interpolate_na(dim=y_dim, method="nearest", fill_value="extrapolate")
+
+        # Build vectorised spatial interpolation coordinates for all N points
+        # in one batch — single pyproj call, single xarray interp call.
+        interp_coords = _build_spatial_interp_coords(
+            ds, variable, lats_arr, lons_arr, input_crs
+        )
+
+        # Bilinear spatial interpolation across all N points simultaneously.
+        point = da.interp(interp_coords, method="linear")
+
+        # Temporal selection.
+        # ERA5 files from cdsapi >= 0.7 use 'valid_time' instead of 'time'.
+        if temporal_resolution not in ("daily", "hourly"):
+            raise ValueError(
+                f"temporal_resolution must be 'daily' or 'hourly', "
+                f"got '{temporal_resolution}'."
+            )
+        time_dim = "time" if "time" in point.coords else "valid_time"
+        if time_dim in point.coords:
+            if temporal_resolution == "hourly":
+                if not PANDAS_AVAILABLE:
+                    raise ImportError(
+                        "pandas is required for temporal_resolution='hourly'. "
+                        "Install with `pip install pandas`."
+                    )
+                _raw = (
+                    datetime_utc[0]
+                    if isinstance(datetime_utc, (list, tuple))
+                    else datetime_utc
+                )
+                day_start = pd.Timestamp(_raw)
+                if day_start.tzinfo is not None:
+                    day_start = day_start.tz_convert("UTC").tz_localize(None)
+                day_start = day_start.normalize()
+                day_end = day_start + pd.Timedelta(days=1) - pd.Timedelta(nanoseconds=1)
+                point = point.sel({time_dim: slice(day_start, day_end)})
+            else:
+
+                def _to_naive_ts(raw: Any) -> "pd.Timestamp":
+                    t = pd.Timestamp(raw)
+                    if t.tzinfo is not None:
+                        t = t.tz_convert("UTC").tz_localize(None)
+                    return t
+
+                if isinstance(datetime_utc, (list, tuple)):
+                    ts_list = [_to_naive_ts(t) for t in datetime_utc]
+                    point = point.sel({time_dim: ts_list}, method="nearest")
+                else:
+                    point = point.sel(
+                        {time_dim: _to_naive_ts(datetime_utc)}, method="nearest"
+                    )
+
+        values = np.asarray(point.values, dtype=float)
+
+    # Restore scalar semantics when a single point was requested.
+    if scalar_input:
+        if values.ndim == 0:
+            return float(values)
+        if values.ndim == 1 and values.shape[0] == 1:
+            return float(values[0])
+        return values.squeeze()
+
+    return values
+
+
+def interpolate_station_parquet(
+    parquet_path: str,
+    lat: float,
+    lon: float,
+    variable: str,
+    datetime_utc: Any,
+    radius_km: float = 50.0,
+) -> float:
+    """Estimate a weather variable at a point using nearby station observations.
+
+    Loads station records within *radius_km* of the target coordinate from a
+    Parquet file, filters to the nearest time step, and computes an
+    inverse-distance-weighted (IDW) average across all matched stations.
+
+    Parameters
+    ----------
+    parquet_path : str
+        Absolute path to the Parquet file containing station observations.
+        Expected columns: ``latitude``, ``longitude``, ``datetime``,
+        ``<variable>``.
+    lat : float
+        Target geographic latitude in degrees North.
+    lon : float
+        Target geographic longitude in degrees East.
+    variable : str
+        Name of the observation column to aggregate.
+    datetime_utc : datetime-like
+        Target UTC timestamp; the nearest available timestamp is used.
+    radius_km : float, optional
+        Search radius in kilometers.  Defaults to 50 km.
+
+    Returns
+    -------
+    float
+        IDW-weighted average of station observations at the target point.
+        Returns ``float("nan")`` when no stations are found within the radius.
+
+    Raises
+    ------
+    ImportError
+        If pandas is not installed.
+    KeyError
+        If *variable* column is missing in the Parquet file.
+    """
+    if not PANDAS_AVAILABLE:
+        raise ImportError(
+            "pandas is required for station Parquet interpolation. "
+            "Install datavia-weather or run `pip install pandas pyarrow`."
+        )
+
+    df: Any = pd.read_parquet(parquet_path)
+
+    if variable not in df.columns:
+        raise KeyError(
+            f"Variable column '{variable}' not found in '{parquet_path}'. "
+            f"Available columns: {list(df.columns)}"
+        )
+
+    # --- Radius filter via equirectangular approximation (fast, sufficient
+    #     for the ~50 km radii used here; error <0.5 % at German latitudes). ---
+    lat_rad = np.radians(lat)
+    earth_radius_km = 6371.0
+    dlat = np.radians(df["latitude"].values - lat)
+    dlon = np.radians(df["longitude"].values - lon)
+    dist_km: np.ndarray = earth_radius_km * np.sqrt(
+        dlat**2 + (np.cos(lat_rad) * dlon) ** 2
+    )
+    # Reset the DataFrame index and rebuild dist_km together so that
+    # df.index and dist_km positions remain aligned for the later IDW step.
+    radius_mask = dist_km <= radius_km
+    df = df[radius_mask].copy()
+    dist_km = dist_km[radius_mask]
+    df.reset_index(drop=True, inplace=True)
+
+    if df.empty:
+        logger.warning(
+            "No stations found within %.1f km of (%.4f, %.4f) in '%s'",
+            radius_km,
+            lat,
+            lon,
+            parquet_path,
+        )
+        return float("nan")
+
+    # Nearest time step selection.
+    df["datetime"] = pd.to_datetime(df["datetime"])
+    target = pd.Timestamp(datetime_utc)
+    nearest_ts = df["datetime"].iloc[(df["datetime"] - target).abs().argmin()]
+    df = df[df["datetime"] == nearest_ts]
+
+    values = df[variable].values.astype(float)
+    distances: np.ndarray = dist_km[df.index]
+
+    # Avoid division by zero for coincident stations.
+    distances = np.where(distances < 1e-9, 1e-9, distances)
+    weights = 1.0 / distances
+    return float(np.average(values, weights=weights))
+
+
+def blend_gridded_and_station(
+    gridded_value: float,
+    station_value: float,
+    station_weight: float = 0.6,
+) -> float:
+    """Blend a gridded model value with a station-derived estimate.
+
+    Performs a simple weighted average.  Station data are typically of higher
+    quality near measured locations, so *station_weight* defaults to 0.6.
+    The gridded weight is computed as ``1 - station_weight``.
+
+    Parameters
+    ----------
+    gridded_value : float
+        Value obtained from a gridded model file (e.g. ERA5 NetCDF).
+    station_value : float
+        Value estimated from nearby station observations.
+    station_weight : float, optional
+        Weight assigned to the station estimate. Must be in ``[0, 1]``.
+        Defaults to ``0.6``.
+
+    Returns
+    -------
+    float
+        Weighted blend of *gridded_value* and *station_value*.
+
+    Raises
+    ------
+    ValueError
+        If *station_weight* is outside ``[0, 1]``.
+    """
+    if not 0.0 <= station_weight <= 1.0:
+        raise ValueError(
+            f"station_weight must be between 0 and 1, got {station_weight}."
+        )
+    gridded_weight = 1.0 - station_weight
+    return float(gridded_weight * gridded_value + station_weight * station_value)

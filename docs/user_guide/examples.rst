@@ -185,6 +185,76 @@ Analyze elevation patterns across a spatial grid:
     Spatial Grid Statistics:
     ...
 
+Weather Pipeline Examples
+=========================
+
+The following runnable scripts demonstrate end-to-end weather data workflows using
+the HYRAS (DWD OpenData) and optionally ERA5 sources.  They are located in
+``docs/user_guide/examples/`` and can be run directly from the repository root.
+
+Example 4: Weather Query (Crop-Monitoring Workflow)
+----------------------------------------------------
+
+Downloads one week of HYRAS daily temperature and precipitation data and
+queries several agricultural sites across Germany.  No credentials are
+required for HYRAS; ERA5 support is shown but commented out.
+
+Run::
+
+    pixi run python docs/user_guide/examples/example_weather_query.py
+
+    # With DWD station blending:
+    USE_DWD_STATIONS=1 pixi run python docs/user_guide/examples/example_weather_query.py
+
+.. literalinclude:: examples/example_weather_query.py
+   :language: python
+   :linenos:
+
+Example 5: Multi-Variable Grid Snapshot (Germany, 2025)
+--------------------------------------------------------
+
+Samples temperature and precipitation on a 5 × 4 regular grid covering
+mainland Germany for three representative days and prints a compact ASCII map.
+
+Run::
+
+    pixi run python docs/user_guide/examples/grid_snapshot_germany_2025.py
+
+.. literalinclude:: examples/grid_snapshot_germany_2025.py
+   :language: python
+   :linenos:
+
+Example 6: Summer Heat-Day Ranking (Germany, 2025)
+--------------------------------------------------
+
+Retrieves HYRAS daily temperatures for June–August 2025 at 15 cities and
+produces a heat-stress summary table ranked from hottest to coolest city.
+
+Run::
+
+    pixi run python docs/user_guide/examples/heat_days_germany_2025.py
+
+.. literalinclude:: examples/heat_days_germany_2025.py
+   :language: python
+   :linenos:
+
+Example 7: North–South Precipitation Transect (Germany, 2025)
+--------------------------------------------------------------
+
+Computes monthly and annual precipitation totals for eight stations along a
+north-to-south transect from Flensburg to Berchtesgaden across the full 2025
+calendar year.
+
+Run::
+
+    pixi run python docs/user_guide/examples/precipitation_north_south_2025.py
+
+.. literalinclude:: examples/precipitation_north_south_2025.py
+   :language: python
+   :linenos:
+
+---
+
 Installation and Setup
 ======================
 
@@ -193,7 +263,7 @@ To run these examples, install the required packages:
 .. code-block:: bash
 
     # Install datavia with pipelines
-    pip install datavia[elevation,soil]
+    pip install datavia[elevation,soil,weather]
     
     # Install visualization dependencies
     pip install matplotlib pandas
@@ -203,6 +273,7 @@ Each example can be run independently and demonstrates different aspects of the 
 - **Example 1**: Basic single-pipeline usage with elevation data
 - **Example 2**: Multi-pipeline integration combining elevation and soil data  
 - **Example 3**: Advanced spatial analysis with grid-based data access
+- **Examples 4–7**: Weather pipeline workflows using HYRAS and ERA5 sources
 
 Notes
 -----

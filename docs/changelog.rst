@@ -6,8 +6,49 @@ All notable changes to Datavia will be documented in this file.
 The format is based on `Keep a Changelog <https://keepachangelog.com/en/1.0.0/>`_,
 and this project adheres to `Semantic Versioning <https://semver.org/spec/v2.0.0.html>`_.
 
-[Unreleased] — 1.0.3
-----------------------
+`[Unreleased] — 1.0.4 <https://github.com/tree-d/datavia/compare/1.0.3...HEAD>`_
+-----------------------------------------------------------------------------------
+
+The weather pipeline release. Adds real-time and reanalysis weather data source
+integrations on top of the existing elevation and soil pipelines.
+
+Added
+~~~~~
+- ``datavia.weather`` sub-package with a full pipeline architecture.
+- ``WeatherPipeline`` orchestrator for multi-source weather data retrieval.
+- ``SourceRegistry`` for managing and selecting weather data sources.
+- ``HyrasDownloader`` for DWD HYRAS gridded observation data (precipitation,
+  temperature, humidity, radiation).
+- ``Era5Downloader`` for ECMWF ERA5 reanalysis data with chunked download
+  support to handle large time ranges efficiently.
+- ``DwdDownloader`` for DWD station and gridded observational data.
+- ``CompositeDownloader`` for transparent multi-source queries with fallback.
+- ``CoverageManager`` for tracking spatial and temporal coverage of
+  already-downloaded data to avoid redundant downloads.
+- ``GetterWeather`` for querying weather values at arbitrary coordinates.
+- ``SaverWeather`` for persisting weather data to disk.
+- CRS and temporal resolution fields in weather pipeline configuration.
+- Progress indicators (``tqdm``) in all downloaders.
+- Unique filename generation for downloaded weather files.
+- Batch coordinate processing in the weather query interface.
+- ``reconfigure()`` method on the pipeline for runtime reconfiguration.
+
+Fixed
+~~~~~
+- Valid-time alignment bug in ERA5 data retrieval.
+- Edge NaN values when filling spatial coverage gaps.
+- File naming collisions for concurrent downloads.
+
+Changed
+~~~~~~~
+- Unit conversion utilities extended to cover weather variables.
+
+
+`[1.0.3] — 2026-04-28 <https://github.com/tree-d/datavia/compare/1.0.2...1.0.3>`_
+----------------------------------------------------------------------------------
+
+The SQLite migration release. Removes the Docker/PostgreSQL requirement and
+makes the database zero-setup.
 
 Changed
 ~~~~~~~
@@ -27,31 +68,17 @@ Changed
   ``check_same_thread=False`` instead.
 - ``config.database_url`` now defaults to a SQLite URL derived from
   ``data_directory``; PostgreSQL is opt-in via ``[database] url = ...``.
+- Docker setup: dynamic port assignment and isolated database per instance.
 
 Removed
 ~~~~~~~
 - ``runner.py`` (Docker container lifecycle management) — no longer needed.
 - ``datavia start`` and ``datavia stop`` CLI commands.
 - ``psycopg2-binary`` dependency.
-- ``datavia.library.quality_control`` module — never wired into any pipeline.
-- ``datavia.library.formats`` module — all format I/O is handled by
-  :class:`~datavia.core.getter_tiff.GetterTiff` and :class:`~datavia.core.saver_tiff.TiffSaver`.
-- ``VectorDownloader`` class from ``datavia.core.downloader_url`` — planned for Shapefile
-  sources that were never implemented.
-- ``Pipeline.find_files()`` method — superseded by ``Pipeline.get_data()`` and
-  :meth:`~datavia.core.interfaces.Getter.get_existing_layers`.
-- Eight unused functions from ``datavia.library.spatial_ops``
-  (``extract_values_at_coords``, ``raster_sample``, ``process_multiband_tiff``,
-  ``read_geotiff_metadata``, ``get_geotiff_bounds``, ``validate_coordinates_in_bounds``
-  and their private helpers) — duplicated logic now handled by the database +
-  :class:`~datavia.core.getter_tiff.GetterTiff` path.
-- Legacy port-computation from ``DataviaConfig._derive_project_defaults`` — Docker-era
-  artefact, never used after SQLite migration.
-- ``pixi.toml`` transitive dependency pins replaced with first-class dependencies.
-- Dev-environment tasks now default to the ``dev`` pixi environment.
 
-[1.0.2] - 2026-03-23
-----------------------
+
+`[1.0.2] — 2026-03-23 <https://github.com/tree-d/datavia/compare/1.0.1...1.0.2>`_
+----------------------------------------------------------------------------------
 
 The soil pipeline release. Adds the first soil data source integration
 (HiHydroSoil and SoilGrids) on top of the existing elevation pipeline.
@@ -60,6 +87,9 @@ The soil pipeline release. Adds the first soil data source integration
    Multiband TIFF support was explored during this cycle (git tag ``1.0.2-dev``,
    commit ``78bcae6``) but ultimately abandoned. That tag marks the last known
    working state of the multiband approach for future reference.
+
+Initial stable release. Working elevation data extraction from BKG DGM200
+German topography with a PostGIS backend (Docker-based).
 
 Added
 ~~~~~
@@ -88,8 +118,9 @@ Changed
 - Removed ``rioxxarray`` dependency.
 - Updated unit definitions for soil output values.
 
-[1.0.1] - 2026-02-24
-----------------------
+
+`[1.0.1] — 2026-02-24 <https://github.com/tree-d/datavia/compare/dev-1.0.0-dev.20260224...1.0.1>`_
+--------------------------------------------------------------------------------------------------
 
 The elevation pipeline release. Focuses on packaging, CI/CD infrastructure,
 and code quality on top of the working elevation data extraction from 1.0.0.
@@ -111,8 +142,9 @@ Changed
 - Enhanced Sphinx documentation; fixed doc build issues.
 - License updated across sub-packages.
 
-[1.0.0] - 2025-01-15
----------------------
+
+`[1.0.0] — 2025-01-15 <https://github.com/tree-d/datavia/releases/tag/dev-1.0.0-dev.20260224>`_
+------------------------------------------------------------------------------------------------
 
 Initial stable release. Working elevation data extraction from BKG DGM200
 German topography with a PostGIS backend (Docker-based).
@@ -139,8 +171,9 @@ Changed
 - Migrated from topography-specific scripts to generic ingestor architecture.
 - Updated README files to reflect current working architecture.
 
-[0.1.0] - Development Phases
------------------------------
+
+`[0.1.0] — Development Phases <https://github.com/tree-d/datavia>`_
+---------------------------------------------------------------------
 
 Phase 1 (Legacy Analysis)
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -158,8 +191,8 @@ Phase 2 (Core Implementation)
 Future Releases
 ---------------
 
-[1.0.4] - Planned
+[1.0.5] - Planned
 ~~~~~~~~~~~~~~~~~~
-- Weather pipeline (branch ``weather`` in progress).
-- Real-time weather data source integration.
-- Extended geographic coverage
+- Extended geographic coverage beyond Germany.
+- Additional weather data sources.
+- Weather pipeline performance improvements.

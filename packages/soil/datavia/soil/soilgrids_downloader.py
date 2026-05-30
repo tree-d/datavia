@@ -202,7 +202,14 @@ class SoilGridsDownloader(Downloader):
         total = len(coverage_ids)
         self._resolve_crs_urn()
 
-        for i, coverage_id in enumerate(coverage_ids, 1):
+        try:
+            from tqdm import tqdm  # type: ignore[import]
+
+            coverage_iter: Any = tqdm(coverage_ids, desc="SoilGrids", unit="coverage")
+        except ImportError:
+            coverage_iter = iter(coverage_ids)
+
+        for i, coverage_id in enumerate(coverage_iter, 1):
             path = self._download_single_coverage(coverage_id, output_dir)
             if path != "failed":
                 results.append((path, coverage_id))
@@ -216,7 +223,7 @@ class SoilGridsDownloader(Downloader):
         return results
 
     def get_remote_available_properties(self) -> dict[str, list[str]]:
-        """Discover all properties and depth layers available on the live SoilGrids WCS API.
+        """Discover all properties/depths on the live SoilGrids WCS API.
 
         Iterates every service registered in :attr:`SoilGrids.MAP_SERVICES` —
         not just the locally configured properties — so previously unknown
@@ -240,7 +247,8 @@ class SoilGridsDownloader(Downloader):
                 _wcs, coverage_list = self.sg._get_service_and_coverage_list(service_id)
                 if not coverage_list:
                     logger.debug(
-                        "SoilGrids service '%s' returned empty coverage list — skipping",
+                        "SoilGrids service '%s' returned empty coverage list"
+                        " — skipping",
                         service_id,
                     )
                     continue
@@ -254,7 +262,8 @@ class SoilGridsDownloader(Downloader):
                         catalogue.setdefault(canonical, set()).add(depth)
                     else:
                         logger.debug(
-                            "SoilGrids: unexpected coverage ID format '%s' for service '%s' — skipping",
+                            "SoilGrids: unexpected coverage ID format '%s' "
+                            "for service '%s' - skipping",
                             coverage_id,
                             service_id,
                         )
@@ -481,7 +490,7 @@ class SoilGridsDownloader(Downloader):
         bbox: dict[str, float],
         crs_urn: str,
     ) -> tuple[int | None, int | None]:
-        """Compute the pixel width and height needed for ``self.resolution_m`` per pixel.
+        """Compute pixel width/height needed for ``self.resolution_m``.
 
         For projected CRSs ``resx``/``resy`` are used instead of pixel counts,
         so this method returns ``(None, None)`` — the caller must then set
@@ -543,7 +552,7 @@ class SoilGridsDownloader(Downloader):
         height: int | None = None,
         **kwargs: Any,
     ) -> None:
-        """Request a single coverage from the SoilGrids WCS service and write it to disk.
+        """Request one coverage from SoilGrids WCS and write it to disk.
 
         Validates the CRS against the coverage's supported CRS list and derives
         the correct resolution parameters. For EPSG:4326 the pixel dimensions

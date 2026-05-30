@@ -1,7 +1,7 @@
 """Spatial raster operations for pipeline use.
 
 Provides in-place GeoTIFF reprojection. Coordinate-based value extraction and
-raster sampling are handled by :func:`datavia.library.interpolation.spatial_interpolate`,
+raster sampling are handled by :func:`datavia.library.interpolation.spatial_interpolate`
 which is called by :class:`datavia.core.getter_tiff.GetterTiff`.
 """
 

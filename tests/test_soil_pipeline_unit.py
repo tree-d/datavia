@@ -217,46 +217,46 @@ class TestSoilPipelineInit:
 
     def test_custom_name_stored(self) -> None:
         """A custom name is stored without modification."""
-        custom = SoilPipeline(name="my_soil")
+        custom = SoilPipeline(config={"source": "my_soil"})
         assert custom.name == "my_soil"
 
     def test_custom_properties_stored(self) -> None:
         """A custom property list is stored as provided."""
-        custom = SoilPipeline(properties=["clay", "ph"])
+        custom = SoilPipeline(config={"source": "soil", "properties": ["clay", "ph"]})
         assert custom.properties == ["clay", "ph"]
 
     def test_custom_depths_stored(self) -> None:
         """A custom SoilGrids depth list is stored as provided."""
-        custom = SoilPipeline(depths=["0-5cm"])
+        custom = SoilPipeline(config={"source": "soil", "depths": ["0-5cm"]})
         assert custom.depths == ["0-5cm"]
 
     def test_custom_value_stored(self) -> None:
         """A custom statistic token is stored as provided."""
-        custom = SoilPipeline(value="Q0.05")
+        custom = SoilPipeline(config={"source": "soil", "statistic": "Q0.05"})
         assert custom.statistic == "Q0.05"
 
 
 # ---------------------------------------------------------------------------
-# SoilPipeline.configure
+# SoilPipeline.reconfigure
 # ---------------------------------------------------------------------------
 
 
-class TestSoilPipelineConfigure:
-    """Tests for in-place attribute updates via configure()."""
+class TestSoilPipelineReconfigure:
+    """Tests for in-place attribute updates via reconfigure()."""
 
     def test_updates_properties(self, pipeline: SoilPipeline) -> None:
-        """configure() replaces the properties list."""
-        pipeline.configure(properties=["clay"])
+        """reconfigure() replaces the properties list."""
+        pipeline.reconfigure(properties=["clay"])
         assert pipeline.properties == ["clay"]
 
     def test_updates_depths(self, pipeline: SoilPipeline) -> None:
-        """configure() replaces the SoilGrids depth list."""
-        pipeline.configure(depths=["15-30cm"])
+        """reconfigure() replaces the SoilGrids depth list."""
+        pipeline.reconfigure(depths=["15-30cm"])
         assert pipeline.depths == ["15-30cm"]
 
     def test_updates_statistic(self, pipeline: SoilPipeline) -> None:
-        """configure() replaces the statistic token."""
-        pipeline.configure(value="Q0.95")
+        """reconfigure() replaces the statistic token."""
+        pipeline.reconfigure(value="Q0.95")
         assert pipeline.statistic == "Q0.95"
 
     def test_none_arguments_leave_attributes_unchanged(
@@ -266,7 +266,7 @@ class TestSoilPipelineConfigure:
         original_props = pipeline.properties.copy()
         original_depths = pipeline.depths.copy()
         original_statistic = pipeline.statistic
-        pipeline.configure()
+        pipeline.reconfigure()
         assert pipeline.properties == original_props
         assert pipeline.depths == original_depths
         assert pipeline.statistic == original_statistic
@@ -276,7 +276,7 @@ class TestSoilPipelineConfigure:
     ) -> None:
         """Updating only properties leaves depths and statistic untouched."""
         original_depths = pipeline.depths.copy()
-        pipeline.configure(properties=["sand"])
+        pipeline.reconfigure(properties=["sand"])
         assert pipeline.depths == original_depths
 
 
@@ -366,7 +366,7 @@ class TestSoilPipelineGetData:
             pipeline.getter = getter_mock
             return pipeline
 
-        with patch.object(pipeline, "__call__", side_effect=fake_call):
+        with patch.object(SoilPipeline, "__call__", side_effect=fake_call):
             result = pipeline.get_data(self._COORDS)
 
         assert result == {}
@@ -513,11 +513,12 @@ class TestSoilPipelineUpdateData:
         mock_downloader.download_coverages.return_value = download_results
 
         mock_saver = MagicMock()
-        mock_saver.sync_files_and_database.return_value = True
+        mock_saver.list_managed_files.return_value = []
         mock_saver.save.return_value = save_returns
 
         mock_getter = MagicMock()
         mock_getter.get_stored_coverage_ids.return_value = stored_ids
+        mock_getter.get_registered_uris.return_value = set()
 
         pipeline.downloader = mock_downloader
         pipeline.saver = mock_saver
@@ -673,7 +674,12 @@ class TestSoilPipelineUpdateData:
         self, pipeline: SoilPipeline
     ) -> None:
         """sync_files_and_database is called on every update_data invocation
-        so that manually deleted files are detected before the delta is computed."""
+        so that manually deleted files are detected before the delta is computed.
+
+        The base Pipeline.sync_files_and_database coordinates via
+        saver.list_managed_files() and getter.get_registered_uris(), so those
+        are the primitives asserted here.
+        """
         needed = ["clay_0-5cm_mean"]
         self._setup_update(pipeline, needed_ids=needed, stored_ids=set(needed))
         with (
@@ -684,7 +690,8 @@ class TestSoilPipelineUpdateData:
             mock_tmpdir.return_value.__enter__ = lambda s: tempfile.gettempdir()
             mock_tmpdir.return_value.__exit__ = MagicMock(return_value=False)
             pipeline.update_data()
-        pipeline.saver.sync_files_and_database.assert_called_once()
+        pipeline.saver.list_managed_files.assert_called_once()
+        pipeline.getter.get_registered_uris.assert_called_once()
 
 
 class TestSoilPipelineUpdateDataReprojectParams:
@@ -747,7 +754,7 @@ class TestSoilPipelineUpdateDataReprojectParams:
         assert call_kwargs.get("resolution_m") == 250
 
     def test_default_call_passes_reproject_false(self, pipeline: SoilPipeline) -> None:
-        """By default saver.save is called with reproject=False and resolution_m=None."""
+        """By default saver.save gets reproject=False and resolution_m=None."""
         self._setup_pipeline_for_download(pipeline)
         with (
             patch("datavia.soil.pipeline.get_config") as mock_cfg,

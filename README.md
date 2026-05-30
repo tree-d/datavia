@@ -19,8 +19,8 @@ Datavia is designed for researchers who need efficient integration of multiple g
 ### Available Pipelines (Modular Installation)
 
 - **📈 Elevation Pipeline** (`datavia[elevation]`): BKG DGM200 (200m resolution German elevation model)
-- **🌱 Soil Pipeline** (`datavia[soil]`): Still under construction - SoilGrids API integration with selective download strategy
-- **🌤️ Weather Pipeline** (`datavia[weather]`): Planned - DWD weather data integration
+- **🌱 Soil Pipeline** (`datavia[soil]`): SoilGrids + HiHydroSoil integration with selective download strategy
+- **🌤️ Weather Pipeline** (`datavia[weather]`): Available — HYRAS daily gridded data (precipitation, temperature) + DWD station data; ERA5 in development
 - **☀️ Radiation Pipeline**: Planned - CAMS radiation data
 
 Each pipeline is a separate, optional package that extends the core system with specific data source capabilities.
@@ -165,9 +165,12 @@ datavia/                          # Repository root
 │   ├── elevation/               # datavia-elevation package
 │   │   ├── pyproject.toml
 │   │   └── datavia/elevation/   # Elevation pipeline code
-│   └── soil/                    # datavia-soil package
+│   ├── soil/                    # datavia-soil package
+│   │   ├── pyproject.toml
+│   │   └── datavia/soil/        # Soil pipeline code
+│   └── weather/                 # datavia-weather package
 │       ├── pyproject.toml
-│       └── datavia/soil/        # Soil pipeline code (WIP)
+│       └── datavia/weather/     # Weather pipeline code
 ├── tests/                       # Test suite
 ├── scripts/                     # Build and utility scripts
 └── docs/                        # Documentation
@@ -214,7 +217,6 @@ dv.elevation.update_data()
 coordinates = np.array([[10.0, 50.0], [11.0, 51.0]])  # [longitude, latitude]
 elevations = dv.elevation.get_data(coords=coordinates, crs_coords="EPSG:4326")
 
-# Note: API is under active development - see tests/ for latest examples
 ```
 
 ### Command Line Interface
@@ -228,6 +230,10 @@ datavia config status                    # Show installation status
 # Data updates
 datavia update elevation                 # Download / refresh elevation data
 datavia update soil                      # Download / refresh soil data
+datavia update weather                   # Update all configured weather pipelines
+datavia update weather --source HYRAS   # Update only the HYRAS source
+datavia update weather --source ERA5_land      # Update only ERA5
+datavia update weather --source DWD_stations   # Update only DWD stations
 
 # Development/Testing
 python -m datavia.cli update elevation   # Alternative CLI access
@@ -326,7 +332,8 @@ See the [LICENSE](LICENSE) file for details.
 
 ## Roadmap
 
-- [ ] Weather data pipeline (DWD integration)
+- [x] Soil data pipeline (SoilGrids + HiHydroSoil integration)
+- [x] Weather data pipeline (HYRAS + DWD station integration)
 - [ ] Radiation data pipeline  
 - [ ] Vector data support (BÜK soil classification)
 - [ ] Multi-region support beyond Germany

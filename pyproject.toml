@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "datavia"
-version = "1.0.0-dev"
+version = "1.0.4-dev"
 description = "Pipeline based Geospatial Data Integration System"
 authors = [
     {name = "Michael Berg", email = "michael.berg@ufz.de"},
@@ -23,24 +23,24 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-    "numpy>=2.2.0,<3.0",
-    "rasterio>=1.4.3,<2.0",
-    "pyproj>=3.7.1,<4.0",
-    "requests>=2.32.3,<3.0",
+    "click>=8.1.8,<9.0",
     "fastapi>=0.115.12,<1.0",
-    "uvicorn>=0.34.2,<1.0",
-    "sqlalchemy>=2.0.41,<3.0",
+    "matplotlib>=3.10.1,<4.0",
+    "numpy>=2.2.0,<3.0",
     "pandas>=2.2.3,<3.0",
     "pydantic>=2.11.4,<3.0",
-    "python-multipart>=0.0.20,<1.0",
+    "pyproj>=3.7.1,<4.0",
     "python-dotenv>=1.1.0,<2.0",
+    "python-multipart>=0.0.20,<1.0",
     "pyyaml>=6.0.2,<7.0",
-    "tqdm>=4.67.1,<5.0",
-    "click>=8.1.8,<9.0",
-    "rich>=14.0.0,<15.0",
-    "matplotlib>=3.10.1,<4.0",
+    "rasterio>=1.4.3,<2.0",
+    "requests>=2.32.3,<3.0",
+    "rich>=14.0.0",
     "scipy>=1.16.0,<2.0",
+    "sqlalchemy>=2.0.41,<3.0",
     "tifffile>=2025.3.30",
+    "tqdm>=4.67.1,<5.0",
+    "uvicorn>=0.34.2,<1.0",
 ]
 
 [project.scripts]
@@ -167,16 +167,17 @@ select = [
     "D104", # missing docstring in public package
     "D107", # missing docstring in __init__
 ]
-ignore = [
-    "E501", # line too long (handled by ruff format)
-    "B008", # do not perform function calls in argument defaults
-    "N999", # invalid module name (for packages)
-]
 
 [tool.ruff.lint.per-file-ignores]
 # Test method/function names are self-describing per the naming standards (AC1+);
 # class-level docstrings already document the test group.
-"tests/**" = ["D102", "D103"]
+# PLC0415: deferred imports inside test methods are the established pattern for
+# this project — each test method imports only what it needs to minimize fixture
+# coupling and to keep individual test failures isolated.
+"tests/**" = ["D102", "PLC0415"]
+# Optional-dependency lazy imports inside try/except blocks are a deliberate
+# pattern for keeping heavy / credentialled packages truly optional.
+"packages/**" = ["PLC0415"]
 
 [tool.ruff.lint.pep8-naming]
 # Enforce naming conventions per coding standards AC1+ and AC2+
@@ -213,9 +214,11 @@ python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 # Filter pyproj deprecation warnings - these come from pyproj internal code
+# Filter numpy 2.x ABI compatibility warnings from packages built against numpy 1.x
 filterwarnings = [
     "ignore::DeprecationWarning:pyproj.*",
     "ignore:Conversion of an array with ndim > 0 to a scalar is deprecated:DeprecationWarning",
+    "ignore:numpy.ndarray size changed:RuntimeWarning",
 ]
 
 # Security scanning configuration
@@ -271,9 +274,13 @@ test-unit-ci = {cmd = "pytest tests/test_config.py tests/test_coordinate_transfo
 test-light = {cmd = "pytest tests/ -v -k 'not test_elevation_pipeline and not test_elevation_pipeline_inside_datavia'", default-environment = "dev"}
 
 # Heavy integration tests (with running backend containers and network access)
+test-weather-e2e = {cmd = "DATAVIA_E2E=1 python -m pytest tests/test_weather_e2e.py tests/test_weather_pipeline_unit.py -v --cov=datavia --cov-report=xml --cov-report=html"}
 test-e2e = {cmd = "DATAVIA_E2E=1 pytest tests/ -v --cov=datavia --cov-report=xml --cov-report=html", default-environment = "dev"}
 ci-check = [{task = "format-check"}, {task = "lint"}, {task = "type-check"}, {task = "test-light"}]
 ci-pr-check = [{task = "ci-check"}, {task = "docs"}, {task = "test-docs-verbose"}, {task = "security-scan"}]
+
+check-examples = {cmd = "python docs/user_guide/examples/example_weather_query.py && python docs/user_guide/examples/grid_snapshot_germany_2025.py && python docs/user_guide/examples/heat_days_germany_2025.py && python docs/user_guide/examples/precipitation_north_south_2025.py"}
+
 
 
 # Development feature for CI/CD tools
@@ -316,3 +323,4 @@ soilgrids = "==0.1.0"
 datavia = { path = ".", editable = true }
 datavia-soil = { path = "./packages/soil/", editable = true }
 datavia-elevation = { path = "./packages/elevation/", editable = true }
+datavia-weather = { path = "./packages/weather/", editable = true, extras = ["era5"] }
