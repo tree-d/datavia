@@ -5,6 +5,8 @@ from typing import Any
 
 import numpy as np
 
+from ..library.database.start import initialize_database
+
 
 class Downloader(ABC):
     """Abstract base class for data downloaders.
@@ -461,6 +463,7 @@ class Pipeline:
         ValueError
             If neither a URL nor any arguments are provided.
         """
+        initialize_database()
         if self.url:
             self.downloader = self.downloader_class(self.url)  # type: ignore[call-arg]
         elif args or kwds:

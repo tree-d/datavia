@@ -95,7 +95,11 @@ class TiffSaver(Saver):
         """
         try:
             stem = os.path.splitext(os.path.basename(data_path))[0]
-            layer_name = f"{self.source_name}_{stem}"
+            layer_name = (
+                f"{self.source_name}_{stem}"
+                if not stem.startswith(self.source_name + "_")
+                else stem
+            )
 
             if register_only:
                 dest_path = data_path
