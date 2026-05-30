@@ -475,15 +475,22 @@ class TestWeatherSyncAdventure:
             tmp_path / f"{self._SOURCE}_2m_temperature_202401_202401_11dae5.nc"
         )
 
-        with patch(
-            "datavia.weather.saver_weather.extract_netcdf_layer_metadata",
-            return_value=self._FAKE_NC_META,
+        with (
+            patch(
+                "datavia.weather.saver_weather.extract_netcdf_layer_metadata",
+                return_value=self._FAKE_NC_META,
+            ),
+            patch(
+                "datavia.weather.saver_weather._has_zarr_grid",
+                return_value=False,
+            ),
         ):
             # Full save (not register_only) so that the copy is made and the
             # registered URI is the destination path.
             assert saver.save(str(src_file), variable="2m_temperature")
 
-        disk_files = set(saver.list_managed_files())
+            disk_files = set(saver.list_managed_files())
+
         db_uris = getter.get_registered_uris()
 
         assert expected_dest in disk_files, "Copied NetCDF must be visible on disk."
@@ -528,9 +535,15 @@ class TestWeatherSyncAdventure:
 
         assert str(orphan_nc) not in getter.get_registered_uris()
 
-        with patch(
-            "datavia.weather.saver_weather.extract_netcdf_layer_metadata",
-            return_value=self._FAKE_NC_META,
+        with (
+            patch(
+                "datavia.weather.saver_weather.extract_netcdf_layer_metadata",
+                return_value=self._FAKE_NC_META,
+            ),
+            patch(
+                "datavia.weather.saver_weather._has_zarr_grid",
+                return_value=False,
+            ),
         ):
             pipeline.sync_files_and_database()
 
@@ -560,9 +573,15 @@ class TestWeatherSyncAdventure:
         assert phantom_uri in getter.get_registered_uris()
         assert str(orphan_nc) not in getter.get_registered_uris()
 
-        with patch(
-            "datavia.weather.saver_weather.extract_netcdf_layer_metadata",
-            return_value=self._FAKE_NC_META,
+        with (
+            patch(
+                "datavia.weather.saver_weather.extract_netcdf_layer_metadata",
+                return_value=self._FAKE_NC_META,
+            ),
+            patch(
+                "datavia.weather.saver_weather._has_zarr_grid",
+                return_value=False,
+            ),
         ):
             pipeline.sync_files_and_database()
 

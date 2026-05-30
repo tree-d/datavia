@@ -713,10 +713,10 @@ class ZarrStoreManager:
 
 
 def _projected_bbox_to_wgs84(
-    has_data: "xr.DataArray",
+    has_data: xr.DataArray,
     crs: str,
     as_tuple: bool,
-) -> "tuple[float, float, float, float] | str":
+) -> tuple[float, float, float, float] | str:
     """Convert the non-null spatial extent of a projected DataArray to WGS84.
 
     Extracts the x/y extent of cells with at least one non-NaN value and

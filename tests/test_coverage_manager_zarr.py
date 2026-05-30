@@ -16,17 +16,16 @@ No CDS credentials or network access are required.
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 import pytest
 import xarray as xr
-import pandas as pd
-
 from datavia.weather.coverage_manager import (
-    CoverageManager,
     CoverageCell,
+    CoverageManager,
     _parse_bbox_wkt,
 )
 from datavia.weather.source_registry import SOURCE_REGISTRY
-from datavia.weather.zarr_store_manager import ZarrStoreManager, _SENTINEL
+from datavia.weather.zarr_store_manager import _SENTINEL, ZarrStoreManager
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -227,7 +226,8 @@ class TestRebuildFromStoreInserts:
         mock_registry: None,
         sqlite_db: None,
     ) -> None:
-        """Calling rebuild_from_store twice does not raise and the count is consistent."""
+        """Calling rebuild_from_store twice
+        does not raise and the count is consistent."""
         _write_real_data(store_manager, "temperature", 2024, n_hours=48)
         real_data_dir = str(store_manager._store_root.parent)
         mgr = CoverageManager(_MOCK_SOURCE, ["temperature"], data_dir=real_data_dir)

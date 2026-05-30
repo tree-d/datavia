@@ -60,18 +60,15 @@ _ONE_DAY: datetime.timedelta = datetime.timedelta(days=1)
 class CoverageCell(NamedTuple):
     """A single ``(bbox, date_range)`` unit from :class:`CoverageManager`.
 
-    Attributes
-    ----------
-    bbox : tuple[float, float, float, float]
-        Bounding box as ``(west, south, east, north)`` in EPSG:4326 degrees.
-    date_start : str
-        Inclusive start of the required date range (ISO date, ``YYYY-MM-DD``).
-    date_end : str
-        Inclusive end of the required date range (ISO date, ``YYYY-MM-DD``).
+    Each instance corresponds to one downloader call and covers a contiguous
+    spatial bounding box and date range that is missing from the Zarr store.
     """
 
+    #: Bounding box as ``(west, south, east, north)`` in EPSG:4326 degrees.
     bbox: tuple[float, float, float, float]
+    #: Inclusive start of the required date range (ISO date, ``YYYY-MM-DD``).
     date_start: str
+    #: Inclusive end of the required date range (ISO date, ``YYYY-MM-DD``).
     date_end: str
 
 
@@ -395,7 +392,8 @@ class CoverageManager:
         return rows
 
     def _bbox_from_notnull(self, da: xr.DataArray) -> str:
-        """Return a WKT POLYGON bbox for all lat/lon cells with at least one non-NaN value.
+        """Return a WKT POLYGON bbox for all lat/lon cells
+        with at least one non-NaN value.
 
         Parameters
         ----------
@@ -501,7 +499,9 @@ class CoverageManager:
                     "acquisition_time": acquisition_time,
                     "bbox": bbox,
                     "crs": "EPSG:4326",
-                    "metadata": '{"file_format": "zarr", "source": "rebuild_from_store"}',
+                    "metadata": (
+                        '{"file_format": "zarr", "source": "rebuild_from_store"}'
+                    ),
                 },
             )
             session.commit()

@@ -24,11 +24,10 @@ import numpy as np
 import pandas as pd
 import pytest
 import xarray as xr
-
 from datavia.weather.source_registry import SOURCE_REGISTRY
 from datavia.weather.zarr_store_manager import (
-    ZarrStoreManager,
     _SENTINEL,
+    ZarrStoreManager,
     _check_sentinel,
     _snap_coords,
 )
@@ -290,7 +289,8 @@ class TestWriteDataset:
         assert manager.store_path("temperature", 2024).exists()
 
     def test_nc_variable_map_rename(self, manager: ZarrStoreManager) -> None:
-        """ERA5-style short name (t_raw) is mapped to the pipeline name (temperature)."""
+        """ERA5-style short name (t_raw) is mapped
+        to the pipeline name (temperature)."""
         ds = _make_synthetic_dataset("t_raw", year=2024, n_hours=6)
         manager.write_dataset(ds, "temperature")
         store = manager.open_store("temperature", 2024)

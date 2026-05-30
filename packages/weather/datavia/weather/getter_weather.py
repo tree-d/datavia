@@ -122,32 +122,20 @@ class GetterWeather(Getter):
     def get_existing_layers(self) -> set[str]:
         """Return the set of variable names registered for this source.
 
-        Checks both the ``weather_layers`` DB table and the Zarr store
-        directories on disk.  Zarr variables are discovered by scanning
-        ``<data_dir>/<source_name>/`` for sub-directories that contain at
-        least one ``*.zarr`` directory, which allows this method to work
-        even after a DB loss (before ``rebuild_from_store`` has been run).
+        Queries the ``weather_layers`` DB table for all variable names
+        belonging to this source.  Returns an empty set when no data has
+        been stored yet.
 
         Returns
         -------
         set[str]
-            Variable names available for this source.  Returns an empty set
-            when no data has been stored yet.
+            Variable names registered for this source.
         """
-        from datavia.config import get_config
-
-        db_variables = {
+        return {
             row["variable"]
             for row in get_weather_metadata(self.source_name)
             if row.get("variable")
         }
-        try:
-            cfg = get_config()
-            mgr = ZarrStoreManager(str(cfg.data_directory), self.source_name)
-            zarr_variables = mgr.list_available_variables()
-        except (KeyError, Exception):
-            zarr_variables = set()
-        return db_variables | zarr_variables
 
     def get_registered_uris(self) -> set[str]:
         """Return the set of file URIs currently registered for this source.
@@ -225,6 +213,7 @@ class GetterWeather(Getter):
             - Shape ``(N,)`` when a single timestamp is supplied.
             - Shape ``(N, T)`` when a list of T timestamps is supplied;
               rows correspond to coordinates, columns to timestamps.
+
             Points outside the covered area or time window are ``NaN``.
 
         Raises
@@ -366,9 +355,9 @@ class GetterWeather(Getter):
                         )
                     elif not parquet_files:
                         raise RuntimeError(
-                            f"No Zarr store found for source='{self.source_name}', "
+                            f"No weather files found for source='{self.source_name}', "
                             f"variable='{variable}', time=[{from_dt}, {to_dt}]. "
-                            "Run the pipeline update first."
+                            "No Zarr store available — run the pipeline update first."
                         )
                 else:
                     nc_variable = get_nc_variable_name(self.source_name, variable)
@@ -410,6 +399,8 @@ class GetterWeather(Getter):
                                         self._unit_overrides,
                                     )
                                 )
+            except RuntimeError:
+                raise
             except Exception as exc:
                 logger.error(
                     "NetCDF batch interpolation failed for source='%s',"

@@ -483,6 +483,25 @@ class SaverWeather(Saver):
         finally:
             session.close()
 
+    def save_nc_to_zarr(self, nc_path: str) -> bool:
+        """Ingest a downloaded NetCDF file into the Zarr store.
+
+        Public entry point called by the pipeline's ``update_data`` for
+        Zarr-enabled sources.  Delegates to :meth:`_ingest_nc_to_zarr`.
+
+        Parameters
+        ----------
+        nc_path : str
+            Absolute path to the downloaded ``.nc`` file to ingest.
+
+        Returns
+        -------
+        bool
+            ``True`` when every variable was written successfully,
+            ``False`` on any error.
+        """
+        return self._ingest_nc_to_zarr(nc_path)
+
     def _ingest_nc_to_zarr(self, nc_path: str) -> bool:
         """Ingest a downloaded NetCDF file into the Zarr store for each variable.
 
@@ -565,7 +584,8 @@ class SaverWeather(Saver):
 
 
 def _has_zarr_grid(source_name: str) -> bool:
-    """Return ``True`` when *source_name* has a ``zarr_grid`` entry in ``SOURCE_REGISTRY``.
+    """Return ``True`` when *source_name* has
+    a ``zarr_grid`` entry in ``SOURCE_REGISTRY``.
 
     Parameters
     ----------
@@ -755,11 +775,20 @@ def _resolve_variables(
                 "nc_variable_map", {}
             )
             if nc_var_map:
-                # Keep only data variables listed in nc_variable_map and
-                # translate CF names to pipeline names.  This also silently
-                # drops auxiliary CF variables (time_bnds, x_bnds, crs, etc.)
-                # that appear in ds.data_vars but are not observational data.
-                nc_vars = [nc_var_map[v] for v in nc_vars if v in nc_var_map]
+                # Translate CF short names to pipeline names.  Also keeps
+                # variables that are already pipeline names (i.e. values of
+                # nc_variable_map) so that files stored under their pipeline
+                # name pass through unchanged.  Auxiliary CF coordinates
+                # (time_bnds, x_bnds, crs, etc.) that appear in neither the
+                # keys nor the values of nc_variable_map are silently dropped.
+                pipeline_names = set(nc_var_map.values())
+                remapped: list[str] = []
+                for v in nc_vars:
+                    if v in nc_var_map:
+                        remapped.append(nc_var_map[v])
+                    elif v in pipeline_names:
+                        remapped.append(v)
+                nc_vars = remapped
             if nc_vars:
                 return list(nc_vars)
         # Fallback: use source_name when metadata extraction fails.

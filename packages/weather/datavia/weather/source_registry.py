@@ -106,7 +106,7 @@ SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
             ),  # 87 points — extended to 55.6°N to cover any plausible Germany bbox
             "longitude": np.arange(5.4, 15.6, 0.1).round(
                 1
-            ),  # 102 points — extended to 5.4°W–15.5°E to cover any plausible Germany bbox
+            ),  # 102 points — extended to 5.4°W-15.5°E for any plausible Germany bbox
             "time_freq": "1h",
             "dtype": "float32",
             "fill_value": float("nan"),

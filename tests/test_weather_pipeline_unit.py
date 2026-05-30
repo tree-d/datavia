@@ -1485,7 +1485,7 @@ class TestSaverWeatherDestNaming:
         nc_file.write_bytes(b"FAKE_NC")
 
         saver = SaverWeather.__new__(SaverWeather)
-        saver.source_name = "HYRAS"
+        saver.source_name = "LEGACY_HYRAS"
         saver.data_dir = str(tmp_path)
 
         with patch(
@@ -1501,9 +1501,9 @@ class TestSaverWeatherDestNaming:
             saver.save(str(nc_file))
 
         # The temp file must NOT appear in the data directory.
-        assert not (tmp_path / "HYRAS_tmpXXXXXX.nc").exists()
+        assert not (tmp_path / "LEGACY_HYRAS_tmpXXXXXX.nc").exists()
         # The descriptive name must exist instead.
-        assert (tmp_path / "HYRAS_tas_202401_202412_nobbox.nc").exists()
+        assert (tmp_path / "LEGACY_HYRAS_tas_202401_202412_nobbox.nc").exists()
 
     def test_multi_variable_nc_omits_variable_from_stem(
         self, sqlite_db: None, tmp_path
@@ -1526,7 +1526,7 @@ class TestSaverWeatherDestNaming:
         nc_file.write_bytes(b"FAKE_NC")
 
         saver = SaverWeather.__new__(SaverWeather)
-        saver.source_name = "ERA5_land"
+        saver.source_name = "LEGACY_ERA5"
         saver.data_dir = str(tmp_path)
 
         with patch(
@@ -1541,7 +1541,7 @@ class TestSaverWeatherDestNaming:
         ):
             saver.save(str(nc_file))
 
-        assert (tmp_path / "ERA5_land_202406_202406_nobbox.nc").exists()
+        assert (tmp_path / "LEGACY_ERA5_202406_202406_nobbox.nc").exists()
 
     def test_register_only_uses_file_stem_as_layer_name(
         self, sqlite_db: None, tmp_path
@@ -1565,11 +1565,11 @@ class TestSaverWeatherDestNaming:
 
         from datavia.library.database.connection import session_local
 
-        nc_file = tmp_path / "HYRAS_tas_2024.nc"
+        nc_file = tmp_path / "LEGACY_HYRAS_tas_2024.nc"
         nc_file.write_bytes(b"FAKE_NC")
 
         saver = SaverWeather.__new__(SaverWeather)
-        saver.source_name = "HYRAS"
+        saver.source_name = "LEGACY_HYRAS"
         saver.data_dir = str(tmp_path)
 
         with patch(
@@ -1586,12 +1586,14 @@ class TestSaverWeatherDestNaming:
 
         session = session_local()
         row = session.execute(
-            text("SELECT layer_name FROM weather_layers WHERE source_name='HYRAS'")
+            text(
+                "SELECT layer_name FROM weather_layers WHERE source_name='LEGACY_HYRAS'"
+            )
         ).fetchone()
         session.close()
         assert row is not None
-        assert row[0] == "HYRAS_tas_2024", (
-            f"Expected layer_name='HYRAS_tas_2024', got '{row[0]}'"
+        assert row[0] == "LEGACY_HYRAS_tas_2024", (
+            f"Expected layer_name='LEGACY_HYRAS_tas_2024', got '{row[0]}'"
         )
 
     def test_parquet_uses_datetime_year_not_temp_stem(
@@ -2498,6 +2500,10 @@ class TestTemporalResolution:
             patch(
                 "datavia.weather.getter_weather.get_weather_paths",
                 return_value=["/fake/era5.nc"],
+            ),
+            patch(
+                "datavia.weather.getter_weather._try_open_zarr",
+                return_value=None,
             ),
             patch(
                 "datavia.weather.getter_weather.interpolate_netcdf",

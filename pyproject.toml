@@ -263,7 +263,7 @@ test-docs-with-io = {cmd = "python scripts/test_docs_with_io.py --verbose", defa
 # No suffix = core + all packages (used in CI and by default locally)
 format = {cmd = "ruff format datavia/ tests/ packages/", default-environment = "dev"}
 format-check = {cmd = "ruff format --check datavia/ tests/ packages/", default-environment = "dev"}
-lint = {cmd = "ruff check datavia/ tests/ packages/", default-environment = "dev"}
+lint = {cmd = "ruff check datavia/ tests/ packages/ --fix", default-environment = "dev"}
 type-check = {cmd = "mypy datavia/ --ignore-missing-imports", default-environment = "dev"}
 security-scan = {cmd = "bandit -r datavia/ packages/ -f json -o bandit-report.json", default-environment = "dev"}
 

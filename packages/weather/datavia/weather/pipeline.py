@@ -76,7 +76,8 @@ _KNOWN_CONFIG_KEYS: frozenset[str] = _REQUIRED_CONFIG_KEYS | frozenset(
 
 
 def _validate_era5_bbox_within_grid(config: dict) -> None:
-    """Raise ``ValueError`` if *config*'s ``era5_bbox`` falls outside the ERA5 Zarr skeleton.
+    """Raise ``ValueError`` if *config*'s ``era5_bbox``
+    falls outside the ERA5 Zarr skeleton.
 
     Checks the user-supplied ``era5_bbox`` against the latitude and longitude
     arrays registered in ``SOURCE_REGISTRY["ERA5_land"]["zarr_grid"]`` before
@@ -491,7 +492,11 @@ class WeatherPipeline(Pipeline):
 
             for raw_path in combined_paths.splitlines():
                 file_path = raw_path.strip()
-                if file_path:
+                if not file_path:
+                    continue
+                if file_path.endswith(".nc"):
+                    success = self.saver.save_nc_to_zarr(file_path)
+                else:
                     success = self.saver.save(file_path)
                     if not success:
                         logger.error("Failed to save weather file: %s", file_path)
@@ -514,7 +519,7 @@ class WeatherPipeline(Pipeline):
 
         Scans the data directory for ``<source_name>_*.nc`` files that belong
         to a Zarr-enabled source.  Each file is passed to
-        :meth:`~datavia.weather.saver_weather.SaverWeather._ingest_nc_to_zarr`
+        :meth:`~datavia.weather.saver_weather.SaverWeather.save_nc_to_zarr`
         and removed from disk after a successful write so that:
 
         - The Zarr store becomes the sole on-disk data backend.
@@ -551,7 +556,7 @@ class WeatherPipeline(Pipeline):
                 self.name,
                 nc_path,
             )
-            success = self.saver._ingest_nc_to_zarr(nc_path)
+            success = self.saver.save_nc_to_zarr(nc_path)
             if success:
                 try:
                     os.remove(nc_path)
