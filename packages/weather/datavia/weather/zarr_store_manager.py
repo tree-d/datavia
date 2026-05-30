@@ -32,18 +32,11 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+import dask.array as da
 import fasteners
 import numpy as np
 import pandas as pd
 import xarray as xr
-
-try:
-    import dask.array as da
-
-    _DASK_AVAILABLE = True
-except ImportError:  # pragma: no cover
-    _DASK_AVAILABLE = False
-
 from zarr.codecs import BloscCodec
 
 from .source_registry import SOURCE_REGISTRY
@@ -171,12 +164,7 @@ class ZarrStoreManager:
 
         # Use a dask array so that to_zarr(compute=False) defers the data
         # variable write — only metadata and coordinate chunks are written.
-        if _DASK_AVAILABLE:
-            data = da.full(shape, fill, dtype=dtype, chunks=chunk_tuple)
-        else:
-            # Fallback: NaN chunks will be written eagerly; they compress near
-            # zero with Blosc+zstd so disk cost is negligible.
-            data = np.full(shape, fill, dtype=dtype)
+        data = da.full(shape, fill, dtype=dtype, chunks=chunk_tuple)
 
         ds_skeleton = xr.Dataset(
             {variable: xr.DataArray(data, dims=["time", "latitude", "longitude"])},
@@ -201,11 +189,10 @@ class ZarrStoreManager:
 
         ds_skeleton.to_zarr(
             str(path),
-            # When dask is available, compute=False defers writing the data
-            # variable so that no NaN chunk files are created on disk.
-            # Without dask, compute=True is used; NaN chunks are written but
-            # compress near-zero with Blosc+zstd, so disk cost is negligible.
-            compute=not _DASK_AVAILABLE,
+            # compute=False defers writing the data variable so that no NaN
+            # chunk files are created on disk; only metadata and coordinate
+            # chunks are written.
+            compute=False,
             consolidated=False,
             encoding=encoding,
         )

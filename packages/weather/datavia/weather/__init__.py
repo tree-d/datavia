@@ -13,6 +13,7 @@ from .getter_weather import GetterWeather
 from .hyras_downloader import HYRASDownloader
 from .pipeline import WeatherPipeline
 from .saver_weather import SaverWeather
+from .zarr_store_manager import ZarrStoreManager
 
 __all__ = [
     "CompositeWeatherDownloader",
@@ -24,5 +25,6 @@ __all__ = [
     "HYRASDownloader",
     "SaverWeather",
     "WeatherPipeline",
+    "ZarrStoreManager",
 ]
 __path__ = __import__("pkgutil").extend_path(__path__, __name__)

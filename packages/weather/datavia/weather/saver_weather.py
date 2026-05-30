@@ -18,11 +18,9 @@ import json
 import logging
 import os
 import shutil
-from pathlib import Path
 
 import pandas as pd
 import pyarrow.parquet as pq
-import xarray as xr
 from sqlalchemy import text
 
 from datavia.config import get_config
@@ -32,7 +30,6 @@ from datavia.library.database.query import check_weather_source_exists
 from datavia.library.formats import extract_netcdf_layer_metadata
 
 from .source_registry import SOURCE_REGISTRY
-from .zarr_store_manager import ZarrStoreManager
 
 logger = logging.getLogger(__name__)
 
@@ -207,195 +204,21 @@ class SaverWeather(Saver):
             logger.error("Failed to save weather file %s: %s", data_path, exc)
             return False
 
-    def save_zarr(self, nc_path: str, variable: str) -> bool:
-        """Write a downloaded NetCDF file into the Zarr store and register it in the DB.
-
-        Opens *nc_path* with xarray, delegates the write to
-        :class:`~datavia.weather.zarr_store_manager.ZarrStoreManager`, and
-        inserts one ``weather_layers`` row per calendar year spanned by the
-        download.  Each row's ``uri`` points to the per-year Zarr store
-        directory so that multiple downloads for the same year share a single
-        store and are individually traceable via distinct rows.
-
-        Parameters
-        ----------
-        nc_path : str
-            Absolute path to the downloaded (temporary) ``.nc`` file.
-        variable : str
-            Datavia variable name to write, e.g. ``"2m_temperature"``.
-
-        Returns
-        -------
-        bool
-            ``True`` when the write and all DB insertions succeeded,
-            ``False`` on any error.
-        """
-        try:
-            mgr = ZarrStoreManager(self.data_dir, self.source_name)
-
-            with xr.open_dataset(nc_path) as ds:
-                # Determine years from the dataset before write_dataset normalises
-                # the time coordinate, so the year list is available for DB rows.
-                time_coord = (
-                    ds["valid_time"] if "valid_time" in ds.coords else ds["time"]
-                )
-                time_index = pd.DatetimeIndex(
-                    pd.to_datetime(time_coord.values, utc=True).tz_localize(None)
-                    if pd.DatetimeIndex(time_coord.values).tz is None
-                    else pd.DatetimeIndex(time_coord.values).tz_localize(None)
-                )
-                years = sorted({int(ts.year) for ts in time_index})
-                bbox = _extract_dataset_bbox(ds)
-                mgr.write_dataset(ds, variable)
-
-            for year in years:
-                year_mask = time_index.year == year
-                valid_from = time_index[year_mask].min().isoformat()
-                valid_until = time_index[year_mask].max().isoformat()
-                store_uri = str(mgr.store_path(variable, year))
-                layer_name = f"{self.source_name}_{variable}_{year}"
-
-                self._insert_weather_layer(
-                    layer_name=layer_name,
-                    variable=variable,
-                    file_format="zarr",
-                    valid_from=valid_from,
-                    valid_until=valid_until,
-                    uri=store_uri,
-                    bbox=bbox,
-                    crs="EPSG:4326",
-                )
-                logger.info(
-                    "Registered Zarr store layer '%s' (variable='%s', year=%d).",
-                    layer_name,
-                    variable,
-                    year,
-                )
-            return True
-
-        except Exception as exc:
-            logger.error(
-                "Failed to save Zarr store for variable '%s' from '%s': %s",
-                variable,
-                nc_path,
-                exc,
-            )
-            return False
-
-    def save_nc_to_zarr(self, nc_path: str) -> bool:
-        """Convert a downloaded NetCDF file to Zarr stores for all its variables.
-
-        Reads the data-variable names from the file, reverse-maps any CF short
-        names (e.g. ``"tas"``) back to pipeline names (e.g.
-        ``"2m_temperature"``) using the source registry, and delegates to
-        :meth:`save_zarr` for each variable found.  No NetCDF copy is written
-        to the data directory; the file at *nc_path* is read in-place (it is
-        typically a temporary download artifact that the caller owns).
-
-        Parameters
-        ----------
-        nc_path : str
-            Absolute path to the downloaded ``.nc`` file.
-
-        Returns
-        -------
-        bool
-            ``True`` when every variable was converted and registered
-            successfully, ``False`` if any conversion failed.
-        """
-        nc_to_pipeline: dict[str, str] = SOURCE_REGISTRY.get(self.source_name, {}).get(
-            "nc_variable_map", {}
-        )
-
-        try:
-            with xr.open_dataset(nc_path) as ds:
-                nc_vars: list[str] = list(ds.data_vars)
-        except Exception as exc:
-            logger.error(
-                "Cannot open %s to determine variables for Zarr conversion: %s",
-                nc_path,
-                exc,
-            )
-            return False
-
-        all_ok = True
-        for nc_var in nc_vars:
-            pipeline_var = nc_to_pipeline.get(nc_var, nc_var)
-            if not self.save_zarr(nc_path, pipeline_var):
-                all_ok = False
-        return all_ok
-
-    def delete_store(self, variable: str, year: int, confirmed: bool) -> bool:
-        """Remove all DB rows for a Zarr store and delete the store directory.
-
-        Removes ``weather_layers`` rows first, then deletes the directory.
-        If the DB deletion succeeds but the filesystem deletion fails, the
-        rows can be re-created by
-        ``CoverageManager.rebuild_from_store(variable)``.
-
-        Parameters
-        ----------
-        variable : str
-            Datavia variable name.
-        year : int
-            Calendar year.
-        confirmed : bool
-            Must be ``True`` to proceed.  When ``False`` the method is a
-            no-op and returns ``True`` immediately.  The caller (CLI or test)
-            sets this flag; no interactive prompt is issued here.
-
-        Returns
-        -------
-        bool
-            ``True`` on success or when ``confirmed=False``,
-            ``False`` on any error.
-        """
-        if not confirmed:
-            return True
-
-        try:
-            mgr = ZarrStoreManager(self.data_dir, self.source_name)
-            store_uri = str(mgr.store_path(variable, year))
-
-            # Remove DB rows before touching the filesystem so that a failed
-            # filesystem delete leaves the rows intact and recoverable.
-            self._delete_db_rows_by_uri({store_uri})
-            mgr.delete_store(variable, year, confirmed=True)
-
-            logger.info(
-                "Deleted Zarr store and DB rows for %s/%s/%d.",
-                self.source_name,
-                variable,
-                year,
-            )
-            return True
-
-        except Exception as exc:
-            logger.error(
-                "Failed to delete Zarr store for %s/%s/%d: %s",
-                self.source_name,
-                variable,
-                year,
-                exc,
-            )
-            return False
-
     def list_managed_files(self) -> list[str]:
-        """Return paths of all weather files and Zarr stores managed by this saver.
+        """Return absolute paths of all weather files written by this saver.
 
-        Combines results from the legacy file scan (``.nc``, ``.parquet``) and
-        a scan of Zarr store directories under
-        ``<data_dir>/<source_name>/``.  This is a pure filesystem operation
-        and must not access the database.
+        Scans the data directory for files matching
+        ``<source_name>_*.nc`` and ``<source_name>_*.parquet``.  This is a
+        pure filesystem operation and must not access the database.
 
         Returns
         -------
         list[str]
-            Absolute paths to every matching file or directory currently on
-            disk.  Returns an empty list when nothing is found or the data
+            Absolute paths to every matching file currently on disk.
+            Returns an empty list when no files are found or the data
             directory does not exist.
         """
-        return self._list_weather_files() + self._list_zarr_stores()
+        return self._list_weather_files()
 
     def delete_registration(self, uri: str) -> None:
         """Remove all database registrations for the given file URI.
@@ -551,7 +374,7 @@ class SaverWeather(Saver):
             session.close()
 
     def _list_weather_files(self) -> list[str]:
-        """Return absolute paths of all legacy weather files for this source in data_dir.
+        """Return absolute paths of all weather files for this source in data_dir.
 
         Returns
         -------
@@ -570,32 +393,6 @@ class SaverWeather(Saver):
         except FileNotFoundError:
             logger.warning("Data directory not found: %s", self.data_dir)
         return result
-
-    def _list_zarr_stores(self) -> list[str]:
-        """Return paths of all Zarr store directories for this source.
-
-        Scans ``<data_dir>/<source_name>/<variable>/<year>.zarr`` and returns
-        every directory whose name ends with ``.zarr``.
-
-        Returns
-        -------
-        list[str]
-            Absolute paths to ``.zarr`` directories managed by this source.
-        """
-        source_root = Path(self.data_dir) / self.source_name
-        if not source_root.exists():
-            return []
-
-        stores: list[str] = []
-        try:
-            for var_dir in source_root.iterdir():
-                if var_dir.is_dir():
-                    for child in var_dir.iterdir():
-                        if child.is_dir() and child.suffix == ".zarr":
-                            stores.append(str(child))
-        except OSError as exc:
-            logger.warning("Could not scan Zarr stores under %s: %s", source_root, exc)
-        return stores
 
     def _get_all_db_rows(self) -> list[dict[str, str]]:
         """Return all weather_layers rows for this source as plain dicts.
@@ -739,9 +536,7 @@ def _build_dest_stem(
         year_end = valid_until[:4] if valid_until else "unknown"
         month_end = valid_until[5:7] if valid_until else "XX"
         bbox_tag = (
-            hashlib.md5(bbox_wkt.encode(), usedforsecurity=False).hexdigest()[:6]
-            if bbox_wkt
-            else "nobbox"
+            hashlib.md5(bbox_wkt.encode()).hexdigest()[:6] if bbox_wkt else "nobbox"
         )
         time_range = f"{year_start}{month_start}_{year_end}{month_end}"
 
@@ -866,37 +661,6 @@ def _resolve_variables(
             source_name,
         )
     return [source_name]
-
-
-def _extract_dataset_bbox(ds: xr.Dataset) -> str | None:
-    """Return a WKT POLYGON bounding box from an xarray Dataset's lat/lon coords.
-
-    Parameters
-    ----------
-    ds : xr.Dataset
-        Dataset with ``latitude``/``longitude`` or ``lat``/``lon`` coordinates.
-
-    Returns
-    -------
-    str or None
-        WKT ``POLYGON ((west south, east south, east north, west north,
-        west south))`` in EPSG:4326, or ``None`` when spatial coordinates
-        are absent.
-    """
-    lat = ds.get("latitude") if "latitude" in ds.coords else ds.get("lat")
-    lon = ds.get("longitude") if "longitude" in ds.coords else ds.get("lon")
-    if lat is None or lon is None:
-        return None
-
-    south = float(lat.values.min())
-    north = float(lat.values.max())
-    west = float(lon.values.min())
-    east = float(lon.values.max())
-
-    return (
-        f"POLYGON (({west} {south}, {east} {south}, "
-        f"{east} {north}, {west} {north}, {west} {south}))"
-    )
 
 
 def _read_temporal_metadata(

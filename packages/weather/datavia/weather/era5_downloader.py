@@ -173,7 +173,7 @@ class ERA5Downloader(APIDownloader):
         list[float]
             Snapped bounding box ``[north, west, south, east]`` where north
             and east edges are rounded up (``ceil``) and south and west edges
-            are rounded down (``floor``) to the nearest 0.1\u00b0.
+            are rounded down (``floor``) to the nearest 0.1°.
         """
         grid_step = 0.1
         north, west, south, east = bbox
