@@ -401,11 +401,14 @@ class WeatherPipeline(Pipeline):
         # Reconcile disk with DB before checking what to download.
         self.sync_files_and_database()
 
-        # DWD station sources have no grid bbox: CoverageManager falls back to
-        # the Germany default and would report "all covered" after any prior
+        # Pure DWD station sources have no grid bbox: CoverageManager falls back
+        # to the Germany default and would report "all covered" after any prior
         # DWD download, regardless of which stations were requested.  Use a
         # direct station-aware DB check instead and, when data is missing,
         # issue a single download cell for the full configured date range.
+        # Hybrid ERA5+DWD pipelines are excluded: they still need CoverageManager
+        # to compute the ERA5 grid delta, and CompositeWeatherDownloader handles
+        # the DWD parquet download alongside the ERA5 NetCDF in the same cell.
         if self._is_dwd_source():
             station_ids = self._get_dwd_station_ids()
             variable = self._config["variables"][0]
@@ -438,34 +441,11 @@ class WeatherPipeline(Pipeline):
 
         if not missing_cells:
             logger.info(
-                "WeatherPipeline '%s': DWD data not yet registered; downloading.",
+                "WeatherPipeline '%s': all requested data already registered. "
+                "Nothing to download.",
                 self.name,
             )
-            missing_cells: list[CoverageCell] = [
-                CoverageCell(
-                    bbox=_GERMANY_BBOX_WSNE,
-                    date_start=self._config["date_start"],
-                    date_end=self._config["date_end"],
-                )
-            ]
-        else:
-            # Non-DWD sources: use CoverageManager for spatiotemporal delta so
-            # that only uncovered (bbox, date_range) cells are downloaded.
-            coverage_manager = CoverageManager(self.name, self._config["variables"])
-            req_bbox = self._get_request_bbox()
-            missing_cells = coverage_manager.missing_spatiotemporal(
-                req_bbox,
-                self._config["date_start"],
-                self._config["date_end"],
-            )
-
-            if not missing_cells:
-                logger.info(
-                    "WeatherPipeline '%s': all requested data already registered. "
-                    "Nothing to download.",
-                    self.name,
-                )
-                return True
+            return True
 
         logger.info(
             "WeatherPipeline '%s': %d cell(s) to download.",
@@ -494,13 +474,10 @@ class WeatherPipeline(Pipeline):
                 file_path = raw_path.strip()
                 if not file_path:
                     continue
-                if file_path.endswith(".nc"):
-                    success = self.saver.save_nc_to_zarr(file_path)
-                else:
-                    success = self.saver.save(file_path)
-                    if not success:
-                        logger.error("Failed to save weather file: %s", file_path)
-                        failed_items.append(file_path)
+                success = self.saver.save(file_path)
+                if not success:
+                    logger.error("Failed to save weather file: %s", file_path)
+                    failed_items.append(file_path)
 
         if failed_items:
             raise RuntimeError(
@@ -627,22 +604,20 @@ class WeatherPipeline(Pipeline):
         return cell_config
 
     def _is_dwd_source(self) -> bool:
-        """Return ``True`` when this pipeline targets DWD station data.
+        """Return ``True`` when this pipeline targets DWD station data only.
 
-        A pipeline is considered a DWD source when either:
-
-        - ``config["source"]`` is ``"DWD_stations"`` (DWD-only mode), or
-        - ``"dwd_stations"`` is present in the config (hybrid ERA5/DWD mode).
+        Only the pure DWD-only mode (``config["source"] == "DWD_stations"``) is
+        considered a DWD source here.  Hybrid ERA5+DWD pipelines
+        (``"dwd_stations"`` in config but ``source != "DWD_stations"``) must
+        still run :class:`CoverageManager` for the ERA5 grid, so they are
+        deliberately excluded.
 
         Returns
         -------
         bool
-            ``True`` for DWD station pipelines, ``False`` otherwise.
+            ``True`` only for pure DWD station pipelines, ``False`` otherwise.
         """
-        return (
-            self._config.get("source") == "DWD_stations"
-            or "dwd_stations" in self._config
-        )
+        return self._config.get("source") == "DWD_stations"
 
     def _get_dwd_station_ids(self) -> list[str] | None:
         """Return sorted station IDs from the configured DWD station list.
