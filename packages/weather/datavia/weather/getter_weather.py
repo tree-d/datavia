@@ -262,14 +262,14 @@ class GetterWeather(Getter):
         n_times = len(datetime_utc) if is_multi_time else 1
 
         from_dt = (
-            str(datetime_utc)
+            pd.Timestamp(datetime_utc).isoformat()
             if not isinstance(datetime_utc, (list, tuple))
-            else str(datetime_utc[0])
+            else pd.Timestamp(datetime_utc[0]).isoformat()
         )
         to_dt = (
-            str(datetime_utc)
+            pd.Timestamp(datetime_utc).isoformat()
             if not isinstance(datetime_utc, (list, tuple))
-            else str(datetime_utc[-1])
+            else pd.Timestamp(datetime_utc[-1]).isoformat()
         )
 
         nc_paths = get_weather_paths(self.source_name, variable, from_dt, to_dt)

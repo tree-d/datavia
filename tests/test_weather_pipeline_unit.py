@@ -584,6 +584,99 @@ class TestGetterWeather:
         assert isinstance(value, float)
         assert value == pytest.approx(7.1)
 
+    def test_get_data_timezone_aware_timestamp_not_nan(self, sqlite_db: None) -> None:
+        """Timezone-aware timestamps (e.g. UTC 'Z' suffix) must not produce NaN.
+
+        Regression test for the bug where str(pd.Timestamp(...)) produced a
+        space-separated ISO string ("2024-01-15 12:00:00") that compared
+        lexicographically less than the T-separated DB values, causing
+        get_weather_paths() to return an empty list and get_data() to raise
+        RuntimeError or return all-NaN silently.
+        """
+        import pandas as pd
+        from datavia.weather.getter_weather import GetterWeather
+
+        _insert_weather_layer(
+            source_name="ERA5_land",
+            layer_name="ERA5_land_temperature_2m",
+            variable="temperature_2m",
+            file_format="netcdf",
+            valid_from="2024-01-01T00:00:00",
+            valid_until="2024-01-31T23:00:00",
+            uri="/data/era5_temperature_2m.nc",
+        )
+
+        getter = GetterWeather("ERA5_land")
+        coords = np.array([[13.4, 52.5]])
+
+        tz_aware = pd.Timestamp("2024-01-15T12:00:00Z")
+        with (
+            patch(
+                "datavia.weather.getter_weather.interpolate_netcdf",
+                return_value=3.7,
+            ) as mock_nc,
+            patch(
+                "datavia.weather.getter_weather.interpolate_station_parquet",
+                return_value=float("nan"),
+            ),
+        ):
+            result = getter.get_data(
+                coords,
+                variable="temperature_2m",
+                datetime_utc=tz_aware,
+            )
+
+        assert mock_nc.called, (
+            "interpolate_netcdf was not called — DB path lookup failed"
+        )
+        assert np.isfinite(result[0]), "Expected a finite value, got NaN"
+        assert result[0] == pytest.approx(3.7)
+
+    def test_get_data_z_suffix_string_not_nan(self, sqlite_db: None) -> None:
+        """ISO strings with a 'Z' suffix must resolve to a T-separated query string.
+
+        Regression companion to test_get_data_timezone_aware_timestamp_not_nan:
+        callers that pass "2024-01-15T12:00:00Z" as a raw string should also
+        work because _to_naive_utc() normalises the timezone, and isoformat()
+        then emits the correct T-separated representation for the DB comparison.
+        """
+        from datavia.weather.getter_weather import GetterWeather
+
+        _insert_weather_layer(
+            source_name="ERA5_land",
+            layer_name="ERA5_land_temperature_2m",
+            variable="temperature_2m",
+            file_format="netcdf",
+            valid_from="2024-01-01T00:00:00",
+            valid_until="2024-01-31T23:00:00",
+            uri="/data/era5_temperature_2m.nc",
+        )
+
+        getter = GetterWeather("ERA5_land")
+        coords = np.array([[13.4, 52.5]])
+
+        with (
+            patch(
+                "datavia.weather.getter_weather.interpolate_netcdf",
+                return_value=3.7,
+            ) as mock_nc,
+            patch(
+                "datavia.weather.getter_weather.interpolate_station_parquet",
+                return_value=float("nan"),
+            ),
+        ):
+            result = getter.get_data(
+                coords,
+                variable="temperature_2m",
+                datetime_utc="2024-01-15T12:00:00Z",
+            )
+
+        assert mock_nc.called, (
+            "interpolate_netcdf was not called — DB path lookup failed"
+        )
+        assert np.isfinite(result[0]), "Expected a finite value, got NaN"
+        assert result[0] == pytest.approx(3.7)
+
 
 # ---------------------------------------------------------------------------
 # CompositeWeatherDownloader
@@ -2062,6 +2155,65 @@ class TestInterpolateNetcdf:
         )
         assert result_june == pytest.approx(20.0)
         assert result_july == pytest.approx(25.0)
+
+    def test_list_of_timestamps_returns_array(self, tmp_path) -> None:
+        """A list of daily timestamps returns an (N,) array of values.
+
+        Regression test: passing a list of ``pd.Timestamp`` objects previously
+        caused ``pd.Timestamp(str(list))`` to receive the string representation
+        of the whole Python list, which raised ``DateParseError``.  After the
+        fix the function normalises each element individually and uses
+        vectorised xarray selection.
+
+        Parameters
+        ----------
+        tmp_path : pathlib.Path
+            pytest-provided temporary directory.
+        """
+        import pandas as pd
+        import xarray as xr
+
+        from datavia.library.interpolation import interpolate_netcdf
+
+        lats = np.array([47.0, 49.0, 51.0], dtype=float)
+        lons = np.array([9.0, 11.0, 13.0], dtype=float)
+        timestamps = [
+            np.datetime64("2024-01-15T12:00:00"),
+            np.datetime64("2024-02-15T12:00:00"),
+            np.datetime64("2024-03-15T12:00:00"),
+        ]
+        # Different value per time step so we can assert correct selection.
+        data = np.stack(
+            [
+                np.full((len(lats), len(lons)), float(i + 1))
+                for i in range(len(timestamps))
+            ]
+        )  # shape (3, 3, 3)
+
+        da = xr.DataArray(
+            data,
+            dims=["time", "latitude", "longitude"],
+            coords={
+                "time": np.array(timestamps, dtype="datetime64[ns]"),
+                "latitude": lats,
+                "longitude": lons,
+            },
+        )
+        nc_path = str(tmp_path / "era5_multi_ts.nc")
+        xr.Dataset({"t2m": da}).to_netcdf(nc_path)
+
+        ts_list = [
+            pd.Timestamp("2024-01-15T12:00:00"),
+            pd.Timestamp("2024-02-15T12:00:00"),
+        ]
+        result = interpolate_netcdf(nc_path, 49.0, 11.0, "t2m", ts_list)
+
+        assert isinstance(result, np.ndarray), f"Expected ndarray, got {type(result)}"
+        assert result.shape == (2,), f"Expected shape (2,), got {result.shape}"
+        assert np.all(np.isfinite(result)), f"Expected all finite values, got {result}"
+        # Jan → value 1.0, Feb → value 2.0
+        assert result[0] == pytest.approx(1.0)
+        assert result[1] == pytest.approx(2.0)
 
 
 # ---------------------------------------------------------------------------

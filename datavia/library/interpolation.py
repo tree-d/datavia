@@ -451,17 +451,32 @@ def interpolate_netcdf(
                         "pandas is required for temporal_resolution='hourly'. "
                         "Install with `pip install pandas`."
                     )
-                day_start = pd.Timestamp(str(datetime_utc))
+                _raw = (
+                    datetime_utc[0]
+                    if isinstance(datetime_utc, (list, tuple))
+                    else datetime_utc
+                )
+                day_start = pd.Timestamp(_raw)
                 if day_start.tzinfo is not None:
                     day_start = day_start.tz_convert("UTC").tz_localize(None)
                 day_start = day_start.normalize()
                 day_end = day_start + pd.Timedelta(days=1) - pd.Timedelta(nanoseconds=1)
                 point = point.sel({time_dim: slice(day_start, day_end)})
             else:
-                _ts = pd.Timestamp(str(datetime_utc))
-                if _ts.tzinfo is not None:
-                    _ts = _ts.tz_convert("UTC").tz_localize(None)
-                point = point.sel({time_dim: _ts}, method="nearest")
+
+                def _to_naive_ts(raw: Any) -> "pd.Timestamp":
+                    t = pd.Timestamp(raw)
+                    if t.tzinfo is not None:
+                        t = t.tz_convert("UTC").tz_localize(None)
+                    return t
+
+                if isinstance(datetime_utc, (list, tuple)):
+                    ts_list = [_to_naive_ts(t) for t in datetime_utc]
+                    point = point.sel({time_dim: ts_list}, method="nearest")
+                else:
+                    point = point.sel(
+                        {time_dim: _to_naive_ts(datetime_utc)}, method="nearest"
+                    )
 
         values = np.asarray(point.values, dtype=float)
 
