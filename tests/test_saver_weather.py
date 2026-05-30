@@ -338,15 +338,21 @@ class TestSaverWeatherDestNaming:
         saver.source_name = "HYRAS"
         saver.data_dir = str(tmp_path)
 
-        with patch(
-            "datavia.weather.saver_weather.extract_netcdf_layer_metadata",
-            return_value={
-                "valid_from": "2024-01-01T00:00:00",
-                "valid_until": "2024-12-31T23:59:59",
-                "variables": ["tas"],
-                "bbox": None,
-                "crs": "EPSG:4326",
-            },
+        with (
+            patch(
+                "datavia.weather.saver_weather.extract_netcdf_layer_metadata",
+                return_value={
+                    "valid_from": "2024-01-01T00:00:00",
+                    "valid_until": "2024-12-31T23:59:59",
+                    "variables": ["tas"],
+                    "bbox": None,
+                    "crs": "EPSG:4326",
+                },
+            ),
+            patch(
+                "datavia.weather.saver_weather._has_zarr_grid",
+                return_value=False,
+            ),
         ):
             saver.save(str(nc_file))
 
@@ -379,15 +385,21 @@ class TestSaverWeatherDestNaming:
         saver.source_name = "ERA5_land"
         saver.data_dir = str(tmp_path)
 
-        with patch(
-            "datavia.weather.saver_weather.extract_netcdf_layer_metadata",
-            return_value={
-                "valid_from": "2024-06-01T00:00:00",
-                "valid_until": "2024-06-30T23:59:59",
-                "variables": ["2m_temperature", "total_precipitation"],
-                "bbox": None,
-                "crs": "EPSG:4326",
-            },
+        with (
+            patch(
+                "datavia.weather.saver_weather.extract_netcdf_layer_metadata",
+                return_value={
+                    "valid_from": "2024-06-01T00:00:00",
+                    "valid_until": "2024-06-30T23:59:59",
+                    "variables": ["2m_temperature", "total_precipitation"],
+                    "bbox": None,
+                    "crs": "EPSG:4326",
+                },
+            ),
+            patch(
+                "datavia.weather.saver_weather._has_zarr_grid",
+                return_value=False,
+            ),
         ):
             saver.save(str(nc_file))
 
@@ -422,15 +434,21 @@ class TestSaverWeatherDestNaming:
         saver.source_name = "HYRAS"
         saver.data_dir = str(tmp_path)
 
-        with patch(
-            "datavia.weather.saver_weather.extract_netcdf_layer_metadata",
-            return_value={
-                "valid_from": "2024-01-01T00:00:00",
-                "valid_until": "2024-12-31T23:59:59",
-                "variables": ["tas"],
-                "bbox": None,
-                "crs": "EPSG:4326",
-            },
+        with (
+            patch(
+                "datavia.weather.saver_weather.extract_netcdf_layer_metadata",
+                return_value={
+                    "valid_from": "2024-01-01T00:00:00",
+                    "valid_until": "2024-12-31T23:59:59",
+                    "variables": ["tas"],
+                    "bbox": None,
+                    "crs": "EPSG:4326",
+                },
+            ),
+            patch(
+                "datavia.weather.saver_weather._has_zarr_grid",
+                return_value=False,
+            ),
         ):
             saver.save(str(nc_file), register_only=True)
 
@@ -769,7 +787,11 @@ class TestSaverWeatherListManagedFiles:
         (tmp_path / "ERA5_land_2m_temperature_202401.nc").touch()
         (tmp_path / "ERA5_land_precipitation_202401.parquet").touch()
 
-        files = saver.list_managed_files()
+        with patch(
+            "datavia.weather.saver_weather._has_zarr_grid",
+            return_value=False,
+        ):
+            files = saver.list_managed_files()
         names = {f.split("/")[-1] for f in files}
         assert "ERA5_land_2m_temperature_202401.nc" in names
         assert "ERA5_land_precipitation_202401.parquet" in names
@@ -791,7 +813,11 @@ class TestSaverWeatherListManagedFiles:
         (tmp_path / "ERA5_land_temperature.nc").touch()
         (tmp_path / "HYRAS_temperature.nc").touch()
 
-        files = saver.list_managed_files()
+        with patch(
+            "datavia.weather.saver_weather._has_zarr_grid",
+            return_value=False,
+        ):
+            files = saver.list_managed_files()
         names = {f.split("/")[-1] for f in files}
         assert "HYRAS_temperature.nc" not in names
         assert "ERA5_land_temperature.nc" in names
@@ -814,7 +840,11 @@ class TestSaverWeatherListManagedFiles:
         (tmp_path / "ERA5_land_temperature.txt").touch()
         (tmp_path / "ERA5_land_temperature.json").touch()
 
-        files = saver.list_managed_files()
+        with patch(
+            "datavia.weather.saver_weather._has_zarr_grid",
+            return_value=False,
+        ):
+            files = saver.list_managed_files()
         names = {f.split("/")[-1] for f in files}
         assert "ERA5_land_temperature.nc" in names
         assert "ERA5_land_temperature.txt" not in names
@@ -893,9 +923,15 @@ class TestSaverWeatherSaveRegisterOnly:
             "crs": "EPSG:4326",
             "variables": ["2m_temperature"],
         }
-        with patch(
-            "datavia.weather.saver_weather.extract_netcdf_layer_metadata",
-            return_value=meta,
+        with (
+            patch(
+                "datavia.weather.saver_weather.extract_netcdf_layer_metadata",
+                return_value=meta,
+            ),
+            patch(
+                "datavia.weather.saver_weather._has_zarr_grid",
+                return_value=False,
+            ),
         ):
             result = saver.save(str(nc_file), register_only=True)
 
@@ -939,9 +975,15 @@ class TestSaverWeatherSaveRegisterOnly:
             "crs": "EPSG:4326",
             "variables": ["2m_temperature"],
         }
-        with patch(
-            "datavia.weather.saver_weather.extract_netcdf_layer_metadata",
-            return_value=meta,
+        with (
+            patch(
+                "datavia.weather.saver_weather.extract_netcdf_layer_metadata",
+                return_value=meta,
+            ),
+            patch(
+                "datavia.weather.saver_weather._has_zarr_grid",
+                return_value=False,
+            ),
         ):
             saver.save(str(nc_file), register_only=True)
 
@@ -990,9 +1032,15 @@ class TestSaverWeatherSaveRegisterOnly:
             "crs": "EPSG:4326",
             "variables": ["2m_temperature"],
         }
-        with patch(
-            "datavia.weather.saver_weather.extract_netcdf_layer_metadata",
-            return_value=meta,
+        with (
+            patch(
+                "datavia.weather.saver_weather.extract_netcdf_layer_metadata",
+                return_value=meta,
+            ),
+            patch(
+                "datavia.weather.saver_weather._has_zarr_grid",
+                return_value=False,
+            ),
         ):
             saver.save(str(nc_file), register_only=True)
 

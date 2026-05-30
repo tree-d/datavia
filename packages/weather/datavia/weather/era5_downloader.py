@@ -572,11 +572,6 @@ class ERA5Downloader(APIDownloader):
                             chunk_start,
                             chunk_end,
                         )
-                    except Exception as exc:
-                        logger.warning(
-                            "Failed to delete CDS job: %s", exc, exc_info=True
-                        )
-                raise
             except TimeoutError:
                 raise
             except Exception as exc:

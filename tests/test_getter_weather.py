@@ -438,6 +438,10 @@ class TestTemporalResolution:
                 return_value=["/fake/era5.nc"],
             ),
             patch(
+                "datavia.weather.getter_weather._try_open_zarr",
+                return_value=None,
+            ),
+            patch(
                 "datavia.weather.getter_weather.interpolate_netcdf",
                 return_value=np.array([20.0]),
             ) as mock_interp,
@@ -694,6 +698,10 @@ class TestGetterWeatherEra5KelvinToCelsiusConversion:
                 return_value=300.15,
             ),
             patch(
+                "datavia.weather.getter_weather._try_open_zarr",
+                return_value=None,
+            ),
+            patch(
                 "datavia.weather.getter_weather.interpolate_station_parquet",
                 return_value=float("nan"),
             ),
@@ -755,6 +763,10 @@ class TestGetterWeatherUnitOverrides:
             patch(
                 "datavia.weather.getter_weather.interpolate_netcdf",
                 return_value=280.0,
+            ),
+            patch(
+                "datavia.weather.getter_weather._try_open_zarr",
+                return_value=None,
             ),
             patch(
                 "datavia.weather.getter_weather.interpolate_station_parquet",
