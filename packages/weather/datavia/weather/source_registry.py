@@ -104,7 +104,9 @@ SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
             "latitude": np.arange(55.6, 47.0, -0.1).round(
                 1
             ),  # 87 points — extended to 55.6°N to cover any plausible Germany bbox
-            "longitude": np.arange(5.9, 15.1, 0.1).round(1),  # 92 points
+            "longitude": np.arange(5.4, 15.6, 0.1).round(
+                1
+            ),  # 102 points — extended to 5.4°W–15.5°E to cover any plausible Germany bbox
             "time_freq": "1h",
             "dtype": "float32",
             "fill_value": float("nan"),

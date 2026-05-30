@@ -75,6 +75,68 @@ _KNOWN_CONFIG_KEYS: frozenset[str] = _REQUIRED_CONFIG_KEYS | frozenset(
 )
 
 
+def _validate_era5_bbox_within_grid(config: dict) -> None:
+    """Raise ``ValueError`` if *config*'s ``era5_bbox`` falls outside the ERA5 Zarr skeleton.
+
+    Checks the user-supplied ``era5_bbox`` against the latitude and longitude
+    arrays registered in ``SOURCE_REGISTRY["ERA5_land"]["zarr_grid"]`` before
+    any network download is attempted.  This surfaces misconfigured bounding
+    boxes immediately at pipeline construction rather than after a potentially
+    long CDS API download.
+
+    Only runs when ``config["source"]`` is ``"ERA5_land"`` and an explicit
+    ``era5_bbox`` is present; all other sources and default-bbox cases are
+    silently skipped.
+
+    Parameters
+    ----------
+    config : dict
+        Pipeline configuration dict, as passed to :class:`WeatherPipeline`.
+
+    Raises
+    ------
+    ValueError
+        If any edge of ``era5_bbox`` lies outside the skeleton grid extent by
+        more than half a grid cell (0.05°).
+    """
+    if config.get("source") != "ERA5_land":
+        return
+    era5_bbox = config.get("era5_bbox")
+    if not era5_bbox:
+        return
+
+    from .source_registry import SOURCE_REGISTRY
+
+    grid = SOURCE_REGISTRY["ERA5_land"]["zarr_grid"]
+    lat = grid["latitude"]
+    lon = grid["longitude"]
+    tol = 0.05  # half a 0.1° grid cell
+
+    n, w, s, e = era5_bbox
+    grid_n, grid_s = float(lat.max()), float(lat.min())
+    grid_w, grid_e = float(lon.min()), float(lon.max())
+
+    problems = []
+    if n > grid_n + tol:
+        problems.append(f"north={n} exceeds grid ceiling {grid_n}°N")
+    if s < grid_s - tol:
+        problems.append(f"south={s} is below grid floor {grid_s}°N")
+    if w < grid_w - tol:
+        problems.append(f"west={w} is left of grid edge {grid_w}°E")
+    if e > grid_e + tol:
+        problems.append(f"east={e} exceeds grid edge {grid_e}°E")
+
+    if problems:
+        raise ValueError(
+            "era5_bbox is outside the ERA5_land Zarr skeleton grid and would "
+            "cause write failures after downloading.  Problems: "
+            + "; ".join(problems)
+            + f".  Skeleton covers lat [{grid_s}, {grid_n}], "
+            f"lon [{grid_w}, {grid_e}].  Adjust era5_bbox or widen the "
+            "skeleton in SOURCE_REGISTRY['ERA5_land']['zarr_grid']."
+        )
+
+
 class WeatherPipeline(Pipeline):
     """End-to-end pipeline for multi-source weather data integration.
 
@@ -135,7 +197,6 @@ class WeatherPipeline(Pipeline):
             known_keys=_KNOWN_CONFIG_KEYS,
             pipeline_name="WeatherPipeline",
         )
-        # The source value becomes the pipeline name and DB source_name.
         source_name: str = config["source"]
 
         # Cross-reference the requested variables against the source's known
@@ -152,6 +213,8 @@ class WeatherPipeline(Pipeline):
                     f"source '{source_name}'. "
                     f"Valid variables: {sorted(valid_variables)}"
                 )
+        _validate_era5_bbox_within_grid(config)
+        # The source value becomes the pipeline name and DB source_name.
         super().__init__(
             name=source_name,
             downloader=CompositeWeatherDownloader,
