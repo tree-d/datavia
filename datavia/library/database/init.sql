@@ -48,3 +48,9 @@ CREATE TABLE IF NOT EXISTS weather_layers (
 -- Composite index used by GetterWeather to find relevant time windows quickly.
 CREATE INDEX IF NOT EXISTS idx_weather_source_variable_time
     ON weather_layers (source_name, variable, valid_from, valid_until);
+
+-- Index for per-variable Zarr store lookups in CoverageManager and GetterWeather.
+-- Allows fast filtering by file_format so NetCDF and Zarr rows are separated
+-- without scanning the full table.
+CREATE INDEX IF NOT EXISTS idx_weather_source_variable_format
+    ON weather_layers (source_name, variable, file_format);

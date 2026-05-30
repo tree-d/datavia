@@ -31,6 +31,10 @@ dependencies = [
     "shapely>=2.0.4,<3.0",
     "tqdm>=4.66,<5",
     "xarray>=2024.0,<2027",
+    "zarr>=3.0,<4",
+    "numcodecs>=0.12,<1",
+    "fasteners>=0.19",
+    "dask>=2024.6",
 ]
 
 # ERA5 downloads require a valid ~/.cdsapirc credentials file.

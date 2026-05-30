@@ -22,6 +22,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
+
 from datavia.library.unit_conversions import (
     kelvin_to_celsius,
     precipitation_m_to_mm,
@@ -93,6 +95,27 @@ SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
             "tp": "total_precipitation",
             "ssrd": "surface_solar_radiation_downwards",
         },
+        # Native coordinate grid for the Zarr store.  One fixed grid is shared
+        # across all variables and years for this source, so coordinate arrays
+        # are identical in every store and xr.open_mfdataset can concatenate
+        # without alignment errors.
+        #
+        # Lat runs north-to-south to match ERA5's native array layout and avoid
+        # a flip operation at read time.  Bounds extend one cell beyond the
+        # standard Germany bbox (5.9-15.0 E, 47.3-55.1 N) so that bilinear
+        # interpolation does not degrade at the exact boundary.
+        #
+        # Chunk layout is point-query optimised: 720 h ≈ 1 month, 5x5 cells ≈
+        # 0.5°x0.5°.  A full-year time series at one location reads ≤ 12 chunks.
+        "zarr_grid": {
+            "latitude": np.arange(55.2, 47.1 - 0.05, -0.1).round(1),
+            "longitude": np.arange(5.8, 15.1 + 0.05, 0.1).round(1),
+            "time_freq": "1h",
+            "dtype": "float32",
+            "fill_value": float("nan"),
+            "chunks": {"time": 720, "latitude": 5, "longitude": 5},
+            "codec": {"cname": "zstd", "clevel": 3, "shuffle": "shuffle"},
+        },
     },
     "HYRAS": {
         # Populated with HYRASDownloader once Phase D is implemented.
@@ -111,9 +134,20 @@ SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
             "rsds": "surface_solar_radiation_downwards",
             "hurs": "relative_humidity_2m",
         },
+        # HYRAS uses a 5 km grid (~0.045°).  Chunk layout is slightly larger in
+        # space to compensate for the daily (not hourly) time axis.
+        "zarr_grid": {
+            "latitude": np.arange(55.1, 47.2 - 0.005, -0.045).round(3),
+            "longitude": np.arange(5.9, 15.1 + 0.005, 0.045).round(3),
+            "time_freq": "1D",
+            "dtype": "float32",
+            "fill_value": float("nan"),
+            "chunks": {"time": 365, "latitude": 10, "longitude": 10},
+            "codec": {"cname": "zstd", "clevel": 3, "shuffle": "shuffle"},
+        },
     },
     "DWD_stations": {
-        # Station-only source — no gridded downloader.
+        # Station-only source — no gridded downloader and no Zarr store.
         "grid_downloader": None,
         "conversions": {},
     },

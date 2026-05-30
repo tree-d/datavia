@@ -37,6 +37,7 @@ Usage::
 """
 
 import logging
+import os
 from typing import Any
 
 import numpy as np
@@ -295,8 +296,15 @@ class WeatherPipeline(Pipeline):
         computed.
 
         Then runs the composite downloader (ERA5 + DWD), splits the returned
-        newline-joined paths, and calls :meth:`SaverWeather.save` for each
-        individual file.
+        newline-joined paths, and for each file either:
+
+        - **NetCDF** (``.nc``): calls :meth:`SaverWeather.save_nc_to_zarr` to
+          convert the file directly to a Zarr store and register it in the
+          database.  No NetCDF copy is written to the data directory; the
+          Zarr store is the sole on-disk artefact.
+        - **Parquet** (``.parquet`` — DWD station data): calls
+          :meth:`SaverWeather.save` to copy the file and register it as
+          usual.
 
         Parameters
         ----------
@@ -410,7 +418,15 @@ class WeatherPipeline(Pipeline):
 
             for raw_path in combined_paths.splitlines():
                 file_path = raw_path.strip()
-                if file_path:
+                if not file_path:
+                    continue
+                ext = os.path.splitext(file_path)[1].lower()
+                if ext == ".nc":
+                    # Convert directly to Zarr — no NetCDF copy is written
+                    # to the data directory.  save_nc_to_zarr handles DB
+                    # registration for the zarr format rows.
+                    success = self.saver.save_nc_to_zarr(file_path)
+                else:
                     success = self.saver.save(file_path)
                     if not success:
                         logger.error("Failed to save weather file: %s", file_path)

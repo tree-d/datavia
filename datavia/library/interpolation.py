@@ -360,6 +360,83 @@ def interpolate_netcdf(
             "Install datavia-weather or run `pip install xarray netCDF4`."
         )
 
+    with xr.open_dataset(nc_path) as ds:
+        return interpolate_dataset(
+            ds,
+            lats=lats,
+            lons=lons,
+            variable=variable,
+            datetime_utc=datetime_utc,
+            input_crs=input_crs,
+            temporal_resolution=temporal_resolution,
+        )
+
+
+def interpolate_dataset(
+    ds: "xr.Dataset",
+    lats: float | np.ndarray,
+    lons: float | np.ndarray,
+    variable: str,
+    datetime_utc: Any,
+    input_crs: str = "EPSG:4326",
+    temporal_resolution: str = "daily",
+) -> float | np.ndarray:
+    r"""Sample a variable from an already-open xarray Dataset at one or more points.
+
+    Identical to :func:`interpolate_netcdf` but accepts a pre-opened
+    :class:`xarray.Dataset` instead of a file path.  Use this overload when
+    the dataset is already in memory or backed by a Zarr store — it avoids the
+    redundant ``open_dataset`` call and works correctly with lazy Zarr-backed
+    datasets (only the chunks touching the query region are loaded).
+
+    Parameters
+    ----------
+    ds : xr.Dataset
+        Open xarray Dataset containing *variable*.  May be backed by a NetCDF
+        file, a Zarr store, or any other xarray-compatible source.  ERA5
+        datasets with ``valid_time`` as the time dimension name are handled
+        transparently.
+    lats : float or np.ndarray
+        Latitude(s) of the query point(s) in *input_crs*.  A scalar float
+        produces a scalar (or 1-D time-series) return value; an array of
+        shape ``(N,)`` produces an ``(N,)`` array.
+    lons : float or np.ndarray
+        Longitude(s) (or easting values) of the query point(s) in
+        *input_crs*.  Must be the same shape as *lats*.
+    variable : str
+        Name of the variable to sample, e.g. ``"2m_temperature"``.
+    datetime_utc : datetime-like or sequence of datetime-like
+        One or more UTC timestamps.  See :func:`interpolate_netcdf` for
+        full semantics.
+    input_crs : str, optional
+        CRS of the input *lats*/*lons* coordinates.  Defaults to
+        ``"EPSG:4326"``.
+    temporal_resolution : str, optional
+        ``"daily"`` (default) or ``"hourly"``.  See :func:`interpolate_netcdf`
+        for full semantics.
+
+    Returns
+    -------
+    float or np.ndarray
+        Interpolated value(s) with the same shape semantics as
+        :func:`interpolate_netcdf`.
+
+    Raises
+    ------
+    ImportError
+        If xarray is not installed, or if projected coordinates are used and
+        pyproj is not installed.
+    KeyError
+        If *variable* does not exist in *ds*.
+    ValueError
+        If *temporal_resolution* is not ``"daily"`` or ``"hourly"``.
+    """
+    if not XARRAY_AVAILABLE:
+        raise ImportError(
+            "xarray is required for dataset interpolation. "
+            "Install datavia-weather or run `pip install xarray netCDF4`."
+        )
+
     scalar_input = np.ndim(lats) == 0
     lats_arr = np.atleast_1d(np.asarray(lats, dtype=float))
     lons_arr = np.atleast_1d(np.asarray(lons, dtype=float))
@@ -433,8 +510,18 @@ def interpolate_netcdf(
             ds, variable, lats_arr, lons_arr, input_crs
         )
 
-        # Bilinear spatial interpolation across all N points simultaneously.
-        point = da.interp(interp_coords, method="linear")
+    # Pre-fill nodata cells so bilinear stencils at domain edges are
+    # always finite (BUG-08 fix).
+    da = _prefill_nodata(ds[variable])
+
+    # Build vectorised spatial interpolation coordinates for all N points
+    # in one batch — single pyproj call, single xarray interp call (BUG-05).
+    interp_coords = _build_spatial_interp_coords(
+        ds, variable, lats_arr, lons_arr, input_crs
+    )
+
+    # Bilinear spatial interpolation across all N points simultaneously.
+    point = da.interp(interp_coords, method="linear")
 
         # Temporal selection.
         # ERA5 files from cdsapi >= 0.7 use 'valid_time' instead of 'time'.
@@ -477,8 +564,28 @@ def interpolate_netcdf(
                     point = point.sel(
                         {time_dim: _to_naive_ts(datetime_utc)}, method="nearest"
                     )
+    # Temporal selection.
+    # ERA5 files from cdsapi >= 0.7 use 'valid_time' instead of 'time'.
+    if temporal_resolution not in ("daily", "hourly"):
+        raise ValueError(
+            f"temporal_resolution must be 'daily' or 'hourly', "
+            f"got '{temporal_resolution}'."
+        )
+    time_dim = "time" if "time" in point.coords else "valid_time"
+    if time_dim in point.coords:
+        if temporal_resolution == "hourly":
+            if not PANDAS_AVAILABLE:
+                raise ImportError(
+                    "pandas is required for temporal_resolution='hourly'. "
+                    "Install with `pip install pandas`."
+                )
+            day_start = pd.Timestamp(str(datetime_utc)).normalize()
+            day_end = day_start + pd.Timedelta(days=1) - pd.Timedelta(nanoseconds=1)
+            point = point.sel({time_dim: slice(day_start, day_end)})
+        else:
+            point = point.sel({time_dim: datetime_utc}, method="nearest")
 
-        values = np.asarray(point.values, dtype=float)
+    values = np.asarray(point.values, dtype=float)
 
     # Restore scalar semantics when a single point was requested.
     if scalar_input:

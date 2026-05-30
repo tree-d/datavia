@@ -219,6 +219,10 @@ filterwarnings = [
     "ignore::DeprecationWarning:pyproj.*",
     "ignore:Conversion of an array with ndim > 0 to a scalar is deprecated:DeprecationWarning",
     "ignore:numpy.ndarray size changed:RuntimeWarning",
+    # The .write_in_progress sentinel file inside a Zarr store directory is
+    # intentional (write-safety mechanism).  Zarr v3 warns when it encounters
+    # any file it does not recognise as part of its hierarchy.
+    "ignore:Object at .write_in_progress is not recognized as a component of a Zarr hierarchy:zarr.errors.ZarrUserWarning",
 ]
 
 # Security scanning configuration

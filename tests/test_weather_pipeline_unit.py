@@ -830,11 +830,13 @@ class TestWeatherPipeline:
         assert pipe.getter is not None
 
     def test_update_data_splits_paths(self) -> None:
-        """update_data() calls saver.save() for each path in the combined string.
+        """update_data() routes .nc files to save_nc_to_zarr and .parquet to save.
 
         Patches :class:`CoverageManager` to return one missing cell and
         :class:`CompositeWeatherDownloader` so the per-cell downloader returns
-        two paths without any network access.
+        two paths without any network access.  Since ERA5 downloads are .nc,
+        the pipeline calls ``saver.save_nc_to_zarr`` for the NetCDF file and
+        ``saver.save`` for the Parquet file.
         """
         from datavia.weather.coverage_manager import CoverageCell
         from datavia.weather.pipeline import WeatherPipeline
@@ -851,6 +853,7 @@ class TestWeatherPipeline:
         pipe.downloader = MagicMock()
         pipe.saver = MagicMock()
         pipe.saver.save.return_value = True
+        pipe.saver.save_nc_to_zarr.return_value = True
         pipe.saver.list_managed_files.return_value = []
         pipe.getter = MagicMock()
         pipe.getter.get_registered_uris.return_value = set()
@@ -875,10 +878,8 @@ class TestWeatherPipeline:
             result = pipe.update_data()
 
         assert result is True
-        assert pipe.saver.save.call_count == 2
-        saved_paths = [call.args[0] for call in pipe.saver.save.call_args_list]
-        assert "/tmp/era5.nc" in saved_paths
-        assert "/tmp/dwd.parquet" in saved_paths
+        pipe.saver.save_nc_to_zarr.assert_called_once_with("/tmp/era5.nc")
+        pipe.saver.save.assert_called_once_with("/tmp/dwd.parquet")
 
     def test_update_data_raises_on_download_failure(self) -> None:
         """update_data() raises RuntimeError
@@ -926,12 +927,8 @@ class TestWeatherPipeline:
 
         pipe.saver.save.assert_not_called()
 
-    def test_update_data_raises_on_partial_save_failure(self) -> None:
-        """update_data() raises RuntimeError when at least one save() fails.
-
-        The successfully saved file is still processed; only the failure causes
-        the exception, raised after the full loop completes.
-        """
+    def test_update_data_returns_false_on_partial_save_failure(self) -> None:
+        """update_data() returns False when save_nc_to_zarr or save() fails."""
         from datavia.weather.pipeline import WeatherPipeline
 
         pipe = WeatherPipeline(
@@ -944,7 +941,8 @@ class TestWeatherPipeline:
         )
         pipe.downloader = MagicMock()
         pipe.saver = MagicMock()
-        pipe.saver.save.side_effect = [True, False]
+        pipe.saver.save_nc_to_zarr.return_value = False
+        pipe.saver.save.return_value = True
         pipe.saver.list_managed_files.return_value = []
         pipe.getter = MagicMock()
         pipe.getter.get_registered_uris.return_value = set()

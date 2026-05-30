@@ -16,7 +16,10 @@ requested time window the results are blended via
 """
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import xarray as xr
 
 import numpy as np
 import pandas as pd
@@ -25,11 +28,13 @@ from datavia.core.interfaces import Getter
 from datavia.library.database.query import get_weather_metadata, get_weather_paths
 from datavia.library.interpolation import (
     blend_gridded_and_station,
+    interpolate_dataset,
     interpolate_netcdf,
     interpolate_station_parquet,
 )
 
-from .source_registry import apply_conversion, get_nc_variable_name
+from .source_registry import SOURCE_REGISTRY, apply_conversion, get_nc_variable_name
+from .zarr_store_manager import ZarrStoreManager
 
 logger = logging.getLogger(__name__)
 
@@ -109,18 +114,32 @@ class GetterWeather(Getter):
     def get_existing_layers(self) -> set[str]:
         """Return the set of variable names registered for this source.
 
-        Delegates to
-        :func:`~datavia.library.database.query.get_weather_metadata`.
+        Checks both the ``weather_layers`` DB table and the Zarr store
+        directories on disk.  Zarr variables are discovered by scanning
+        ``<data_dir>/<source_name>/`` for sub-directories that contain at
+        least one ``*.zarr`` directory, which allows this method to work
+        even after a DB loss (before ``rebuild_from_store`` has been run).
 
         Returns
         -------
         set[str]
-            Variable names present in the database, e.g.
-            ``{"temperature_2m", "precipitation"}``.  Returns an empty set
+            Variable names available for this source.  Returns an empty set
             when no data has been stored yet.
         """
-        rows = get_weather_metadata(self.source_name)
-        return {row["variable"] for row in rows if row.get("variable")}
+        from datavia.config import get_config
+
+        db_variables = {
+            row["variable"]
+            for row in get_weather_metadata(self.source_name)
+            if row.get("variable")
+        }
+        try:
+            cfg = get_config()
+            mgr = ZarrStoreManager(str(cfg.data_directory), self.source_name)
+            zarr_variables = mgr.list_available_variables()
+        except (KeyError, Exception):
+            zarr_variables = set()
+        return db_variables | zarr_variables
 
     def get_registered_uris(self) -> set[str]:
         """Return the set of file URIs currently registered for this source.
@@ -293,21 +312,36 @@ class GetterWeather(Getter):
             else np.full(n_coords, np.nan)
         )
 
-        # --- Gridded NetCDF path (single batch call for all coords) ---
+        # --- Gridded path: Zarr store (preferred) or legacy NetCDF fallback ---
         if nc_files:
             try:
                 nc_variable = get_nc_variable_name(self.source_name, variable)
                 lats = coords_arr[:, 1]
                 lons = coords_arr[:, 0]
-                raw_batch = interpolate_netcdf(
-                    nc_files,
-                    lats,
-                    lons,
-                    nc_variable,
-                    datetime_utc,
-                    input_crs=crs_coords,
-                    temporal_resolution=self._temporal_resolution,
-                )
+
+                zarr_ds = _try_open_zarr(self.source_name, variable, from_dt, to_dt)
+                if zarr_ds is not None:
+                    with zarr_ds:
+                        raw_batch = interpolate_dataset(
+                            zarr_ds,
+                            lats,
+                            lons,
+                            variable,
+                            datetime_utc,
+                            input_crs=crs_coords,
+                            temporal_resolution=self._temporal_resolution,
+                        )
+                else:
+                    raw_batch = interpolate_netcdf(
+                        nc_files[0],
+                        lats,
+                        lons,
+                        nc_variable,
+                        datetime_utc,
+                        input_crs=crs_coords,
+                        temporal_resolution=self._temporal_resolution,
+                    )
+
                 if is_multi_time:
                     # interpolate_netcdf returns (T, N) when timestamps is a list;
                     # normalise to (N, T) so callers always get coords-first layout.
@@ -438,3 +472,55 @@ class GetterWeather(Getter):
             station_weight=station_weight,
         )
         return float(result[0])
+
+
+# ---------------------------------------------------------------------------
+# Module-level helpers
+# ---------------------------------------------------------------------------
+
+
+def _try_open_zarr(
+    source_name: str,
+    variable: str,
+    from_dt: str,
+    to_dt: str,
+) -> xr.Dataset | None:
+    """Attempt to open the Zarr stores covering *from_dt*-*to_dt* for *variable*.
+
+    Returns ``None`` (without raising) when no Zarr stores exist for the
+    requested period, the source has no ``zarr_grid`` entry, or the data
+    directory cannot be determined.  This allows ``GetterWeather.get_data``
+    to fall back silently to the legacy NetCDF path.
+
+    Parameters
+    ----------
+    source_name : str
+        Source identifier, e.g. ``"ERA5_land"``.
+    variable : str
+        Datavia variable name.
+    from_dt : str
+        Start of the requested period (ISO date string ``YYYY-MM-DD``).
+    to_dt : str
+        End of the requested period (ISO date string ``YYYY-MM-DD``).
+
+    Returns
+    -------
+    xr.Dataset or None
+        Lazy concatenated Dataset covering the requested years, or ``None``
+        when no Zarr stores are available.
+    """
+    from datavia.config import get_config
+
+    entry = SOURCE_REGISTRY.get(source_name, {})
+    if "zarr_grid" not in entry:
+        return None
+
+    try:
+        cfg = get_config()
+        mgr = ZarrStoreManager(str(cfg.data_directory), source_name)
+        start_year = pd.Timestamp(from_dt).year
+        end_year = pd.Timestamp(to_dt).year
+        years = list(range(start_year, end_year + 1))
+        return mgr.open_multi_year(variable, years)
+    except Exception:
+        return None

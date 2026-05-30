@@ -339,7 +339,78 @@ DATAVIA_E2E=1 pytest tests/test_weather_e2e.py::TestERA5E2E -v
 | `pyarrow >= 14.0` | Parquet read/write | `weather` |
 | `pandas >= 2.2` | Station data manipulation | `weather` |
 | `requests` | Open-Meteo HTTP calls | `weather` |
+| `zarr >= 3.0, < 4` | Zarr v3 store format | `weather` |
+| `numcodecs >= 0.12, < 1` | Blosc/zstd compression codecs | `weather` |
+| `fasteners >= 0.19` | Cross-process file locking for writes | `weather` |
+| `dask >= 2024.6` | Lazy Zarr initialisation | `weather` |
 | `cdsapi >= 0.7` | ERA5 downloads from Copernicus CDS | `weather[era5]` (optional) |
+
+---
+
+## Zarr store backend
+
+Downloaded gridded data (HYRAS, ERA5-Land) can be persisted to
+[Zarr v3](https://zarr.readthedocs.io/en/stable/) stores in addition to the
+original NetCDF files.  The Zarr backend is managed by `ZarrStoreManager` and
+exposed through `SaverWeather.save_zarr()`.
+
+### Store layout
+
+Each *(source, variable, year)* triplet occupies one Zarr directory store:
+
+```
+<data_dir>/
+└── <source_name>/               # e.g. "ERA5_land" or "HYRAS"
+    └── <variable>/              # e.g. "2m_temperature"
+        ├── 2023.zarr/
+        └── 2024.zarr/
+```
+
+Stores use Blosc + zstd level-3 compression and chunks of
+`{time: 720, lat: 5, lon: 5}` (hourly sources) or
+`{time: 365, lat: 10, lon: 10}` (daily sources).
+
+### Write safety
+
+Every write is protected by two mechanisms:
+
+1. **Sentinel file** — `.write_in_progress` is created inside the store
+   directory before writing begins and removed on success.  A store whose
+   sentinel is present is treated as corrupt and skipped by all readers.
+2. **Inter-process lock** — `fasteners.InterProcessLock` serialises concurrent
+   writers for the same store path.
+
+### Recovery from incomplete writes
+
+If a write was interrupted (crash, OOM kill), the sentinel file remains.
+`CoverageManager.rebuild_from_store(variable)` scans all `*.zarr` directories
+for a given variable, removes stale sentinels, and rebuilds the `weather_layers`
+database rows from the actual on-disk data:
+
+```python
+from datavia.weather.coverage_manager import CoverageManager
+
+mgr = CoverageManager(source_name="ERA5_land")
+rows_inserted = mgr.rebuild_from_store("2m_temperature")
+print(f"{rows_inserted} rows rebuilt")
+```
+
+### Saving data to Zarr
+
+```python
+from datavia.weather.saver_weather import SaverWeather
+
+saver = SaverWeather(source_name="ERA5_land", data_dir="/data/weather")
+saver.save_zarr(nc_path="/data/weather/era5_2024.nc", variable="2m_temperature")
+```
+
+### Zarr-first data access
+
+`GetterWeather.get_data()` automatically prefers Zarr stores over NetCDF files
+when available, falling back to NetCDF if no Zarr store covers the requested
+time window.  No API change is required — the routing is transparent.
+
+
 
 ---
 

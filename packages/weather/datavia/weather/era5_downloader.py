@@ -565,7 +565,7 @@ class ERA5Downloader(APIDownloader):
                 job.download(output_path)
             except KeyboardInterrupt:
                 if job is not None:
-                    try:
+                    with contextlib.suppress(Exception):
                         job.delete()
                         logger.info(
                             "ERA5Downloader: cancelled CDS job for chunk %s to %s",

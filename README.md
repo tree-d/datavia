@@ -20,7 +20,7 @@ Datavia is designed for researchers who need efficient integration of multiple g
 
 - **📈 Elevation Pipeline** (`datavia[elevation]`): BKG DGM200 (200m resolution German elevation model)
 - **🌱 Soil Pipeline** (`datavia[soil]`): SoilGrids + HiHydroSoil integration with selective download strategy
-- **🌤️ Weather Pipeline** (`datavia[weather]`): Available — HYRAS daily gridded data (precipitation, temperature) + DWD station data; ERA5 in development
+- **🌤️ Weather Pipeline** (`datavia[weather]`): Available — HYRAS daily gridded data (precipitation, temperature) + DWD station data + ERA5-Land hourly reanalysis; Zarr v3 storage backend with per-store write safety and automatic DB reconciliation
 - **☀️ Radiation Pipeline**: Planned - CAMS radiation data
 
 Each pipeline is a separate, optional package that extends the core system with specific data source capabilities.

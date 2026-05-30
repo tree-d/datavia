@@ -31,11 +31,20 @@ Each returned :class:`CoverageCell` maps to one downloader call.
 
 import datetime
 import logging
-from typing import NamedTuple
+from pathlib import Path
+from typing import TYPE_CHECKING, NamedTuple
 
+if TYPE_CHECKING:
+    import xarray as xr
+
+    from .zarr_store_manager import ZarrStoreManager
+
+import pandas as pd
 from shapely import box as shapely_box
 from shapely.wkt import loads as wkt_loads
+from sqlalchemy import text
 
+from datavia.library.database.connection import session_local
 from datavia.library.database.query import get_weather_metadata
 
 logger = logging.getLogger(__name__)
@@ -115,8 +124,19 @@ class CoverageManager:
         Variable names to track coverage for.
     """
 
-    def __init__(self, source_name: str, variables: list[str]) -> None:
+    def __init__(
+        self,
+        source_name: str,
+        variables: list[str],
+        data_dir: str | None = None,
+    ) -> None:
         """Load existing coverage cells from ``weather_layers`` for all variables.
+
+        When *data_dir* is provided (or discoverable from ``get_config()``),
+        the constructor also performs an auto-rebuild: if a Zarr store exists
+        on disk for any ``(source_name, variable)`` but has no corresponding
+        DB rows, :meth:`rebuild_from_store` is called automatically to
+        repopulate the DB before any missing-cell computation is done.
 
         Parameters
         ----------
@@ -124,6 +144,9 @@ class CoverageManager:
             Pipeline source name used to filter ``weather_layers`` rows.
         variables : list[str]
             Variables to check.  Coverage is computed per variable and unioned.
+        data_dir : str, optional
+            Root data directory.  When ``None``, resolved from
+            ``get_config().data_directory``.
 
         Raises
         ------
@@ -135,8 +158,17 @@ class CoverageManager:
                 "CoverageManager requires at least one variable in 'variables'."
             )
 
+        if data_dir is None:
+            try:
+                from datavia.config import get_config
+
+                data_dir = str(get_config().data_directory)
+            except Exception:
+                data_dir = None
+
         self._source_name: str = source_name
         self._variables: list[str] = list(variables)
+        self._data_dir: str | None = data_dir
         self._cells_per_variable: dict[str, list[_ExistingCell]] = {}
         self._load_existing_cells()
 
@@ -213,12 +245,273 @@ class CoverageManager:
         )
         return result
 
+    def rebuild_from_store(self, variable: str) -> int:
+        """Repopulate ``weather_layers`` from the Zarr store contents.
+
+        Scans the Zarr store(s) for *variable* month by month.  For each
+        calendar month that contains at least one non-NaN value, a
+        ``weather_layers`` row is inserted recording the covered bounding box
+        and time range.  Months with only fill-value data are skipped.
+
+        If the store directory carries a ``.write_in_progress`` sentinel (left
+        by a previous interrupted write), the sentinel is removed after the
+        scan completes, regardless of how many months were successfully
+        registered.  This implements the OQ-3 Option (b) recovery strategy
+        without discarding any already-good data.
+
+        Safe to call multiple times — duplicate rows are deleted before
+        insertion so the result is always consistent with the actual store
+        contents.
+
+        Parameters
+        ----------
+        variable : str
+            Datavia variable name to rebuild coverage for.
+
+        Returns
+        -------
+        int
+            Number of ``weather_layers`` rows inserted.
+
+        Raises
+        ------
+        KeyError
+            If *variable*'s source has no ``zarr_grid`` entry.
+        """
+        if self._data_dir is None:
+            logger.warning(
+                "rebuild_from_store: data_dir is not set; skipping rebuild for %s/%s.",
+                self._source_name,
+                variable,
+            )
+            return 0
+
+        from .zarr_store_manager import _SENTINEL, ZarrStoreManager
+
+        mgr = ZarrStoreManager(self._data_dir, self._source_name)
+        source_root = Path(self._data_dir) / self._source_name / variable
+        if not source_root.exists():
+            return 0
+
+        rows_inserted = 0
+        for store_dir in sorted(source_root.glob("*.zarr")):
+            try:
+                year = int(store_dir.stem)
+            except ValueError:
+                logger.warning("Skipping unexpected store directory: %s", store_dir)
+                continue
+
+            sentinel = store_dir / _SENTINEL
+            try:
+                rows_inserted += self._rebuild_year(mgr, variable, year)
+            except Exception as exc:
+                logger.warning(
+                    "rebuild_from_store: error scanning %s/%s/%d: %s",
+                    self._source_name,
+                    variable,
+                    year,
+                    exc,
+                )
+            finally:
+                # Remove sentinel regardless of scan outcome so the store is
+                # no longer blocked for reads (OQ-3 Option b behaviour).
+                if sentinel.exists():
+                    try:
+                        sentinel.unlink()
+                        logger.info(
+                            "Removed stale .write_in_progress sentinel from %s.",
+                            store_dir,
+                        )
+                    except OSError as err:
+                        logger.warning(
+                            "Could not remove sentinel from %s: %s", store_dir, err
+                        )
+
+        if rows_inserted:
+            # Reload cells so subsequent missing_spatiotemporal calls reflect
+            # the newly inserted rows without requiring a new CoverageManager.
+            self._load_existing_cells()
+
+        logger.info(
+            "rebuild_from_store: inserted %d row(s) for %s/%s.",
+            rows_inserted,
+            self._source_name,
+            variable,
+        )
+        return rows_inserted
+
+    def _rebuild_year(self, mgr: ZarrStoreManager, variable: str, year: int) -> int:
+        """Scan one year store month by month and insert DB rows for covered months.
+
+        Parameters
+        ----------
+        mgr : ZarrStoreManager
+            Store manager configured for this source and data directory.
+        variable : str
+            Datavia variable name.
+        year : int
+            Calendar year.
+
+        Returns
+        -------
+        int
+            Number of rows inserted for this year.
+        """
+        import xarray as xr
+
+        path = mgr.store_path(variable, year)
+        ds = xr.open_zarr(str(path), consolidated=False)
+        rows = 0
+
+        try:
+            for month in range(1, 13):
+                month_start = f"{year}-{month:02d}-01"
+                last_day = (
+                    pd.Timestamp(f"{year}-{month:02d}-01") + pd.offsets.MonthEnd(0)
+                ).strftime("%Y-%m-%d")
+                month_end = last_day
+
+                da_month = ds[variable].sel(time=slice(month_start, month_end))
+                if da_month.sizes.get("time", 0) == 0:
+                    continue
+
+                has_data = bool(da_month.notnull().any().compute())
+                if not has_data:
+                    continue
+
+                bbox = self._bbox_from_notnull(da_month)
+                self._insert_coverage_row(
+                    variable=variable,
+                    year=year,
+                    valid_from=month_start + "T00:00:00",
+                    valid_until=month_end + "T23:00:00",
+                    bbox=bbox,
+                    store_uri=str(mgr.store_path(variable, year)),
+                )
+                rows += 1
+        finally:
+            ds.close()
+
+        return rows
+
+    def _bbox_from_notnull(self, da: xr.DataArray) -> str:
+        """Return a WKT POLYGON bbox for all lat/lon cells with at least one non-NaN value.
+
+        Parameters
+        ----------
+        da : xr.DataArray
+            Subset DataArray with ``latitude`` and ``longitude`` dimensions.
+
+        Returns
+        -------
+        str
+            WKT POLYGON in EPSG:4326, or the full grid extent as fallback.
+        """
+        has_data = da.notnull().any(dim="time").compute()
+        lat_mask = has_data.any(dim="longitude")
+        lon_mask = has_data.any(dim="latitude")
+
+        lats = has_data.latitude.values[lat_mask.values]
+        lons = has_data.longitude.values[lon_mask.values]
+
+        if len(lats) == 0 or len(lons) == 0:
+            # Fallback: use full grid extent
+            lats = da.latitude.values
+            lons = da.longitude.values
+
+        west = float(lons.min())
+        east = float(lons.max())
+        south = float(lats.min())
+        north = float(lats.max())
+        return (
+            f"POLYGON (({west} {south}, {east} {south}, "
+            f"{east} {north}, {west} {north}, {west} {south}))"
+        )
+
+    def _insert_coverage_row(
+        self,
+        variable: str,
+        year: int,
+        valid_from: str,
+        valid_until: str,
+        bbox: str,
+        store_uri: str,
+    ) -> None:
+        """Insert or replace a ``weather_layers`` row for a recovered Zarr month.
+
+        Parameters
+        ----------
+        variable : str
+            Datavia variable name.
+        year : int
+            Calendar year.
+        valid_from : str
+            ISO-8601 start of the covered period.
+        valid_until : str
+            ISO-8601 end of the covered period.
+        bbox : str
+            WKT POLYGON bounding box in EPSG:4326.
+        store_uri : str
+            Absolute path to the Zarr store directory.
+        """
+        layer_name = f"{self._source_name}_{variable}_{year}_rebuilt"
+        acquisition_time = datetime.datetime.now(datetime.UTC).isoformat()
+
+        session = session_local()
+        try:
+            session.execute(
+                text(
+                    "DELETE FROM weather_layers "
+                    "WHERE layer_name = :layer_name AND source_name = :source_name"
+                ),
+                {"layer_name": layer_name, "source_name": self._source_name},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO weather_layers
+                        (layer_name, source_name, variable, file_format,
+                         valid_from, valid_until, uri,
+                         acquisition_time, bbox, crs, metadata)
+                    VALUES
+                        (:layer_name, :source_name, :variable, :file_format,
+                         :valid_from, :valid_until, :uri,
+                         :acquisition_time, :bbox, :crs, :metadata)
+                    """
+                ),
+                {
+                    "layer_name": layer_name,
+                    "source_name": self._source_name,
+                    "variable": variable,
+                    "file_format": "zarr",
+                    "valid_from": valid_from,
+                    "valid_until": valid_until,
+                    "uri": store_uri,
+                    "acquisition_time": acquisition_time,
+                    "bbox": bbox,
+                    "crs": "EPSG:4326",
+                    "metadata": '{"file_format": "zarr", "source": "rebuild_from_store"}',
+                },
+            )
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
 
     def _load_existing_cells(self) -> None:
         """Populate ``_cells_per_variable`` from ``weather_layers``.
+
+        After loading, checks whether any configured variable has Zarr stores
+        on disk but zero DB rows.  When this is detected (e.g. after a DB
+        loss or a fresh checkout), :meth:`rebuild_from_store` is called
+        automatically so that subsequent missing-cell computations are correct
+        and no redundant CDS downloads are issued.
 
         Skips rows with missing ``bbox``, ``valid_from``, or ``valid_until``.
         Logs a warning for rows whose fields cannot be parsed rather than
@@ -260,6 +553,30 @@ class CoverageManager:
                 self._source_name,
                 variable,
             )
+
+        # Auto-rebuild: if any variable has Zarr stores on disk but zero DB
+        # rows, repopulate from the store before the first coverage query.
+        if self._data_dir is not None:
+            for variable in self._variables:
+                if self._cells_per_variable.get(variable):
+                    continue  # DB rows present — no rebuild needed.
+                var_root = Path(self._data_dir) / self._source_name / variable
+                if var_root.exists() and any(var_root.glob("*.zarr")):
+                    logger.info(
+                        "CoverageManager: Zarr store found for %s/%s with no DB rows; "
+                        "triggering rebuild_from_store.",
+                        self._source_name,
+                        variable,
+                    )
+                    try:
+                        self.rebuild_from_store(variable)
+                    except Exception as exc:
+                        logger.warning(
+                            "Auto-rebuild failed for %s/%s: %s",
+                            self._source_name,
+                            variable,
+                            exc,
+                        )
 
 
 # ---------------------------------------------------------------------------

@@ -422,6 +422,60 @@ This approach demonstrates:
 * **Data reshaping**: Converting flat arrays back to 2D grids for visualization
 * **Heatmap visualization**: Using `pcolormesh()` for continuous spatial data
 
+Weather Pipeline and Zarr Storage
+-----------------------------------
+
+The weather pipeline supports a high-performance Zarr v3 backend for gridded
+sources (HYRAS, ERA5-Land).  After downloading a NetCDF file with
+``update_data()``, call ``save_zarr()`` to convert it into a compressed,
+chunked Zarr store.  Subsequent calls to ``get_data()`` automatically prefer
+the Zarr store over the original NetCDF file.
+
+.. code-block:: python
+
+    from datavia.weather import WeatherPipeline
+    from datavia.weather.saver_weather import SaverWeather
+    from datavia.weather.coverage_manager import CoverageManager
+    import numpy as np
+
+    # Build and initialise the pipeline
+    pipeline = WeatherPipeline(config={
+        "source":     "ERA5_land",
+        "variables":  ["2m_temperature"],
+        "date_start": "2024-01-01",
+        "date_end":   "2024-12-31",
+    })
+    pipeline()            # wire up components
+    pipeline.update_data()  # download if not already on disk
+
+    # Convert the downloaded NetCDF to a Zarr store
+    saver = SaverWeather(source_name="ERA5_land")
+    saver.save_zarr(
+        nc_path="/data/weather/era5_2024.nc",
+        variable="2m_temperature",
+    )
+
+    # Query using the Zarr backend (transparent — no API change)
+    coords = np.array([[13.4, 52.5], [10.0, 50.0]])
+    values = pipeline.get_data(
+        coords=coords,
+        crs_coords="EPSG:4326",
+        variable="2m_temperature",
+        datetime_utc="2024-06-15T12:00:00",
+    )
+
+Zarr stores are organised as ``<data_dir>/<source>/<variable>/<year>.zarr/``.
+Each write is guarded by a sentinel file and a cross-process lock to prevent
+corruption from concurrent writes.  If a write was interrupted, run
+``CoverageManager.rebuild_from_store(variable)`` to clear stale sentinels and
+restore the database coverage rows:
+
+.. code-block:: python
+
+    mgr = CoverageManager(source_name="ERA5_land")
+    rows = mgr.rebuild_from_store("2m_temperature")
+    print(f"Rebuilt {rows} coverage rows from disk")
+
 Next Steps
 ----------
 
