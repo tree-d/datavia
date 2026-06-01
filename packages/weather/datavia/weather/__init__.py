@@ -5,15 +5,21 @@ reanalysis (NetCDF), HYRAS daily grids (NetCDF), and DWD station observations
 (Parquet).
 """
 
+import pkgutil
+
 from .composite_downloader import CompositeWeatherDownloader
 from .coverage_manager import CoverageCell, CoverageManager
 from .dwd_downloader import DWDStationDownloader
 from .era5_downloader import ERA5Downloader
 from .getter_weather import GetterWeather
-from .hyras_downloader import HYRASDownloader
 from .pipeline import WeatherPipeline
 from .saver_weather import SaverWeather
 from .zarr_store_manager import ZarrStoreManager
+
+try:
+    from .hyras_downloader import HYRASDownloader
+except ImportError:
+    HYRASDownloader = None  # type: ignore[assignment,misc]
 
 __all__ = [
     "CompositeWeatherDownloader",
@@ -27,4 +33,4 @@ __all__ = [
     "WeatherPipeline",
     "ZarrStoreManager",
 ]
-__path__ = __import__("pkgutil").extend_path(__path__, __name__)
+__path__ = pkgutil.extend_path(__path__, __name__)

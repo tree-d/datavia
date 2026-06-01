@@ -22,6 +22,7 @@ import json
 import logging
 import os
 import shutil
+from pathlib import Path
 
 import pandas as pd
 import pyarrow.parquet as pq
@@ -402,29 +403,29 @@ class SaverWeather(Saver):
         is_zarr = _has_zarr_grid(self.source_name)
         prefix = f"{self.source_name}_"
         result: list[str] = []
+        data_dir = Path(self.data_dir)
 
         try:
-            for fname in os.listdir(self.data_dir):
-                if not fname.startswith(prefix):
+            for entry in data_dir.iterdir():
+                if not entry.name.startswith(prefix):
                     continue
                 # For Zarr sources, skip .nc files — Zarr stores are canonical.
-                if is_zarr and fname.endswith(".nc"):
+                if is_zarr and entry.suffix == ".nc":
                     continue
-                if fname.endswith(".nc") or fname.endswith(".parquet"):
-                    result.append(os.path.join(self.data_dir, fname))
+                if entry.suffix in {".nc", ".parquet"}:
+                    result.append(str(entry))
         except FileNotFoundError:
             logger.warning("Data directory not found: %s", self.data_dir)
 
         if is_zarr:
-            source_root = os.path.join(self.data_dir, self.source_name)
+            source_root = data_dir / self.source_name
             try:
-                for var_name in os.listdir(source_root):
-                    var_dir = os.path.join(source_root, var_name)
-                    if not os.path.isdir(var_dir):
+                for var_dir in source_root.iterdir():
+                    if not var_dir.is_dir():
                         continue
-                    for store_name in os.listdir(var_dir):
-                        if store_name.endswith(".zarr"):
-                            result.append(os.path.join(var_dir, store_name))
+                    for store in var_dir.iterdir():
+                        if store.suffix == ".zarr":
+                            result.append(str(store))
             except FileNotFoundError:
                 pass
 
@@ -447,7 +448,7 @@ class SaverWeather(Saver):
                 ),
                 {"source_name": self.source_name},
             ).fetchall()
-            return [{"layer_name": row[0], "uri": row[1]} for row in rows]
+            return [{"layer_name": row.layer_name, "uri": row.uri} for row in rows]
         except Exception as exc:
             logger.error(
                 "Failed to query weather_layers for source '%s': %s",

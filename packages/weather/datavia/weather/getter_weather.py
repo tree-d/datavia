@@ -50,6 +50,26 @@ _DEFAULT_RADIUS_KM: float = 50.0
 _DEFAULT_STATION_WEIGHT: float = 0.6
 
 
+def _to_naive_utc(dt: Any) -> Any:
+    """Strip timezone from a single timestamp value, converting to UTC.
+
+    Parameters
+    ----------
+    dt : Any
+        A datetime-like value (string, Timestamp, datetime, etc.).
+
+    Returns
+    -------
+    Any
+        A timezone-naive :class:`pandas.Timestamp` if *dt* carried
+        timezone information; otherwise *dt* is returned unchanged.
+    """
+    ts = pd.Timestamp(str(dt))
+    if ts.tzinfo is not None:
+        return ts.tz_convert("UTC").tz_localize(None)
+    return dt
+
+
 class GetterWeather(Getter):
     """Retrieve weather data from NetCDF or Parquet files by coordinate and time.
 
@@ -250,24 +270,6 @@ class GetterWeather(Getter):
         # always comparable with the naive datetime64 time axes in NetCDF files.
         # This handles ISO-8601 strings ending in 'Z' as well as datetime objects
         # with tzinfo.  Elements in a list are normalised individually.
-        def _to_naive_utc(dt: Any) -> Any:
-            """Strip timezone from a single timestamp value, converting to UTC.
-
-            Parameters
-            ----------
-            dt : Any
-                A datetime-like value (string, Timestamp, datetime, etc.).
-
-            Returns
-            -------
-            Any
-                A timezone-naive :class:`pandas.Timestamp` if *dt* carried
-                timezone information; otherwise *dt* is returned unchanged.
-            """
-            ts = pd.Timestamp(str(dt))
-            if ts.tzinfo is not None:
-                return ts.tz_convert("UTC").tz_localize(None)
-            return dt
 
         if isinstance(datetime_utc, (list, tuple)):
             datetime_utc = [_to_naive_utc(dt) for dt in datetime_utc]
@@ -376,11 +378,7 @@ class GetterWeather(Getter):
                         # interpolate_dataset returns (T, N) when timestamps is a list;
                         # normalise to (N, T) so callers always get coords-first layout.
                         raw_arr = np.asarray(raw_batch, dtype=float)
-                        if (
-                            raw_arr.ndim == 2
-                            and raw_arr.shape[0] == n_times
-                            and raw_arr.shape[0] != n_coords
-                        ):
+                        if raw_arr.ndim == 2 and raw_arr.shape == (n_times, n_coords):
                             raw_arr = raw_arr.T  # (T, N) → (N, T)
                         converted = apply_conversion(
                             self.source_name, variable, raw_arr, self._unit_overrides
@@ -554,5 +552,14 @@ def _try_open_zarr(
         end_year = pd.Timestamp(to_dt).year
         years = list(range(start_year, end_year + 1))
         return mgr.open_multi_year(variable, years)
-    except Exception:
+    except FileNotFoundError:
+        return None
+    except Exception as exc:
+        logger.error(
+            "_try_open_zarr: unexpected error for source='%s', variable='%s': %s",
+            source_name,
+            variable,
+            exc,
+            exc_info=True,
+        )
         return None

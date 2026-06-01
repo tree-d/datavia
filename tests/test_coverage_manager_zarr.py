@@ -15,10 +15,13 @@ No CDS credentials or network access are required.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
 import xarray as xr
+from conftest import _MOCK_GRID
 from datavia.weather.coverage_manager import (
     CoverageCell,
     CoverageManager,
@@ -33,17 +36,6 @@ from datavia.weather.zarr_store_manager import _SENTINEL, ZarrStoreManager
 
 #: Minimal source name injected into SOURCE_REGISTRY for Zarr tests.
 _MOCK_SOURCE = "_datavia_test_cov"
-
-#: Tiny 3x3 degree grid matching test_zarr_store_manager.py conventions.
-_MOCK_GRID: dict = {
-    "latitude": np.array([55.0, 54.9, 54.8], dtype=float),
-    "longitude": np.array([10.0, 10.1, 10.2], dtype=float),
-    "time_freq": "1h",
-    "dtype": "float32",
-    "fill_value": float("nan"),
-    "chunks": {"time": 24, "latitude": 3, "longitude": 3},
-    "codec": {"cname": "zstd", "clevel": 3, "shuffle": "shuffle"},
-}
 
 
 @pytest.fixture()
@@ -61,9 +53,7 @@ def mock_registry(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture()
-def store_manager(
-    tmp_path: pytest.FixturePath, mock_registry: None
-) -> ZarrStoreManager:
+def store_manager(tmp_path: Path, mock_registry: None) -> ZarrStoreManager:
     """ZarrStoreManager isolated under tmp_path."""
     return ZarrStoreManager(
         data_dir=str(tmp_path),
@@ -105,14 +95,14 @@ class TestInit:
     """Tests for the data_dir parameter added to __init__."""
 
     def test_empty_variables_raises(
-        self, tmp_path: pytest.FixturePath, mock_registry: None, sqlite_db: None
+        self, tmp_path: Path, mock_registry: None, sqlite_db: None
     ) -> None:
         """ValueError is raised when variables is an empty list."""
         with pytest.raises(ValueError, match="at least one"):
             CoverageManager(_MOCK_SOURCE, [], data_dir=str(tmp_path))
 
     def test_explicit_data_dir_stored(
-        self, tmp_path: pytest.FixturePath, mock_registry: None, sqlite_db: None
+        self, tmp_path: Path, mock_registry: None, sqlite_db: None
     ) -> None:
         """The data_dir attribute is set to the provided string path."""
         mgr = CoverageManager(_MOCK_SOURCE, ["temperature"], data_dir=str(tmp_path))
@@ -156,7 +146,7 @@ class TestRebuildFromStoreEmpty:
     """rebuild_from_store returns 0 when no .zarr directories exist."""
 
     def test_returns_zero_when_variable_dir_absent(
-        self, tmp_path: pytest.FixturePath, mock_registry: None, sqlite_db: None
+        self, tmp_path: Path, mock_registry: None, sqlite_db: None
     ) -> None:
         """Returns 0 when there are no year stores for the given variable."""
         mgr = CoverageManager(_MOCK_SOURCE, ["temperature"], data_dir=str(tmp_path))
@@ -174,7 +164,7 @@ class TestRebuildFromStoreSentinel:
 
     def test_sentinel_removed_after_scan(
         self,
-        tmp_path: pytest.FixturePath,
+        tmp_path: Path,
         store_manager: ZarrStoreManager,
         mock_registry: None,
         sqlite_db: None,
@@ -205,7 +195,7 @@ class TestRebuildFromStoreInserts:
 
     def test_inserts_row_for_written_month(
         self,
-        tmp_path: pytest.FixturePath,
+        tmp_path: Path,
         store_manager: ZarrStoreManager,
         mock_registry: None,
         sqlite_db: None,
@@ -221,7 +211,7 @@ class TestRebuildFromStoreInserts:
 
     def test_is_idempotent(
         self,
-        tmp_path: pytest.FixturePath,
+        tmp_path: Path,
         store_manager: ZarrStoreManager,
         mock_registry: None,
         sqlite_db: None,
@@ -249,7 +239,7 @@ class TestBboxFromNotnull:
 
     def _manager_instance(
         self,
-        tmp_path: pytest.FixturePath,
+        tmp_path: Path,
         mock_registry: None,
         sqlite_db: None,
     ) -> CoverageManager:
@@ -257,7 +247,7 @@ class TestBboxFromNotnull:
 
     def test_bbox_covers_all_notnull_cells(
         self,
-        tmp_path: pytest.FixturePath,
+        tmp_path: Path,
         mock_registry: None,
         sqlite_db: None,
     ) -> None:
@@ -284,7 +274,7 @@ class TestBboxFromNotnull:
 
     def test_all_nan_uses_grid_extent(
         self,
-        tmp_path: pytest.FixturePath,
+        tmp_path: Path,
         mock_registry: None,
         sqlite_db: None,
     ) -> None:
@@ -315,7 +305,7 @@ class TestInsertCoverageRow:
 
     def test_row_is_inserted(
         self,
-        tmp_path: pytest.FixturePath,
+        tmp_path: Path,
         store_manager: ZarrStoreManager,
         mock_registry: None,
         sqlite_db: None,
@@ -338,7 +328,7 @@ class TestInsertCoverageRow:
 
     def test_idempotent_insert(
         self,
-        tmp_path: pytest.FixturePath,
+        tmp_path: Path,
         store_manager: ZarrStoreManager,
         mock_registry: None,
         sqlite_db: None,
@@ -370,7 +360,7 @@ class TestAutoRebuild:
 
     def test_auto_rebuild_populates_cells(
         self,
-        tmp_path: pytest.FixturePath,
+        tmp_path: Path,
         store_manager: ZarrStoreManager,
         mock_registry: None,
         sqlite_db: None,
@@ -388,7 +378,7 @@ class TestAutoRebuild:
 
     def test_no_auto_rebuild_when_db_has_rows(
         self,
-        tmp_path: pytest.FixturePath,
+        tmp_path: Path,
         store_manager: ZarrStoreManager,
         mock_registry: None,
         sqlite_db: None,
@@ -419,7 +409,7 @@ class TestMissingSpatiotemporalAfterRebuild:
 
     def test_no_missing_cells_after_rebuild(
         self,
-        tmp_path: pytest.FixturePath,
+        tmp_path: Path,
         store_manager: ZarrStoreManager,
         mock_registry: None,
         sqlite_db: None,
@@ -437,7 +427,7 @@ class TestMissingSpatiotemporalAfterRebuild:
 
     def test_missing_cells_returned_for_uncovered_period(
         self,
-        tmp_path: pytest.FixturePath,
+        tmp_path: Path,
         store_manager: ZarrStoreManager,
         mock_registry: None,
         sqlite_db: None,

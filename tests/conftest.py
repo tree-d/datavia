@@ -4,11 +4,25 @@ Provides a lightweight in-memory SQLite database fixture that replaces the
 former Docker/PostGIS setup for unit and integration tests.
 """
 
+import numpy as np
 import pytest
 
 from datavia.config import get_config
 from datavia.library.database.connection import reset_engine
 from datavia.library.database.start import initialize_database
+
+#: Tiny 3x3 geographic grid shared across Zarr-related test modules.
+#: Mirrors the ERA5-Land EPSG:4326 structure but at minimal size so store
+#: creation and writes complete in milliseconds.
+_MOCK_GRID: dict = {
+    "latitude": np.array([55.0, 54.9, 54.8], dtype=float),
+    "longitude": np.array([10.0, 10.1, 10.2], dtype=float),
+    "time_freq": "1h",
+    "dtype": "float32",
+    "fill_value": float("nan"),
+    "chunks": {"time": 24, "latitude": 3, "longitude": 3},
+    "codec": {"cname": "zstd", "clevel": 3, "shuffle": "shuffle"},
+}
 
 
 @pytest.fixture

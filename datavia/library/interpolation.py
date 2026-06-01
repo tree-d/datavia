@@ -39,6 +39,32 @@ from .coordinate_transforms import transform_coordinates
 
 logger = logging.getLogger(__name__)
 
+#: Mean Earth radius in kilometres, used for equirectangular distance approximation.
+_EARTH_RADIUS_KM: float = 6371.0
+
+#: Distance floor in km to prevent division by zero when a query point
+#: coincides exactly with a station location during IDW weighting.
+_COINCIDENT_STATION_EPSILON_KM: float = 1e-9
+
+
+def _to_naive_ts(raw: Any) -> "pd.Timestamp":
+    """Coerce *raw* to a timezone-naive UTC :class:`pandas.Timestamp`.
+
+    Parameters
+    ----------
+    raw : Any
+        A datetime-like value (string, Timestamp, datetime, etc.).
+
+    Returns
+    -------
+    pd.Timestamp
+        Timezone-naive UTC timestamp.
+    """
+    t = pd.Timestamp(raw)
+    if t.tzinfo is not None:
+        t = t.tz_convert("UTC").tz_localize(None)
+    return t
+
 
 def spatial_interpolate(
     tiff_path: str,
@@ -370,19 +396,19 @@ def interpolate_netcdf(
     # correctly; using dim="time" blindly would create a new outer dimension
     # instead of concatenating along the existing one.
     if isinstance(nc_path, list) and len(nc_path) > 1:
-        _parts = [xr.open_dataset(f) for f in nc_path]
-        _time_dim_nc = next(
-            (d for d in _parts[0].dims if d in ("time", "valid_time")),
+        opened_datasets = [xr.open_dataset(f) for f in nc_path]
+        time_dim_name = next(
+            (d for d in opened_datasets[0].dims if d in ("time", "valid_time")),
             "time",
         )
-        _ds_ctx = xr.concat(_parts, dim=_time_dim_nc)
-        for _d in _parts:
+        dataset = xr.concat(opened_datasets, dim=time_dim_name)
+        for _d in opened_datasets:
             _d.close()
     elif isinstance(nc_path, list):
-        _ds_ctx = xr.open_dataset(nc_path[0])
+        dataset = xr.open_dataset(nc_path[0])
     else:
-        _ds_ctx = xr.open_dataset(nc_path)
-    with _ds_ctx as ds:
+        dataset = xr.open_dataset(nc_path)
+    with dataset as ds:
         return interpolate_dataset(
             ds,
             lats=lats,
@@ -544,13 +570,6 @@ def interpolate_dataset(
             day_end = day_start + pd.Timedelta(days=1) - pd.Timedelta(nanoseconds=1)
             point = point.sel({time_dim: slice(day_start, day_end)})
         else:
-
-            def _to_naive_ts(raw: Any) -> "pd.Timestamp":
-                t = pd.Timestamp(raw)
-                if t.tzinfo is not None:
-                    t = t.tz_convert("UTC").tz_localize(None)
-                return t
-
             if isinstance(datetime_utc, (list, tuple)):
                 ts_list = [_to_naive_ts(t) for t in datetime_utc]
                 point = point.sel({time_dim: ts_list}, method="nearest")
@@ -633,10 +652,9 @@ def interpolate_station_parquet(
     # --- Radius filter via equirectangular approximation (fast, sufficient
     #     for the ~50 km radii used here; error <0.5 % at German latitudes). ---
     lat_rad = np.radians(lat)
-    earth_radius_km = 6371.0
     dlat = np.radians(df["latitude"].values - lat)
     dlon = np.radians(df["longitude"].values - lon)
-    dist_km: np.ndarray = earth_radius_km * np.sqrt(
+    dist_km: np.ndarray = _EARTH_RADIUS_KM * np.sqrt(
         dlat**2 + (np.cos(lat_rad) * dlon) ** 2
     )
     # Reset the DataFrame index and rebuild dist_km together so that
@@ -666,7 +684,11 @@ def interpolate_station_parquet(
     distances: np.ndarray = dist_km[df.index]
 
     # Avoid division by zero for coincident stations.
-    distances = np.where(distances < 1e-9, 1e-9, distances)
+    distances = np.where(
+        distances < _COINCIDENT_STATION_EPSILON_KM,
+        _COINCIDENT_STATION_EPSILON_KM,
+        distances,
+    )
     weights = 1.0 / distances
     return float(np.average(values, weights=weights))
 

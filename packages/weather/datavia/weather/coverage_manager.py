@@ -35,11 +35,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
-    import xarray as xr
-
     from .zarr_store_manager import ZarrStoreManager
 
 import pandas as pd
+import xarray as xr
 from shapely import box as shapely_box
 from shapely.wkt import loads as wkt_loads
 from sqlalchemy import text
@@ -354,8 +353,6 @@ class CoverageManager:
         int
             Number of rows inserted for this year.
         """
-        import xarray as xr
-
         path = mgr.store_path(variable, year)
         ds = xr.open_zarr(str(path), consolidated=False)
         rows = 0
@@ -366,9 +363,8 @@ class CoverageManager:
                 last_day = (
                     pd.Timestamp(f"{year}-{month:02d}-01") + pd.offsets.MonthEnd(0)
                 ).strftime("%Y-%m-%d")
-                month_end = last_day
 
-                da_month = ds[variable].sel(time=slice(month_start, month_end))
+                da_month = ds[variable].sel(time=slice(month_start, last_day))
                 if da_month.sizes.get("time", 0) == 0:
                     continue
 
@@ -381,7 +377,7 @@ class CoverageManager:
                     variable=variable,
                     year=year,
                     valid_from=month_start + "T00:00:00",
-                    valid_until=month_end + "T23:00:00",
+                    valid_until=last_day + "T23:00:00",
                     bbox=bbox,
                     store_uri=str(mgr.store_path(variable, year)),
                 )
@@ -392,8 +388,7 @@ class CoverageManager:
         return rows
 
     def _bbox_from_notnull(self, da: xr.DataArray) -> str:
-        """Return a WKT POLYGON bbox for all lat/lon cells
-        with at least one non-NaN value.
+        """Return a WKT POLYGON bbox for cells with at least one non-NaN value.
 
         Parameters
         ----------

@@ -61,6 +61,10 @@ _REQUIRED_CONFIG_KEYS: frozenset[str] = frozenset(
     {"source", "variables", "date_start", "date_end"}
 )
 
+#: Tolerance used when validating ``era5_bbox`` against the Zarr skeleton grid.
+#: Equal to half a 0.1° ERA5-Land grid cell.
+_ERA5_GRID_HALF_STEP: float = 0.05
+
 #: All valid WeatherPipeline config keys (required + optional).
 _KNOWN_CONFIG_KEYS: frozenset[str] = _REQUIRED_CONFIG_KEYS | frozenset(
     {
@@ -76,8 +80,7 @@ _KNOWN_CONFIG_KEYS: frozenset[str] = _REQUIRED_CONFIG_KEYS | frozenset(
 
 
 def _validate_era5_bbox_within_grid(config: dict) -> None:
-    """Raise ``ValueError`` if *config*'s ``era5_bbox``
-    falls outside the ERA5 Zarr skeleton.
+    """Raise ``ValueError`` if *config*'s ``era5_bbox`` falls outside the ERA5 grid.
 
     Checks the user-supplied ``era5_bbox`` against the latitude and longitude
     arrays registered in ``SOURCE_REGISTRY["ERA5_land"]["zarr_grid"]`` before
@@ -111,7 +114,7 @@ def _validate_era5_bbox_within_grid(config: dict) -> None:
     grid = SOURCE_REGISTRY["ERA5_land"]["zarr_grid"]
     lat = grid["latitude"]
     lon = grid["longitude"]
-    tol = 0.05  # half a 0.1° grid cell
+    tol = _ERA5_GRID_HALF_STEP
 
     n, w, s, e = era5_bbox
     grid_n, grid_s = float(lat.max()), float(lat.min())
@@ -387,17 +390,6 @@ class WeatherPipeline(Pipeline):
         if not self.downloader or not self.saver:
             self()
 
-        if self.downloader is None:
-            raise RuntimeError(
-                "WeatherPipeline.update_data: downloader was not initialised. "
-                "Call the pipeline instance (pipe()) before update_data()."
-            )
-        if self.saver is None:
-            raise RuntimeError(
-                "WeatherPipeline.update_data: saver was not initialised. "
-                "Call the pipeline instance (pipe()) before update_data()."
-            )
-
         # Reconcile disk with DB before checking what to download.
         self.sync_files_and_database()
 
@@ -507,7 +499,7 @@ class WeatherPipeline(Pipeline):
         A no-op when the source has no ``zarr_grid`` entry or no ``.nc``
         files are present.
         """
-        import os
+        from pathlib import Path
 
         from .saver_weather import SaverWeather, _has_zarr_grid
 
@@ -516,27 +508,27 @@ class WeatherPipeline(Pipeline):
         if not _has_zarr_grid(self.name):
             return
 
-        data_dir = self.saver.data_dir
+        data_dir = Path(self.saver.data_dir)
         prefix = f"{self.name}_"
         try:
-            nc_files = [
-                os.path.join(data_dir, fname)
-                for fname in os.listdir(data_dir)
-                if fname.startswith(prefix) and fname.endswith(".nc")
-            ]
+            nc_files = sorted(
+                p
+                for p in data_dir.iterdir()
+                if p.name.startswith(prefix) and p.suffix == ".nc"
+            )
         except FileNotFoundError:
             return
 
-        for nc_path in sorted(nc_files):
+        for nc_path in nc_files:
             logger.info(
                 "WeatherPipeline '%s': migrating legacy NetCDF to Zarr: %s",
                 self.name,
                 nc_path,
             )
-            success = self.saver.save_nc_to_zarr(nc_path)
+            success = self.saver.save_nc_to_zarr(str(nc_path))
             if success:
                 try:
-                    os.remove(nc_path)
+                    nc_path.unlink()
                     logger.info(
                         "Removed legacy NetCDF after Zarr migration: %s", nc_path
                     )

@@ -42,6 +42,7 @@ import contextlib
 import datetime
 import logging
 import math
+import os
 import tempfile
 import time
 from datetime import date, timedelta
@@ -68,6 +69,20 @@ _CDS_URL: str = "https://cds.climate.copernicus.eu/api"
 
 #: Valid values for the ``chunk_by`` parameter.
 _VALID_CHUNK_BY: frozenset[str] = frozenset({"monthly", "quarterly", "yearly", "none"})
+
+#: Native ERA5-Land grid resolution in degrees.
+_ERA5_LAND_GRID_STEP: float = 0.1
+
+#: Decimal places used when rounding bbox edges to the ERA5-Land grid.
+#: Ten digits are sufficient to suppress floating-point remainder without
+#: losing any significant coordinate precision.
+_FLOAT_ROUNDING_PRECISION: int = 10
+
+#: Fixed (first_month, last_month) pairs defining the four calendar quarters.
+_QUARTER_MONTH_RANGES: list[tuple[int, int]] = [(1, 3), (4, 6), (7, 9), (10, 12)]
+
+#: Seconds between successive CDS job status polls.
+_CDS_POLL_INTERVAL_S: int = 60
 
 
 class ERA5Downloader(APIDownloader):
@@ -175,17 +190,28 @@ class ERA5Downloader(APIDownloader):
             and east edges are rounded up (``ceil``) and south and west edges
             are rounded down (``floor``) to the nearest 0.1°.
         """
-        grid_step = 0.1
         north, west, south, east = bbox
-        snapped_north = math.ceil(round(north / grid_step, 10)) * grid_step
-        snapped_east = math.ceil(round(east / grid_step, 10)) * grid_step
-        snapped_south = math.floor(round(south / grid_step, 10)) * grid_step
-        snapped_west = math.floor(round(west / grid_step, 10)) * grid_step
+        snapped_north = (
+            math.ceil(round(north / _ERA5_LAND_GRID_STEP, _FLOAT_ROUNDING_PRECISION))
+            * _ERA5_LAND_GRID_STEP
+        )
+        snapped_east = (
+            math.ceil(round(east / _ERA5_LAND_GRID_STEP, _FLOAT_ROUNDING_PRECISION))
+            * _ERA5_LAND_GRID_STEP
+        )
+        snapped_south = (
+            math.floor(round(south / _ERA5_LAND_GRID_STEP, _FLOAT_ROUNDING_PRECISION))
+            * _ERA5_LAND_GRID_STEP
+        )
+        snapped_west = (
+            math.floor(round(west / _ERA5_LAND_GRID_STEP, _FLOAT_ROUNDING_PRECISION))
+            * _ERA5_LAND_GRID_STEP
+        )
         return [
-            round(snapped_north, 10),
-            round(snapped_west, 10),
-            round(snapped_south, 10),
-            round(snapped_east, 10),
+            round(snapped_north, _FLOAT_ROUNDING_PRECISION),
+            round(snapped_west, _FLOAT_ROUNDING_PRECISION),
+            round(snapped_south, _FLOAT_ROUNDING_PRECISION),
+            round(snapped_east, _FLOAT_ROUNDING_PRECISION),
         ]
 
     @staticmethod
@@ -323,12 +349,9 @@ class ERA5Downloader(APIDownloader):
                 f"than date_start ({date_start})."
             )
 
-        # (first_month, last_month) for each quarter.
-        quarter_ranges: list[tuple[int, int]] = [(1, 3), (4, 6), (7, 9), (10, 12)]
-
         chunks: list[tuple[str, str]] = []
         for year in range(start.year, end.year + 1):
-            for q_start_month, q_end_month in quarter_ranges:
+            for q_start_month, q_end_month in _QUARTER_MONTH_RANGES:
                 _, q_end_day = calendar.monthrange(year, q_end_month)
                 q_start = date(year, q_start_month, 1)
                 q_end = date(year, q_end_month, q_end_day)
@@ -428,7 +451,6 @@ class ERA5Downloader(APIDownloader):
             If ``cds_queue_timeout`` is set and the job remains queued for
             longer than that many seconds.
         """
-        poll_interval: int = 60
         elapsed: int = 0
         job_id: str = job.reply.get("request_id", "unknown")
 
@@ -440,7 +462,7 @@ class ERA5Downloader(APIDownloader):
                 logger.info(
                     "ERA5Downloader: job %s queued — waiting %d s (total %s)",
                     job_id,
-                    poll_interval,
+                    _CDS_POLL_INTERVAL_S,
                     datetime.timedelta(seconds=elapsed),
                 )
                 if (
@@ -455,19 +477,17 @@ class ERA5Downloader(APIDownloader):
                     )
             elif status == "running":
                 logger.info("ERA5Downloader: job %s running", job_id)
-            time.sleep(poll_interval)
-            elapsed += poll_interval
+            time.sleep(_CDS_POLL_INTERVAL_S)
+            elapsed += _CDS_POLL_INTERVAL_S
             job.update()
 
     def download(self) -> str:
-        """Request ERA5-Land data from CDS one month at a time and return all paths.
+        """Download ERA5-Land hourly data from the Copernicus CDS.
 
-        Splits the configured date range into one calendar-month CDS job per
-        chunk.  Each chunk is downloaded to its own temporary NetCDF file.
-        All produced file paths are returned as a newline-joined string so
-        that :class:`~datavia.weather.composite_downloader.CompositeWeatherDownloader`
-        and :class:`~datavia.weather.pipeline.WeatherPipeline` can save them
-        individually via ``SaverWeather.save()``.
+        Splits the configured date range into chunks (monthly, quarterly,
+        yearly, or a single request) and submits one CDS retrieval job per
+        chunk.  Each job is polled until it transitions out of ``"queued"``
+        status, then the result file is downloaded to a temporary path.
 
         A ``tqdm`` progress bar shows ``[current/total months]`` if ``tqdm``
         is installed.  The inner byte-transfer bar is provided by the
@@ -530,7 +550,9 @@ class ERA5Downloader(APIDownloader):
             years, months, days = self._build_request_date_fields(
                 chunk_start, chunk_end
             )
-            _, output_path = tempfile.mkstemp(suffix=".nc", prefix="era5_")
+            fd, output_path = tempfile.mkstemp(suffix=".nc", prefix="era5_")
+            # Close the OS-level fd immediately so cdsapi can open the path for writing.
+            os.close(fd)
             logger.info(
                 "ERA5Downloader: submitting chunk %d/%d [%s] — %s to %s",
                 chunk_index,
@@ -564,6 +586,8 @@ class ERA5Downloader(APIDownloader):
                 # Download the result to the temp file.
                 job.download(output_path)
             except KeyboardInterrupt:
+                # Cancel the queued CDS job and clean up the temp file before
+                # propagating the interrupt so the process can exit cleanly.
                 if job is not None:
                     with contextlib.suppress(Exception):
                         job.delete()
@@ -572,9 +596,16 @@ class ERA5Downloader(APIDownloader):
                             chunk_start,
                             chunk_end,
                         )
+                with contextlib.suppress(OSError):
+                    os.unlink(output_path)
+                raise
             except TimeoutError:
+                with contextlib.suppress(OSError):
+                    os.unlink(output_path)
                 raise
             except Exception as exc:
+                with contextlib.suppress(OSError):
+                    os.unlink(output_path)
                 exc_msg = str(exc)
                 if "403" in exc_msg and (
                     "too large" in exc_msg.lower() or "cost limits" in exc_msg.lower()

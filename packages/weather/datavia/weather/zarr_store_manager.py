@@ -255,11 +255,12 @@ class ZarrStoreManager:
         ds = self._select_variable(ds, variable)
 
         years = sorted({int(ts.year) for ts in pd.DatetimeIndex(ds.time.values)})
+        is_projected = self._is_projected()
 
         for year in years:
             ds_year = ds.sel(time=str(year))
 
-            if not self._is_projected():
+            if not is_projected:
                 # Create (or verify) the pre-defined grid skeleton before
                 # locking so concurrent writers converge on the same skeleton.
                 self.ensure_store(variable, year)
@@ -269,7 +270,7 @@ class ZarrStoreManager:
             lock = fasteners.InterProcessLock(str(path) + ".lock")
 
             with lock:
-                if self._is_projected():
+                if is_projected:
                     # Projected source (e.g. HYRAS EPSG:3035): write the
                     # full-year slab wholesale from the downloaded dataset
                     # using its native x/y coordinates.  The store directory

@@ -57,6 +57,23 @@ _FROM_TO_CONVERSION_MAP: dict[tuple[str, str], Any] = {
 }
 
 # ---------------------------------------------------------------------------
+# ERA5-Land grid boundary constants
+# ---------------------------------------------------------------------------
+
+#: Northern boundary of the ERA5-Land Zarr skeleton (degrees North).
+#: Extended by one cell beyond the typical Germany pipeline bbox.
+_ERA5_LAND_LAT_MAX: float = 55.6
+
+#: Southern boundary of the ERA5-Land Zarr skeleton (degrees North).
+_ERA5_LAND_LAT_MIN: float = 47.0
+
+#: Western boundary of the ERA5-Land Zarr skeleton (degrees East).
+_ERA5_LAND_LON_MIN: float = 5.4
+
+#: Eastern boundary of the ERA5-Land Zarr skeleton (degrees East).
+_ERA5_LAND_LON_MAX: float = 15.6
+
+# ---------------------------------------------------------------------------
 # Source registry
 # ---------------------------------------------------------------------------
 
@@ -101,12 +118,12 @@ SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
         # ERA5's native array layout and avoid a flip on write.
         "zarr_grid": {
             "crs": "EPSG:4326",
-            "latitude": np.arange(55.6, 47.0, -0.1).round(
+            "latitude": np.arange(_ERA5_LAND_LAT_MAX, _ERA5_LAND_LAT_MIN, -0.1).round(
                 1
-            ),  # 87 points — extended to 55.6°N to cover any plausible Germany bbox
-            "longitude": np.arange(5.4, 15.6, 0.1).round(
+            ),
+            "longitude": np.arange(_ERA5_LAND_LON_MIN, _ERA5_LAND_LON_MAX, 0.1).round(
                 1
-            ),  # 102 points — extended to 5.4°W-15.5°E for any plausible Germany bbox
+            ),
             "time_freq": "1h",
             "dtype": "float32",
             "fill_value": float("nan"),
@@ -152,6 +169,14 @@ SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
         "grid_downloader": None,
         "conversions": {},
     },
+}
+
+#: Pre-computed reverse maps: ``pipeline_variable`` → NetCDF name, per source.
+#: Built once at module load from :data:`SOURCE_REGISTRY` to avoid rebuilding
+#: the reverse mapping on every call to :func:`get_nc_variable_name`.
+_PIPELINE_TO_NC_VARIABLE: dict[str, dict[str, str]] = {
+    source: {v: k for k, v in entry.get("nc_variable_map", {}).items()}
+    for source, entry in SOURCE_REGISTRY.items()
 }
 
 # ---------------------------------------------------------------------------
@@ -215,10 +240,10 @@ def get_nc_variable_name(source_name: str, pipeline_variable: str) -> str:
         "nc_variable_map", {}
     )
     if nc_var_map:
-        # nc_variable_map is NC→pipeline; build the reverse (pipeline→NC) on
-        # the fly.  The reverse is a 1-to-1 mapping by construction.
-        pipeline_to_nc = {v: k for k, v in nc_var_map.items()}
-        return pipeline_to_nc.get(pipeline_variable, pipeline_variable)
+        # Use the pre-computed pipeline_variable → NC name reverse map.
+        return _PIPELINE_TO_NC_VARIABLE.get(source_name, {}).get(
+            pipeline_variable, pipeline_variable
+        )
     return pipeline_variable
 
 

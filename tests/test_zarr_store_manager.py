@@ -20,10 +20,13 @@ Covers:
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
 import xarray as xr
+from conftest import _MOCK_GRID
 from datavia.weather.source_registry import SOURCE_REGISTRY
 from datavia.weather.zarr_store_manager import (
     _SENTINEL,
@@ -38,17 +41,6 @@ from datavia.weather.zarr_store_manager import (
 
 #: Minimal source name injected into SOURCE_REGISTRY for every test.
 _MOCK_SOURCE = "_datavia_test_source"
-
-#: Tiny 3x3 degree grid so store creation and writes complete instantly.
-_MOCK_GRID: dict = {
-    "latitude": np.array([55.0, 54.9, 54.8], dtype=float),
-    "longitude": np.array([10.0, 10.1, 10.2], dtype=float),
-    "time_freq": "1h",
-    "dtype": "float32",
-    "fill_value": float("nan"),
-    "chunks": {"time": 24, "latitude": 3, "longitude": 3},
-    "codec": {"cname": "zstd", "clevel": 3, "shuffle": "shuffle"},
-}
 
 
 @pytest.fixture()
@@ -67,7 +59,7 @@ def mock_registry(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture()
-def manager(tmp_path: pytest.FixturePath, mock_registry: None) -> ZarrStoreManager:
+def manager(tmp_path: Path, mock_registry: None) -> ZarrStoreManager:
     """Return a ZarrStoreManager pointing at an isolated temporary directory."""
     return ZarrStoreManager(
         data_dir=str(tmp_path),
@@ -137,13 +129,13 @@ def _make_synthetic_dataset(
 class TestConstruction:
     """Test ZarrStoreManager constructor validation."""
 
-    def test_unknown_source_raises(self, tmp_path: pytest.FixturePath) -> None:
+    def test_unknown_source_raises(self, tmp_path: Path) -> None:
         """KeyError is raised when the source is not in SOURCE_REGISTRY."""
         with pytest.raises(KeyError, match="not registered"):
             ZarrStoreManager(str(tmp_path), "does_not_exist")
 
     def test_source_without_zarr_grid_raises(
-        self, tmp_path: pytest.FixturePath, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """KeyError is raised when the source has no zarr_grid entry."""
         monkeypatch.setitem(
@@ -163,17 +155,13 @@ class TestConstruction:
 class TestStorePath:
     """Verify the path layout produced by store_path."""
 
-    def test_default_root(
-        self, tmp_path: pytest.FixturePath, mock_registry: None
-    ) -> None:
+    def test_default_root(self, tmp_path: Path, mock_registry: None) -> None:
         """Path follows <data_dir>/<source_name>/<variable>/<year>.zarr."""
         mgr = ZarrStoreManager(str(tmp_path), _MOCK_SOURCE)
         path = mgr.store_path("temperature", 2024)
         assert path == tmp_path / _MOCK_SOURCE / "temperature" / "2024.zarr"
 
-    def test_override_root(
-        self, manager: ZarrStoreManager, tmp_path: pytest.FixturePath
-    ) -> None:
+    def test_override_root(self, manager: ZarrStoreManager, tmp_path: Path) -> None:
         """When store_root is provided it replaces the data_dir/source_name prefix."""
         path = manager.store_path("temperature", 2024)
         assert str(path).endswith("temperature/2024.zarr")
@@ -466,7 +454,7 @@ class TestMigrateNcFile:
     """Tests for NetCDF → Zarr migration."""
 
     def test_existing_nc_file_is_imported(
-        self, manager: ZarrStoreManager, tmp_path: pytest.FixturePath
+        self, manager: ZarrStoreManager, tmp_path: Path
     ) -> None:
         """A NetCDF file written to disk is successfully read and imported."""
         nc_path = tmp_path / "synthetic.nc"
@@ -498,7 +486,7 @@ class TestBuildTimeIndex:
         assert len(idx) == 8784
 
     def test_daily_frequency(
-        self, tmp_path: pytest.FixturePath, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Sources with time_freq='1D' produce a daily index."""
         daily_grid = dict(_MOCK_GRID)
@@ -631,11 +619,11 @@ class TestSnapCoords:
 class TestCheckSentinel:
     """Tests for the module-level _check_sentinel helper."""
 
-    def test_no_sentinel_does_not_raise(self, tmp_path: pytest.FixturePath) -> None:
+    def test_no_sentinel_does_not_raise(self, tmp_path: Path) -> None:
         """A directory without a sentinel passes without error."""
         _check_sentinel(tmp_path)  # must not raise
 
-    def test_sentinel_present_raises(self, tmp_path: pytest.FixturePath) -> None:
+    def test_sentinel_present_raises(self, tmp_path: Path) -> None:
         """RuntimeError is raised when .write_in_progress is present."""
         (tmp_path / _SENTINEL).write_text("in progress\n", encoding="utf-8")
         with pytest.raises(RuntimeError, match=_SENTINEL):
@@ -659,7 +647,7 @@ class TestSaveNcToZarr:
     @pytest.fixture()
     def saver(
         self,
-        tmp_path: pytest.FixturePath,
+        tmp_path: Path,
         mock_registry: None,
         sqlite_db: None,
     ):
@@ -693,13 +681,13 @@ class TestSaveNcToZarr:
         ds.to_netcdf(str(nc_path))
         return str(nc_path)
 
-    def test_returns_true_on_success(self, saver, tmp_path: pytest.FixturePath) -> None:
+    def test_returns_true_on_success(self, saver, tmp_path: Path) -> None:
         """save_nc_to_zarr returns True when the conversion succeeds."""
         nc_path = self._write_nc(tmp_path)
         result = saver.save_nc_to_zarr(nc_path)
         assert result is True
 
-    def test_zarr_store_created(self, saver, tmp_path: pytest.FixturePath) -> None:
+    def test_zarr_store_created(self, saver, tmp_path: Path) -> None:
         """A .zarr directory is written under data_dir/source/variable/year.zarr."""
         nc_path = self._write_nc(tmp_path)
         saver.save_nc_to_zarr(nc_path)
@@ -708,9 +696,7 @@ class TestSaveNcToZarr:
         expected = tmp_path / _MOCK_SOURCE / "temperature" / "2024.zarr"
         assert expected.is_dir()
 
-    def test_nc_file_not_copied_to_data_dir(
-        self, saver, tmp_path: pytest.FixturePath
-    ) -> None:
+    def test_nc_file_not_copied_to_data_dir(self, saver, tmp_path: Path) -> None:
         """No .nc copy is written to data_dir; only the Zarr store is created."""
         nc_path = self._write_nc(tmp_path)
         saver.save_nc_to_zarr(nc_path)
@@ -719,9 +705,7 @@ class TestSaveNcToZarr:
         nc_copies = [p for p in nc_copies if str(p) != nc_path]
         assert nc_copies == [], f"Unexpected NC copies: {nc_copies}"
 
-    def test_maps_cf_name_to_pipeline_name(
-        self, saver, tmp_path: pytest.FixturePath
-    ) -> None:
+    def test_maps_cf_name_to_pipeline_name(self, saver, tmp_path: Path) -> None:
         """The store uses the pipeline variable name, not the CF short name."""
         nc_path = self._write_nc(tmp_path, variable="t_raw")
         saver.save_nc_to_zarr(nc_path)
@@ -729,17 +713,13 @@ class TestSaveNcToZarr:
         assert (tmp_path / _MOCK_SOURCE / "temperature" / "2024.zarr").is_dir()
         assert not (tmp_path / _MOCK_SOURCE / "t_raw").exists()
 
-    def test_no_mapping_uses_variable_name_as_is(
-        self, saver, tmp_path: pytest.FixturePath
-    ) -> None:
+    def test_no_mapping_uses_variable_name_as_is(self, saver, tmp_path: Path) -> None:
         """Variables not in nc_variable_map are stored under their own name."""
         nc_path = self._write_nc(tmp_path, variable="temperature")
         saver.save_nc_to_zarr(nc_path)
         assert (tmp_path / _MOCK_SOURCE / "temperature" / "2024.zarr").is_dir()
 
-    def test_returns_false_for_unreadable_file(
-        self, saver, tmp_path: pytest.FixturePath
-    ) -> None:
+    def test_returns_false_for_unreadable_file(self, saver, tmp_path: Path) -> None:
         """Returns False when the NC file cannot be opened."""
         bad_path = str(tmp_path / "not_a_real_file.nc")
         result = saver.save_nc_to_zarr(bad_path)
