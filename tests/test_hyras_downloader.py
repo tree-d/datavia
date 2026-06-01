@@ -57,6 +57,36 @@ class TestYearsInRange:
         with pytest.raises(ValueError, match="date_end"):
             HYRASDownloader._years_in_range("2024-12-31", "2024-01-01")
 
+    def test_returns_list_of_integers(self) -> None:
+        """Every element in the result is a plain Python int.
+
+        Returns:
+            None
+        """
+        result = HYRASDownloader._years_in_range("2021-01-01", "2023-12-31")
+        assert all(isinstance(year, int) for year in result)
+
+    def test_years_are_consecutive_no_gaps(self) -> None:
+        """Consecutive elements differ by exactly 1 (no gaps, no duplicates).
+
+        Returns:
+            None
+        """
+        result = HYRASDownloader._years_in_range("2019-01-01", "2024-12-31")
+        for i in range(len(result) - 1):
+            assert result[i + 1] - result[i] == 1, (
+                f"Gap between years at index {i}: {result[i]} → {result[i + 1]}"
+            )
+
+    def test_years_are_sorted_ascending(self) -> None:
+        """Result is in ascending order.
+
+        Returns:
+            None
+        """
+        result = HYRASDownloader._years_in_range("2020-06-01", "2024-03-31")
+        assert result == sorted(result)
+
 
 # ---------------------------------------------------------------------------
 # URL construction

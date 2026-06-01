@@ -232,4 +232,207 @@ class TestWeatherQueryHelpers:
 
 
 # ---------------------------------------------------------------------------
+# Raster (non-weather) query helpers — check_source_exists, get_raster_paths,
+# get_raster_metadata.  These cover functions absent from the original suite.
+# ---------------------------------------------------------------------------
+
+
+def _insert_raster_layer(
+    source_name: str,
+    layer_name: str,
+    uri: str,
+) -> None:
+    """Insert a minimal row into the ``raster_layers`` table
+    for test setup.
+
+    Parameters
+    ----------
+    source_name : str
+    layer_name : str
+    uri : str
+        Absolute file path (does not need to exist on disk).
+    """
+    from sqlalchemy import text
+
+    from datavia.library.database.connection import session_local
+
+    session = session_local()
+    try:
+        session.execute(
+            text(
+                """
+                INSERT INTO raster_layers
+                    (layer_name, source_name, uri, crs)
+                VALUES
+                    (:layer_name, :source_name, :uri, 'EPSG:4326')
+                """
+            ),
+            {
+                "layer_name": layer_name,
+                "source_name": source_name,
+                "uri": uri,
+            },
+        )
+        session.commit()
+    finally:
+        session.close()
+
+
+class TestCheckSourceExists:
+    """Tests for check_source_exists (raster layers table).
+
+    Verifies that the function returns False on an empty database and True
+    after a row for the given source has been inserted.
+    """
+
+    def test_returns_false_on_empty_database(self, sqlite_db: None) -> None:
+        """check_source_exists returns False when no raster rows exist.
+
+        Returns:
+            None
+        """
+        from datavia.library.database.query import check_source_exists
+
+        assert check_source_exists("elevation") is False
+
+    def test_returns_true_after_row_inserted(self, sqlite_db: None) -> None:
+        """check_source_exists returns True once a matching row is present.
+
+        Returns:
+            None
+        """
+        from datavia.library.database.query import check_source_exists
+
+        _insert_raster_layer(
+            source_name="elevation",
+            layer_name="elevation_dem",
+            uri="/data/elevation.tif",
+        )
+        assert check_source_exists("elevation") is True
+
+    def test_does_not_match_different_source(self, sqlite_db: None) -> None:
+        """check_source_exists returns False
+        for a source different from the one inserted.
+
+        Returns:
+            None
+        """
+        from datavia.library.database.query import check_source_exists
+
+        _insert_raster_layer(
+            source_name="elevation",
+            layer_name="elevation_dem",
+            uri="/data/elevation.tif",
+        )
+        assert check_source_exists("soil") is False
+
+
+class TestGetRasterPaths:
+    """Tests for get_raster_paths (raster layers table).
+
+    Verifies that the function returns a list and that list elements are
+    the URIs inserted for a given source name.
+    """
+
+    def test_returns_empty_list_for_unknown_source(self, sqlite_db: None) -> None:
+        """get_raster_paths returns an empty list when the source is absent.
+
+        Returns:
+            None
+        """
+        from datavia.library.database.query import get_raster_paths
+
+        result = get_raster_paths("nonexistent_source")
+        assert isinstance(result, list)
+        assert len(result) == 0
+
+    def test_returns_uri_after_insert(self, sqlite_db: None) -> None:
+        """get_raster_paths returns the correct URI after a row is inserted.
+
+        Returns:
+            None
+        """
+        from datavia.library.database.query import get_raster_paths
+
+        _insert_raster_layer(
+            source_name="elevation",
+            layer_name="elevation_dem",
+            uri="/data/elevation.tif",
+        )
+        result = get_raster_paths("elevation")
+        assert "/data/elevation.tif" in result
+
+    def test_list_elements_are_strings(self, sqlite_db: None) -> None:
+        """get_raster_paths returns a list of strings.
+
+        Returns:
+            None
+        """
+        from datavia.library.database.query import get_raster_paths
+
+        _insert_raster_layer(
+            source_name="elevation",
+            layer_name="elevation_dem",
+            uri="/data/elevation.tif",
+        )
+        result = get_raster_paths("elevation")
+        for item in result:
+            assert isinstance(item, str)
+
+
+class TestGetRasterMetadata:
+    """Tests for get_raster_metadata (raster layers table).
+
+    Verifies that the function returns a list of dicts with expected keys.
+    """
+
+    def test_returns_empty_list_for_unknown_source(self, sqlite_db: None) -> None:
+        """get_raster_metadata returns an empty list for an absent source.
+
+        Returns:
+            None
+        """
+        from datavia.library.database.query import get_raster_metadata
+
+        result = get_raster_metadata("nonexistent_source")
+        assert isinstance(result, list)
+        assert len(result) == 0
+
+    def test_returns_list_of_dicts_after_insert(self, sqlite_db: None) -> None:
+        """get_raster_metadata returns a list of dicts after a row is inserted.
+
+        Returns:
+            None
+        """
+        from datavia.library.database.query import get_raster_metadata
+
+        _insert_raster_layer(
+            source_name="elevation",
+            layer_name="elevation_dem",
+            uri="/data/elevation.tif",
+        )
+        result = get_raster_metadata("elevation")
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert isinstance(result[0], dict)
+
+    def test_metadata_dict_contains_uri(self, sqlite_db: None) -> None:
+        """Each metadata dict contains the 'uri' key pointing to the inserted path.
+
+        Returns:
+            None
+        """
+        from datavia.library.database.query import get_raster_metadata
+
+        _insert_raster_layer(
+            source_name="elevation",
+            layer_name="elevation_dem",
+            uri="/data/elevation.tif",
+        )
+        result = get_raster_metadata("elevation")
+        assert "uri" in result[0]
+        assert result[0]["uri"] == "/data/elevation.tif"
+
+
+# ---------------------------------------------------------------------------
 # SaverWeather (requires sqlite_db fixture and a real temp file)

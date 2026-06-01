@@ -275,5 +275,52 @@ class TestTransformBbox:
             transform_bbox((0.0, 0.0, 1.0, 1.0), "EPSG:4326", "EPSG:3857")
 
 
+class TestIsGeographicCrsAdditional:
+    """Additional edge-case tests for is_geographic_crs.
+
+    These complement the existing tests in TestIsGeographicCrs with
+    cases not previously covered: return-type contract, empty string
+    robustness, and ETRS89.
+    """
+
+    def test_return_type_is_bool_for_geographic_crs(self) -> None:
+        """Test that is_geographic_crs returns an actual bool, not just truthy.
+
+        Returns:
+            None
+        """
+        result = is_geographic_crs("EPSG:4326")
+        assert isinstance(result, bool)
+
+    def test_return_type_is_bool_for_projected_crs(self) -> None:
+        """Test that is_geographic_crs returns an actual bool, not just falsy.
+
+        Returns:
+            None
+        """
+        result = is_geographic_crs("EPSG:25832")
+        assert isinstance(result, bool)
+
+    def test_empty_string_does_not_raise_unhandled_exception(self) -> None:
+        """Test that an empty CRS string is handled gracefully.
+
+        Returns:
+            None
+        """
+        try:
+            result = is_geographic_crs("")
+            assert isinstance(result, bool)
+        except (ValueError, RuntimeError):
+            pass  # Raising a typed error is also acceptable behaviour.
+
+    def test_etrs89_is_geographic(self) -> None:
+        """Test that EPSG:4258 (ETRS89) is correctly identified as geographic.
+
+        Returns:
+            None
+        """
+        assert is_geographic_crs("EPSG:4258") is True
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

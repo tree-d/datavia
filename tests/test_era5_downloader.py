@@ -738,3 +738,204 @@ class TestERA5DownloaderChunkBy:
 
 # ---------------------------------------------------------------------------
 # CompositeWeatherDownloader — chunk_by forwarding
+
+# ---------------------------------------------------------------------------
+# Chunk-boundary invariants
+# ---------------------------------------------------------------------------
+
+
+class TestChunkInvariants:
+    """Invariant tests for monthly, quarterly, and yearly chunk iterators.
+
+    These tests verify properties that must hold for any valid chunking
+    output, regardless of the specific date range used:
+
+    - Contiguity: consecutive chunks are adjacent (no gaps, no overlap).
+    - Containment: every chunk's start/end lies within the requested range.
+
+    These invariants complement the boundary-exact tests in
+    TestERA5DownloaderMonthlyChunking etc. by testing structural
+    correctness across a wider range of inputs.
+    """
+
+    @pytest.mark.parametrize(
+        "date_start,date_end",
+        [
+            ("2024-01-01", "2024-06-30"),
+            ("2023-11-15", "2024-03-20"),
+            ("2024-01-01", "2024-12-31"),
+        ],
+    )
+    def test_monthly_chunks_are_contiguous_no_gaps(
+        self, date_start: str, date_end: str
+    ) -> None:
+        """Test that consecutive monthly chunks share a boundary with no gap.
+
+        The end of chunk[i] and the start of chunk[i+1] must be exactly one
+        calendar day apart.
+
+        Args:
+            date_start: Start of the requested date range (ISO-8601).
+            date_end: End of the requested date range (ISO-8601).
+
+        Returns:
+            None
+        """
+        import datetime as dt
+        from datetime import timedelta
+
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        chunks = ERA5Downloader._iter_monthly_chunks(date_start, date_end)
+        for i in range(len(chunks) - 1):
+            end_of_current = dt.date.fromisoformat(chunks[i][1])
+            start_of_next = dt.date.fromisoformat(chunks[i + 1][0])
+            assert start_of_next - end_of_current == timedelta(days=1), (
+                f"Gap between chunk {i} and {i + 1}: "
+                f"{chunks[i][1]} → {chunks[i + 1][0]}"
+            )
+
+    @pytest.mark.parametrize(
+        "date_start,date_end",
+        [
+            ("2024-01-01", "2024-06-30"),
+            ("2023-11-15", "2024-03-20"),
+            ("2024-01-01", "2024-12-31"),
+        ],
+    )
+    def test_monthly_chunks_within_requested_bounds(
+        self, date_start: str, date_end: str
+    ) -> None:
+        """Test that all monthly chunk dates fall within the requested range.
+
+        The first chunk's start must equal date_start and the last chunk's
+        end must equal date_end.
+
+        Args:
+            date_start: Start of the requested date range (ISO-8601).
+            date_end: End of the requested date range (ISO-8601).
+
+        Returns:
+            None
+        """
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        chunks = ERA5Downloader._iter_monthly_chunks(date_start, date_end)
+        assert chunks[0][0] == date_start
+        assert chunks[-1][1] == date_end
+
+    @pytest.mark.parametrize(
+        "date_start,date_end",
+        [
+            ("2024-01-01", "2024-12-31"),
+            ("2022-01-01", "2023-12-31"),
+        ],
+    )
+    def test_quarterly_chunks_are_contiguous_no_gaps(
+        self, date_start: str, date_end: str
+    ) -> None:
+        """Test that consecutive quarterly chunks share a boundary with no gap.
+
+        Args:
+            date_start: Start of the requested date range (ISO-8601).
+            date_end: End of the requested date range (ISO-8601).
+
+        Returns:
+            None
+        """
+        import datetime as dt
+        from datetime import timedelta
+
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        chunks = ERA5Downloader._iter_quarterly_chunks(date_start, date_end)
+        for i in range(len(chunks) - 1):
+            end_of_current = dt.date.fromisoformat(chunks[i][1])
+            start_of_next = dt.date.fromisoformat(chunks[i + 1][0])
+            assert start_of_next - end_of_current == timedelta(days=1), (
+                f"Gap between quarterly chunk {i} and {i + 1}: "
+                f"{chunks[i][1]} → {chunks[i + 1][0]}"
+            )
+
+    @pytest.mark.parametrize(
+        "date_start,date_end",
+        [
+            ("2024-01-01", "2024-12-31"),
+            ("2022-01-01", "2023-12-31"),
+        ],
+    )
+    def test_quarterly_chunks_within_requested_bounds(
+        self, date_start: str, date_end: str
+    ) -> None:
+        """Test that quarterly chunk boundaries equal the requested start and end.
+
+        Args:
+            date_start: Start of the requested date range (ISO-8601).
+            date_end: End of the requested date range (ISO-8601).
+
+        Returns:
+            None
+        """
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        chunks = ERA5Downloader._iter_quarterly_chunks(date_start, date_end)
+        assert chunks[0][0] == date_start
+        assert chunks[-1][1] == date_end
+
+    @pytest.mark.parametrize(
+        "date_start,date_end",
+        [
+            ("2022-01-01", "2024-12-31"),
+            ("2023-06-01", "2025-05-31"),
+        ],
+    )
+    def test_yearly_chunks_are_contiguous_no_gaps(
+        self, date_start: str, date_end: str
+    ) -> None:
+        """Test that consecutive yearly chunks share a boundary with no gap.
+
+        Args:
+            date_start: Start of the requested date range (ISO-8601).
+            date_end: End of the requested date range (ISO-8601).
+
+        Returns:
+            None
+        """
+        import datetime as dt
+        from datetime import timedelta
+
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        chunks = ERA5Downloader._iter_yearly_chunks(date_start, date_end)
+        for i in range(len(chunks) - 1):
+            end_of_current = dt.date.fromisoformat(chunks[i][1])
+            start_of_next = dt.date.fromisoformat(chunks[i + 1][0])
+            assert start_of_next - end_of_current == timedelta(days=1), (
+                f"Gap between yearly chunk {i} and {i + 1}: "
+                f"{chunks[i][1]} → {chunks[i + 1][0]}"
+            )
+
+    @pytest.mark.parametrize(
+        "date_start,date_end",
+        [
+            ("2022-01-01", "2024-12-31"),
+            ("2023-06-01", "2025-05-31"),
+        ],
+    )
+    def test_yearly_chunks_within_requested_bounds(
+        self, date_start: str, date_end: str
+    ) -> None:
+        """Test that yearly chunk boundaries equal the requested start and end.
+
+        Args:
+            date_start: Start of the requested date range (ISO-8601).
+            date_end: End of the requested date range (ISO-8601).
+
+        Returns:
+            None
+        """
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        chunks = ERA5Downloader._iter_yearly_chunks(date_start, date_end)
+        assert chunks[0][0] == date_start
+        assert chunks[-1][1] == date_end

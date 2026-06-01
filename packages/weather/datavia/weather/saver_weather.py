@@ -683,7 +683,9 @@ def _build_dest_stem(
         year_end = valid_until[:4] if valid_until else "unknown"
         month_end = valid_until[5:7] if valid_until else "XX"
         bbox_tag = (
-            hashlib.md5(bbox_wkt.encode()).hexdigest()[:6] if bbox_wkt else "nobbox"
+            hashlib.md5(bbox_wkt.encode(), usedforsecurity=False).hexdigest()[:6]
+            if bbox_wkt
+            else "nobbox"
         )
         time_range = f"{year_start}{month_start}_{year_end}{month_end}"
 
