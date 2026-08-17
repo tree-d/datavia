@@ -94,7 +94,23 @@ write time, not on every `get_data()` call:
   near nodata edges until the next `update_data()` run migrates it.
 
 **Limitation:** gaps between separately-downloaded Zarr cells, and areas
-never downloaded at all, remain `NaN` in `get_data()` results.
+never downloaded at all, produce a `NaN` in the interpolated result.
+`GetterWeather.get_data()` treats any such `NaN` as missing data and raises
+`MissingWeatherDataError` rather than returning it — see Bug 10 below.
+
+---
+
+### ✅ Bug 10 — `get_data()` raises on undownloaded data instead of returning NaN
+
+**File:** `packages/weather/datavia/weather/getter_weather.py`
+
+`GetterWeather.get_data()` raises `MissingWeatherDataError` (a `RuntimeError`
+subclass) whenever the interpolated result contains any `NaN`, for both
+single-timestamp and multi-timestamp queries. The error message includes the
+source, variable, and requested time range. Since Bug 09 ensures every
+downloaded cell is gap-filled at write time, a `NaN` in the result always
+means the requested point/time falls outside the currently downloaded
+coverage — the caller should run the pipeline update to fetch it.
 
 ---
 

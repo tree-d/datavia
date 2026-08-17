@@ -50,6 +50,16 @@ _DEFAULT_RADIUS_KM: float = 50.0
 _DEFAULT_STATION_WEIGHT: float = 0.6
 
 
+class MissingWeatherDataError(RuntimeError):
+    """Raised when a requested point/timestamp has no downloaded weather data.
+
+    Gridded sources fill nodata gaps once, at write time (see
+    :func:`~datavia.library.interpolation.fill_spatial_gaps`), so any ``NaN``
+    remaining in :meth:`GetterWeather.get_data`'s result means the queried
+    location and/or time falls outside every downloaded coverage cell.
+    """
+
+
 def _to_naive_utc(dt: Any) -> Any:
     """Strip timezone from a single timestamp value, converting to UTC.
 
@@ -178,6 +188,41 @@ class GetterWeather(Getter):
         rows = get_weather_metadata(self.source_name)
         return {row["uri"] for row in rows if row.get("uri")}
 
+    def _raise_if_missing(
+        self,
+        results: np.ndarray,
+        variable: str,
+        from_dt: str,
+        to_dt: str,
+    ) -> None:
+        """Raise :class:`MissingWeatherDataError` if *results* contains any NaN.
+
+        Parameters
+        ----------
+        results : np.ndarray
+            Interpolated values returned by :meth:`get_data`, shape ``(N,)``
+            or ``(N, T)``.
+        variable : str
+            Variable name being queried, used in the error message.
+        from_dt : str
+            ISO start of the requested time range, used in the error message.
+        to_dt : str
+            ISO end of the requested time range, used in the error message.
+
+        Raises
+        ------
+        MissingWeatherDataError
+            If any element of *results* is ``NaN``.
+        """
+        if np.isnan(results).any():
+            n_missing = int(np.isnan(results).sum())
+            raise MissingWeatherDataError(
+                f"{n_missing} of {results.size} requested point(s) have no "
+                f"downloaded data for source='{self.source_name}', "
+                f"variable='{variable}', time=[{from_dt}, {to_dt}]. "
+                "Run the pipeline update to download the missing coverage."
+            )
+
     def get_data(
         self,
         coords: np.ndarray,
@@ -234,14 +279,15 @@ class GetterWeather(Getter):
             - Shape ``(N, T)`` when a list of T timestamps is supplied;
               rows correspond to coordinates, columns to timestamps.
 
-            Points outside the covered area or time window are ``NaN``.
-
         Raises
         ------
         ValueError
             If ``variable`` or ``datetime_utc`` is not provided in *kwargs*.
         RuntimeError
             If no weather files are found for the requested variable / time.
+        MissingWeatherDataError
+            If any requested point/timestamp falls outside the downloaded
+            coverage (no data has been fetched for that location or time).
         """
         variable: str = kwargs.get("variable", "")
         datetime_utc = kwargs.get("datetime_utc")
@@ -423,6 +469,7 @@ class GetterWeather(Getter):
         # Multi-timestamp station blending is not yet implemented; skip the station
         # path when the caller supplies a list of times.
         if is_multi_time:
+            self._raise_if_missing(results, variable, from_dt, to_dt)
             return results
 
         for i, coord in enumerate(coords_arr):
@@ -467,6 +514,7 @@ class GetterWeather(Getter):
             elif station_val is not None and gridded_val is None:
                 results[i] = station_val
 
+        self._raise_if_missing(results, variable, from_dt, to_dt)
         return results
 
     def get_weather_data(

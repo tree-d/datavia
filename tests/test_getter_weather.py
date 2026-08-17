@@ -126,6 +126,79 @@ class TestGetterWeather:
                 datetime_utc="2024-01-15T12:00:00",
             )
 
+    def test_get_data_raises_on_nan_single_timestamp(self, sqlite_db: None) -> None:
+        """MissingWeatherDataError is raised when a queried point is NaN.
+
+        A NaN gridded result at a single timestamp means the point/time was
+        never downloaded (spatial nodata gaps are filled once, at write
+        time), so get_data() must raise instead of returning NaN silently.
+        """
+        from datavia.weather.getter_weather import (
+            GetterWeather,
+            MissingWeatherDataError,
+        )
+
+        _insert_weather_layer(
+            source_name="ERA5_land",
+            layer_name="ERA5_land_temperature_2m",
+            variable="temperature_2m",
+            file_format="netcdf",
+            valid_from="2024-01-01T00:00:00",
+            valid_until="2024-01-31T23:00:00",
+            uri="/data/era5_temperature_2m.nc",
+        )
+
+        getter = GetterWeather("ERA5_land")
+        coords = np.array([[13.4, 52.5]])
+
+        with (
+            patch(
+                "datavia.weather.getter_weather.interpolate_netcdf",
+                return_value=float("nan"),
+            ),
+            patch(
+                "datavia.weather.getter_weather.interpolate_station_parquet",
+                return_value=float("nan"),
+            ),
+        ):
+            with pytest.raises(MissingWeatherDataError, match="temperature_2m"):
+                getter.get_data(
+                    coords,
+                    variable="temperature_2m",
+                    datetime_utc="2024-01-15T12:00:00",
+                )
+
+    def test_get_data_raises_on_nan_multi_timestamp(self, sqlite_db: None) -> None:
+        """MissingWeatherDataError is raised for a NaN in a multi-timestamp batch."""
+        from datavia.weather.getter_weather import (
+            GetterWeather,
+            MissingWeatherDataError,
+        )
+
+        _insert_weather_layer(
+            source_name="ERA5_land",
+            layer_name="ERA5_land_temperature_2m",
+            variable="temperature_2m",
+            file_format="netcdf",
+            valid_from="2024-01-01T00:00:00",
+            valid_until="2024-01-31T23:00:00",
+            uri="/data/era5_temperature_2m.nc",
+        )
+
+        getter = GetterWeather("ERA5_land")
+        coords = np.array([[13.4, 52.5]])
+
+        with patch(
+            "datavia.weather.getter_weather.interpolate_netcdf",
+            return_value=np.array([20.0, float("nan")]),
+        ):
+            with pytest.raises(MissingWeatherDataError, match="temperature_2m"):
+                getter.get_data(
+                    coords,
+                    variable="temperature_2m",
+                    datetime_utc=["2024-01-15T12:00:00", "2024-01-16T12:00:00"],
+                )
+
     def test_get_data_uses_netcdf_interpolation(self, sqlite_db: None) -> None:
         """When only a NetCDF path is found, interpolate_netcdf is called."""
         from datavia.weather.getter_weather import GetterWeather
