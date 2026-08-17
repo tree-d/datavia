@@ -33,6 +33,7 @@ from datavia.core.interfaces import Saver
 from datavia.library.database.connection import session_local
 from datavia.library.database.query import check_weather_source_exists
 from datavia.library.formats import extract_netcdf_layer_metadata
+from datavia.library.interpolation import prepare_netcdf
 
 from .source_registry import SOURCE_REGISTRY
 from .zarr_store_manager import ZarrStoreManager
@@ -97,6 +98,11 @@ class SaverWeather(Saver):
           tracking is handled automatically by
           :class:`~datavia.weather.coverage_manager.CoverageManager` on the
           next ``update_data`` call.
+        - **Non-Zarr NetCDF sources**: the file is copied to the data
+          directory and prepared in place via
+          :func:`datavia.library.interpolation.prepare_netcdf` — spatial
+          dimensions are sorted and nodata gaps are filled once, rather than
+          on every query — before being registered in ``weather_layers``.
         - **Parquet sources** (e.g. DWD station files): file is copied to the
           data directory and a row is inserted in ``weather_layers``.
 
@@ -161,6 +167,11 @@ class SaverWeather(Saver):
                 dest_path = os.path.join(self.data_dir, f"{dest_stem}{ext}")
                 shutil.copy2(data_path, dest_path)
                 logger.info("Copied weather file to %s", dest_path)
+                if file_format == "netcdf":
+                    # Mask the fill sentinel, sort spatial dimensions, and
+                    # fill nodata gaps in place before registering the file.
+                    prepare_netcdf(dest_path)
+                    logger.info("Prepared weather NetCDF file %s", dest_path)
                 layer_name = dest_stem
 
             # Resolve the list of variables to register for this file.

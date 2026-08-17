@@ -315,6 +315,100 @@ class TestWriteDataset:
         with pytest.raises(KeyError):
             manager.write_dataset(ds, "temperature")
 
+    def test_spatial_nan_gaps_filled_before_write(
+        self, manager: ZarrStoreManager
+    ) -> None:
+        """Nodata cells within a downloaded slab are filled once, at write time.
+
+        See ``fill_spatial_gaps()`` in ``datavia.library.interpolation``.
+        """
+        ds = _make_synthetic_dataset("temperature", year=2024, n_hours=2)
+        # Introduce a single interior nodata cell (not a time-axis gap).
+        ds["temperature"].values[:, 1, 1] = float("nan")
+
+        manager.write_dataset(ds, "temperature")
+
+        store = manager.open_store("temperature", 2024)
+        try:
+            written = store["temperature"].isel(time=0)
+            assert not bool(np.isnan(written.values[1, 1]))
+        finally:
+            store.close()
+
+    def test_geographic_store_preserves_descending_latitude_order(
+        self, manager: ZarrStoreManager
+    ) -> None:
+        """Write-time gap-filling must not change the store's coordinate order.
+
+        The mock grid's latitude is descending (matching ERA5's native
+        North->South order); ``region="auto"`` writes require the written
+        data's coordinate order to exactly match the store's, so the
+        ascending sort required by ``interpolate_na(method="nearest")`` must
+        be undone before writing.
+        """
+        ds = _make_synthetic_dataset("temperature", year=2024, n_hours=1)
+        ds["temperature"].values[:, 1, 1] = float("nan")
+
+        manager.write_dataset(ds, "temperature")
+
+        store = manager.open_store("temperature", 2024)
+        try:
+            assert list(store["latitude"].values) == list(_MOCK_GRID["latitude"])
+        finally:
+            store.close()
+
+    def test_projected_store_fills_gaps_before_write(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Projected (mode="w") stores also get write-time gap-filling.
+
+        Unlike geographic ``region="auto"`` writes, projected sources
+        overwrite the whole store each time, so no coordinate-order
+        restoration is required.
+        """
+        projected_source = "_datavia_test_projected_source"
+        monkeypatch.setitem(
+            SOURCE_REGISTRY,
+            projected_source,
+            {
+                "grid_downloader": None,
+                "conversions": {},
+                "nc_variable_map": {},
+                "zarr_grid": {
+                    "crs": "EPSG:3035",
+                    "time_freq": "1D",
+                    "dtype": "float32",
+                    "fill_value": float("nan"),
+                    "chunks": {"time": 1, "y": 3, "x": 3},
+                    "codec": {"cname": "zstd", "clevel": 3, "shuffle": "shuffle"},
+                },
+            },
+        )
+        projected_manager = ZarrStoreManager(
+            data_dir=str(tmp_path),
+            source_name=projected_source,
+            store_root=tmp_path / projected_source,
+        )
+
+        times = pd.date_range("2024-01-01", periods=1, freq="1D")
+        x = np.array([10.0, 20.0, 30.0])
+        y = np.array([50.0, 40.0, 30.0])
+        data = np.ones((1, 3, 3), dtype=np.float32)
+        data[:, 1, 1] = float("nan")
+        ds = xr.Dataset(
+            {"temperature": xr.DataArray(data, dims=["time", "y", "x"])},
+            coords={"time": times, "y": y, "x": x},
+        )
+
+        projected_manager.write_dataset(ds, "temperature")
+
+        store = projected_manager.open_store("temperature", 2024)
+        try:
+            written = store["temperature"].isel(time=0)
+            assert not bool(np.isnan(written.values[1, 1]))
+        finally:
+            store.close()
+
 
 # ---------------------------------------------------------------------------
 # open_store

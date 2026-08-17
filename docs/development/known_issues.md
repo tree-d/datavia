@@ -69,6 +69,35 @@ boundary always receive a finite value.
 
 ---
 
+### ✅ Bug 09 — Spatial gap-fill performed once, at write time
+
+**Files:** `datavia/datavia/library/interpolation.py`,
+`packages/weather/datavia/weather/zarr_store_manager.py`,
+`packages/weather/datavia/weather/saver_weather.py`,
+`packages/weather/datavia/weather/getter_weather.py`
+
+The nearest-neighbour nodata fill described in Bug 08 runs exactly once, at
+write time, not on every `get_data()` call:
+
+- `ZarrStoreManager.write_dataset()` calls the shared `fill_spatial_gaps()`
+  helper on each downloaded slab immediately before `to_zarr(...)`. For
+  geographic (`region="auto"`) stores, whose skeleton latitude is descending
+  (matching ERA5's native order), the slab is sorted ascending, filled, then
+  restored to the store's original order so the region-aligned write still
+  lines up.
+- `SaverWeather.save()` calls `prepare_netcdf()` on non-Zarr NetCDF sources
+  right after copying the file into storage.
+- `interpolate_dataset()`/`interpolate_netcdf()` never fill gaps at query
+  time; they assume the data they are given has already been gap-filled via
+  `prepare_netcdf()` or `ZarrStoreManager.write_dataset()`. A raw `.nc` file
+  that has not yet been migrated into a Zarr store returns un-filled `NaN`
+  near nodata edges until the next `update_data()` run migrates it.
+
+**Limitation:** gaps between separately-downloaded Zarr cells, and areas
+never downloaded at all, remain `NaN` in `get_data()` results.
+
+---
+
 ## Design Limitations
 
 ### ⚠️ Newline-joined path string between composite downloader and pipeline

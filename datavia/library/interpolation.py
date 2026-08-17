@@ -1,6 +1,7 @@
 """Spatial and temporal interpolation methods for pipeline use."""
 
 import logging
+import os
 from typing import Any, Literal
 
 import numpy as np
@@ -286,9 +287,10 @@ def interpolate_netcdf(
 
     Opens the file **once** with xarray and interpolates all coordinates in a
     single vectorised call, eliminating per-point file-open overhead.
-    Before interpolation, nodata cells are replaced with the nearest valid
-    neighbour so that bilinear stencils touching domain boundaries always have
-    finite values.
+    Spatial gaps are assumed to already be filled at write time — by
+    :func:`prepare_netcdf` for legacy NetCDF sources, or by
+    :meth:`~datavia.weather.zarr_store_manager.ZarrStoreManager.write_dataset`
+    at ingestion for Zarr-backed datasets — so no fill is performed here.
 
     Supports both geographic coordinate files (ERA5: ``latitude``/``longitude``
     dimensions in degrees) and projected coordinate files (HYRAS: ``x``/``y``
@@ -420,6 +422,178 @@ def interpolate_netcdf(
         )
 
 
+def _detect_spatial_dims(da: "xr.DataArray") -> tuple[str, str] | None:
+    """Return the ``(x_dim, y_dim)`` spatial dimension names of *da*, if any.
+
+    Parameters
+    ----------
+    da : xr.DataArray
+        Data variable to inspect.
+
+    Returns
+    -------
+    tuple[str, str] or None
+        ``(x_dim, y_dim)`` for a recognised projected (``x``/``y``) or
+        geographic (``longitude``/``latitude`` or ``lon``/``lat``) pair, or
+        ``None`` when *da* has no recognisable pair of spatial dimensions.
+    """
+    if "x" in da.dims and "y" in da.dims:
+        return "x", "y"
+    if "longitude" in da.dims and "latitude" in da.dims:
+        return "longitude", "latitude"
+    if "lon" in da.dims and "lat" in da.dims:
+        return "lon", "lat"
+    return None
+
+
+def fill_spatial_gaps(
+    da: "xr.DataArray",
+    x_dim: str,
+    y_dim: str,
+    restore_order: bool = False,
+) -> "xr.DataArray":
+    """Mask the fill sentinel and replace nodata cells with the nearest neighbour.
+
+    Shared by :func:`prepare_netcdf` (one-time, at save time) and the Zarr
+    ingestion path in
+    :meth:`~datavia.weather.zarr_store_manager.ZarrStoreManager.write_dataset`
+    (one-time, at ingest time). :func:`interpolate_netcdf`/
+    :func:`interpolate_dataset` assume the data was already filled by one of
+    these and do not fill at query time.
+
+    Parameters
+    ----------
+    da : xr.DataArray
+        Data variable to fill.
+    x_dim : str
+        Name of the "horizontal" spatial dimension (``"x"``, ``"longitude"``,
+        or ``"lon"``).
+    y_dim : str
+        Name of the "vertical" spatial dimension (``"y"``, ``"latitude"``, or
+        ``"lat"``).
+    restore_order : bool, optional
+        When ``True``, restore each spatial dimension's original ascending/
+        descending order after filling. Required by callers that write the
+        result into a region-aligned Zarr store (``to_zarr(region="auto")``),
+        which requires the written data's coordinate order to exactly match
+        the store's existing order. Defaults to ``False``, which is
+        appropriate for query-time callers where only the *values*, not the
+        on-disk coordinate order, matter.
+
+    Returns
+    -------
+    xr.DataArray
+        *da* with the fill sentinel masked and nodata cells filled along
+        both spatial dimensions.
+    """
+    fill_val = da.attrs.get("_FillValue", None)
+    if fill_val is not None:
+        da = da.where(da != fill_val)
+
+    # ERA5-Land stores latitude in descending order (North → South).
+    # xarray's interpolate_na with method="nearest" requires the dimension
+    # coordinate to be monotonically increasing, so each spatial dimension
+    # is sorted to ascending order first.  sortby() is order-agnostic: it
+    # is a no-op when the coordinate is already ascending (HYRAS) and
+    # reverses it when descending (ERA5).
+    x_ascending = (
+        bool(da[x_dim].values[0] <= da[x_dim].values[-1])
+        if da.sizes[x_dim] > 1
+        else True
+    )
+    y_ascending = (
+        bool(da[y_dim].values[0] <= da[y_dim].values[-1])
+        if da.sizes[y_dim] > 1
+        else True
+    )
+    da = da.sortby(x_dim)
+    da = da.sortby(y_dim)
+    # Two sequential 1-D fills (x then y) approximate a 2-D nearest-
+    # neighbour fill.  A true 2-D solution exists via
+    # scipy.ndimage.distance_transform_edt, but it requires extracting raw
+    # numpy arrays and iterating over time slices, making it considerably
+    # more complex.  For the convex HYRAS/ERA5 grids used here the
+    # directional approximation is adequate.
+    #
+    # Zarr-backed DataArrays are dask-chunked along the spatial dimensions.
+    # interpolate_na with fill_value="extrapolate" uses apply_ufunc internally
+    # and requires each interpolated dimension to be a single contiguous chunk.
+    # Rechunk to -1 (one chunk per spatial dim) before filling so that dask
+    # does not raise "consists of multiple chunks" errors.  For in-memory
+    # arrays da.chunks is None/falsy and this branch is a no-op.
+    if da.chunks:
+        da = da.chunk({x_dim: -1, y_dim: -1})
+    da = da.interpolate_na(dim=x_dim, method="nearest", fill_value="extrapolate")
+    da = da.interpolate_na(dim=y_dim, method="nearest", fill_value="extrapolate")
+
+    if restore_order:
+        # region="auto" Zarr writes require the written data's coordinate
+        # order to exactly match the store's existing order, so undo the
+        # ascending sort above when the original order was descending.
+        if not x_ascending:
+            da = da.sortby(x_dim, ascending=False)
+        if not y_ascending:
+            da = da.sortby(y_dim, ascending=False)
+
+    return da
+
+
+def prepare_netcdf(path: str) -> None:
+    """Fill spatial gaps in a NetCDF file's data variables, in place.
+
+    Sorts each spatial dimension to ascending order and replaces missing
+    cells with the nearest valid neighbour, for every data variable that has
+    recognisable spatial dimensions. This is the one-time preparation that
+    lets :func:`interpolate_netcdf`/:func:`interpolate_dataset` assume the
+    data is already gap-filled and skip filling on every query.
+
+    Supports both geographic coordinate files (ERA5-style ``latitude``/
+    ``longitude`` or ``lat``/``lon`` dimensions) and projected coordinate
+    files (HYRAS-style ``x``/``y`` dimensions).  Variables without a
+    recognised pair of spatial dimensions are left untouched.
+
+    The file is rewritten atomically: the prepared dataset is written to a
+    temporary file in the same directory as *path*, and only once that
+    write succeeds is it moved over *path*.  If preparation fails, *path*
+    is left unmodified.
+
+    Parameters
+    ----------
+    path : str
+        Absolute path to the NetCDF file to prepare, in place.
+
+    Raises
+    ------
+    ImportError
+        If xarray is not installed.
+    """
+    if not XARRAY_AVAILABLE:
+        raise ImportError(
+            "xarray is required to prepare NetCDF files. "
+            "Install datavia-weather or run `pip install xarray netCDF4`."
+        )
+
+    with xr.open_dataset(path) as ds:
+        # Load fully into memory so the source file can be closed before the
+        # temporary output file is written to a different path.
+        prepared = ds.load()
+
+    for var_name in list(prepared.data_vars):
+        da = prepared[var_name]
+        spatial_dims = _detect_spatial_dims(da)
+        if spatial_dims is None:
+            continue
+        x_dim, y_dim = spatial_dims
+        prepared[var_name] = fill_spatial_gaps(da, x_dim, y_dim)
+
+    tmp_path = f"{path}.tmp"
+    try:
+        prepared.to_netcdf(tmp_path)
+    finally:
+        prepared.close()
+    os.replace(tmp_path, path)
+
+
 def interpolate_dataset(
     ds: "xr.Dataset",
     lats: float | np.ndarray,
@@ -495,44 +669,13 @@ def interpolate_dataset(
             f"Available variables: {list(ds.data_vars)}"
         )
 
-    # Mask the fill sentinel and replace NaN cells with the nearest valid
-    # neighbour along each spatial dimension before bilinear interpolation,
-    # so stencils touching domain boundaries always receive a finite value.
     da = ds[variable]
-    fill_val = da.attrs.get("_FillValue", None)
-    if fill_val is not None:
-        da = da.where(da != fill_val)
-    x_dim = (
-        "x" if "x" in da.dims else ("longitude" if "longitude" in da.dims else "lon")
-    )
-    y_dim = "y" if "y" in da.dims else ("latitude" if "latitude" in da.dims else "lat")
-    # ERA5-Land stores latitude in descending order (North → South).
-    # xarray's interpolate_na with method="nearest" requires the dimension
-    # coordinate to be monotonically increasing, so each spatial dimension
-    # is sorted to ascending order first.  sortby() is order-agnostic: it
-    # is a no-op when the coordinate is already ascending (HYRAS) and
-    # reverses it when descending (ERA5).  The subsequent da.interp() call
-    # handles both orderings transparently, so the sort does not affect
-    # the interpolated values.
-    da = da.sortby(x_dim)
-    da = da.sortby(y_dim)
-    # Two sequential 1-D fills (x then y) approximate a 2-D nearest-
-    # neighbour fill.  A true 2-D solution exists via
-    # scipy.ndimage.distance_transform_edt, but it requires extracting raw
-    # numpy arrays and iterating over time slices, making it considerably
-    # more complex.  For the convex HYRAS/ERA5 grids used here the
-    # directional approximation is adequate.
-    #
-    # Zarr-backed DataArrays are dask-chunked along the spatial dimensions.
-    # interpolate_na with fill_value="extrapolate" uses apply_ufunc internally
-    # and requires each interpolated dimension to be a single contiguous chunk.
-    # Rechunk to -1 (one chunk per spatial dim) before filling so that dask
-    # does not raise "consists of multiple chunks" errors.  For in-memory
-    # arrays da.chunks is None/falsy and this branch is a no-op.
-    if da.chunks:
-        da = da.chunk({x_dim: -1, y_dim: -1})
-    da = da.interpolate_na(dim=x_dim, method="nearest", fill_value="extrapolate")
-    da = da.interpolate_na(dim=y_dim, method="nearest", fill_value="extrapolate")
+
+    # Spatial gaps are assumed to already be filled at write time — by
+    # prepare_netcdf() for legacy NetCDF sources, or by
+    # ZarrStoreManager.write_dataset() at ingestion for Zarr-backed
+    # datasets. Gaps that were never downloaded (or that fall between
+    # independently-downloaded Zarr cells) remain NaN.
 
     # Build vectorised spatial interpolation coordinates for all N points
     # in one batch — single pyproj call, single xarray interp call.

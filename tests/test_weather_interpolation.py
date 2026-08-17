@@ -265,13 +265,14 @@ class TestInterpolateNetcdf:
             f"got {mock_open.call_count}"
         )
 
-    def test_nodata_prefill_prevents_nan_at_edge(self, tmp_path) -> None:
-        """Edge points adjacent to nodata cells return a value, not NaN (BUG-08).
+    def test_unprepared_nodata_remains_nan_at_edge(self, tmp_path) -> None:
+        """Edge points adjacent to nodata cells return NaN on a raw, un-prepared file.
 
-        The top row of the synthetic grid is set to fill_value.  A query near
-        that edge (lat=50.5) would previously return NaN because the bilinear
-        stencil contained a fill cell.  After the pre-fill fix the stencil is
-        filled with the nearest valid value and the result is finite.
+        The top row of the synthetic grid is set to fill_value. Querying a
+        file that has not been through :func:`prepare_netcdf` or
+        :meth:`ZarrStoreManager.write_dataset` returns NaN near the nodata
+        edge, since neither ``interpolate_netcdf`` nor ``interpolate_dataset``
+        fill gaps.
 
         Parameters
         ----------
@@ -282,12 +283,11 @@ class TestInterpolateNetcdf:
 
         nc = self._make_geographic_nc(tmp_path, with_nodata=True)
         # lat=50.5 sits between the valid row (50.0 = 20.0) and the nodata
-        # row (51.0 = fill_value).  Without pre-fill this returns NaN.
+        # row (51.0 = fill_value).
         result = interpolate_netcdf(nc, 50.5, 11.0, "t2m", "2024-06-15T12:00:00")
 
-        assert np.isfinite(result), (
-            "Expected a finite value near a nodata boundary after pre-fill; "
-            f"got {result}"
+        assert np.isnan(result), (
+            f"Expected NaN on an un-prepared file near a nodata boundary; got {result}"
         )
 
     def test_unknown_variable_raises_key_error(self, tmp_path) -> None:
@@ -303,6 +303,36 @@ class TestInterpolateNetcdf:
         nc = self._make_geographic_nc(tmp_path)
         with pytest.raises(KeyError, match="no_such_var"):
             interpolate_netcdf(nc, 49.0, 11.0, "no_such_var", "2024-06-15T12:00:00")
+
+    def test_prepare_netcdf_fixes_nan_at_edge(self, tmp_path) -> None:
+        """After prepare_netcdf(), the same edge query returns a finite value.
+
+        Confirms that ``prepare_netcdf()`` fills nodata gaps in place so that
+        a subsequent ``interpolate_netcdf()`` query near that edge returns a
+        finite value.
+
+        Parameters
+        ----------
+        tmp_path : pathlib.Path
+            pytest-provided temporary directory.
+        """
+        import shutil
+
+        from datavia.library.interpolation import interpolate_netcdf, prepare_netcdf
+
+        nc = self._make_geographic_nc(tmp_path, with_nodata=True)
+        prepared_nc = str(tmp_path / "era5_geo_prepared.nc")
+        shutil.copy2(nc, prepared_nc)
+        prepare_netcdf(prepared_nc)
+
+        result = interpolate_netcdf(
+            prepared_nc, 50.5, 11.0, "t2m", "2024-06-15T12:00:00"
+        )
+
+        assert np.isfinite(result), (
+            "Expected a finite value near a nodata boundary after "
+            f"prepare_netcdf(); got {result}"
+        )
 
     def test_descending_latitude_produces_non_nan_result(self, tmp_path) -> None:
         """ERA5-style descending latitude does not cause all-NaN output (Bug 3).

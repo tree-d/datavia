@@ -20,6 +20,18 @@ calls to ``open_store`` / ``open_multi_year`` skip that store.
 ``CoverageManager.rebuild_from_store`` can recover such stores by scanning
 written chunk files and re-registering only fully-covered months.
 
+Spatial gap-filling
+--------------------
+``write_dataset`` fills nodata/fill-sentinel cells within each downloaded
+slab (nearest-neighbour, per spatial dimension) exactly once, immediately
+before writing, via
+:func:`~datavia.library.interpolation.fill_spatial_gaps`. Query-time code
+(``interpolate_dataset``) assumes this fill already happened and does not
+re-fill on every read. Cells that were never downloaded — or that sit
+between two independently-downloaded regions — are filled only within the
+extent of the slab being written, so they remain ``NaN`` until a future
+download covers them.
+
 See also
 --------
 - :mod:`datavia.weather.source_registry` — ``zarr_grid`` definitions
@@ -38,6 +50,8 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 from zarr.codecs import BloscCodec
+
+from datavia.library.interpolation import fill_spatial_gaps
 
 from .source_registry import SOURCE_REGISTRY
 
@@ -226,7 +240,9 @@ class ZarrStoreManager:
         Normalises time coordinates (``valid_time`` → ``time``), resolves
         ERA5 short variable names to Datavia names, determines the target
         year(s) from the time axis, calls :meth:`ensure_store` for each year,
-        verifies coordinate alignment, and writes via ``to_zarr(region="auto")``.
+        verifies coordinate alignment, fills spatial nodata gaps via
+        :func:`~datavia.library.interpolation.fill_spatial_gaps`, and writes
+        via ``to_zarr(region="auto")``.
 
         Datasets spanning two calendar years (e.g. a December-January
         download) are split automatically and written to two separate stores.
@@ -279,6 +295,13 @@ class ZarrStoreManager:
                     path.mkdir(parents=True, exist_ok=True)
                     sentinel.write_text("write in progress\n", encoding="utf-8")
                     try:
+                        # Mask the fill sentinel and replace nodata cells
+                        # with the nearest valid neighbour before writing. A
+                        # full-year overwrite has no downstream ordering
+                        # requirement, so the fill's coordinate order does
+                        # not need to be restored.
+                        filled_var = fill_spatial_gaps(ds_year[variable], "x", "y")
+                        ds_year = ds_year.assign({variable: filled_var})
                         ds_year.to_zarr(str(path), mode="w", consolidated=False)
                     finally:
                         if sentinel.exists():
@@ -290,6 +313,20 @@ class ZarrStoreManager:
                     sentinel.write_text("write in progress\n", encoding="utf-8")
                     try:
                         ds_aligned = self._align_to_store(ds_year, variable, year)
+                        # Mask the fill sentinel and replace nodata cells
+                        # with the nearest valid neighbour before writing.
+                        # region="auto" requires the written data's
+                        # coordinate order to exactly match the store's
+                        # existing (descending-latitude) order, so
+                        # restore_order=True undoes the ascending sort that
+                        # the nearest-neighbour fill requires.
+                        filled_var = fill_spatial_gaps(
+                            ds_aligned[variable],
+                            "longitude",
+                            "latitude",
+                            restore_order=True,
+                        )
+                        ds_aligned = ds_aligned.assign({variable: filled_var})
                         ds_aligned.to_zarr(
                             str(path),
                             region="auto",

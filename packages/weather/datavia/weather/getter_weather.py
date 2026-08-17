@@ -327,6 +327,9 @@ class GetterWeather(Getter):
                     zarr_ds = _try_open_zarr(self.source_name, variable, from_dt, to_dt)
                     if zarr_ds is not None:
                         with zarr_ds:
+                            # Data was already gap-filled once at ingestion by
+                            # ZarrStoreManager.write_dataset(); no fill happens
+                            # at query time.
                             raw_batch = interpolate_dataset(
                                 zarr_ds,
                                 lats,
@@ -340,6 +343,9 @@ class GetterWeather(Getter):
                         # Zarr store not yet written (e.g. first run not completed or
                         # legacy .nc rows still registered).  Fall back to NetCDF so
                         # that data already on disk is not silently unavailable.
+                        # Gaps in this raw, not-yet-migrated file are assumed to be
+                        # filled once it goes through the next update_data() run
+                        # and is migrated into the Zarr store.
                         logger.debug(
                             "No Zarr store for %s/%s — falling back to NetCDF.",
                             self.source_name,
@@ -362,6 +368,9 @@ class GetterWeather(Getter):
                             "No Zarr store available — run the pipeline update first."
                         )
                 else:
+                    # Non-Zarr source: the file was already prepared (gap-filled)
+                    # in place by SaverWeather.save() via prepare_netcdf(), so no
+                    # fill happens at query time.
                     nc_variable = get_nc_variable_name(self.source_name, variable)
                     raw_batch = interpolate_netcdf(
                         nc_files[0],

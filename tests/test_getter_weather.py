@@ -4,7 +4,7 @@ Covers get_existing_layers(), get_registered_uris(), get_data(),
 get_weather_data(), temporal resolution, and unit conversion.
 """
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -462,6 +462,87 @@ class TestTemporalResolution:
 
         assert mock_interp.call_args.kwargs.get("temporal_resolution") == "hourly", (
             "temporal_resolution was not forwarded to interpolate_netcdf"
+        )
+
+    def test_zarr_fast_path_uses_interpolate_dataset(self, sqlite_db: None) -> None:
+        """When a Zarr store is available, get_data() calls interpolate_dataset()
+        with no gap-fill kwargs, since ZarrStoreManager.write_dataset() fills
+        nodata gaps at ingestion time and interpolate_dataset() assumes the
+        data it receives is already filled."""
+        from datavia.weather.getter_weather import GetterWeather
+
+        getter = GetterWeather("ERA5_land")
+        coords = np.array([[11.0, 49.0]])
+        fake_zarr_ds = MagicMock()
+
+        with (
+            patch(
+                "datavia.weather.getter_weather._try_open_zarr",
+                return_value=fake_zarr_ds,
+            ),
+            patch(
+                "datavia.weather.getter_weather.interpolate_dataset",
+                return_value=np.array([20.0]),
+            ) as mock_interp,
+            patch(
+                "datavia.weather.getter_weather.interpolate_station_parquet",
+                return_value=float("nan"),
+            ),
+        ):
+            getter.get_data(
+                coords,
+                variable="2m_temperature",
+                datetime_utc="2024-06-15",
+            )
+
+        assert mock_interp.called
+        assert "fill_gaps" not in mock_interp.call_args.kwargs, (
+            "interpolate_dataset() does not accept a fill_gaps parameter"
+        )
+
+    def test_non_zarr_source_uses_interpolate_netcdf(self, sqlite_db: None) -> None:
+        """Non-Zarr sources call interpolate_netcdf() with no gap-fill kwargs,
+        since SaverWeather.save() fills nodata gaps via prepare_netcdf() at
+        save time and interpolate_netcdf() assumes the data it receives is
+        already filled."""
+        from datavia.weather.getter_weather import GetterWeather
+
+        _insert_weather_layer(
+            source_name="weather",
+            layer_name="weather_temperature_2m",
+            variable="temperature_2m",
+            file_format="netcdf",
+            valid_from="2024-01-01T00:00:00",
+            valid_until="2024-01-31T23:00:00",
+            uri="/data/weather_temperature_2m.nc",
+        )
+
+        getter = GetterWeather("weather")
+        coords = np.array([[13.4, 52.5]])
+
+        with (
+            patch(
+                "datavia.weather.getter_weather.interpolate_netcdf",
+                return_value=5.3,
+            ) as mock_nc,
+            patch(
+                "datavia.weather.getter_weather.interpolate_station_parquet",
+                return_value=float("nan"),
+            ),
+            patch(
+                "datavia.weather.getter_weather.apply_conversion",
+                side_effect=lambda s, v, val, u: val,
+            ),
+        ):
+            getter.get_data(
+                coords,
+                variable="temperature_2m",
+                datetime_utc="2024-01-15T12:00:00",
+            )
+
+        assert mock_nc.called
+        assert "fill_gaps" not in mock_nc.call_args.kwargs, (
+            "interpolate_netcdf() does not accept a fill_gaps parameter"
         )
 
 

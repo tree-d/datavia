@@ -84,21 +84,91 @@ class TestSaverWeather:
         saver.source_name = "era5"
         saver.data_dir = str(tmp_path)
 
-        with patch(
-            "datavia.weather.saver_weather.extract_netcdf_layer_metadata",
-            return_value={
-                "valid_from": "2024-01-01T00:00:00",
-                "valid_until": "2024-01-31T23:00:00",
-                "bbox": (
-                    "POLYGON ((5.9 47.3, 15.0 47.3, 15.0 55.1, 5.9 55.1, 5.9 47.3))"
-                ),
-                "crs": "EPSG:4326",
-            },
+        with (
+            patch(
+                "datavia.weather.saver_weather.extract_netcdf_layer_metadata",
+                return_value={
+                    "valid_from": "2024-01-01T00:00:00",
+                    "valid_until": "2024-01-31T23:00:00",
+                    "bbox": (
+                        "POLYGON ((5.9 47.3, 15.0 47.3, 15.0 55.1, 5.9 55.1, 5.9 47.3))"
+                    ),
+                    "crs": "EPSG:4326",
+                },
+            ),
+            patch("datavia.weather.saver_weather.prepare_netcdf"),
         ):
             result = saver.save(str(nc_file))
 
         assert result is True
         assert check_weather_source_exists("era5") is True
+
+    def test_save_netcdf_calls_prepare_netcdf(self, sqlite_db: None, tmp_path) -> None:
+        """save() prepares NetCDF files in place before registering them.
+
+        Preparation (fill sentinel masking, spatial dim sorting, nodata
+        gap-filling) is done via
+        :func:`datavia.library.interpolation.prepare_netcdf`.
+        """
+        from datavia.weather.saver_weather import SaverWeather
+
+        nc_file = tmp_path / "era5_temperature_2m.nc"
+        nc_file.write_bytes(b"FAKE_NC_CONTENT")
+
+        saver = SaverWeather.__new__(SaverWeather)
+        saver.source_name = "era5"
+        saver.data_dir = str(tmp_path)
+
+        with (
+            patch(
+                "datavia.weather.saver_weather.extract_netcdf_layer_metadata",
+                return_value={
+                    "valid_from": "2024-01-01T00:00:00",
+                    "valid_until": "2024-01-31T23:00:00",
+                    "bbox": None,
+                    "crs": "EPSG:4326",
+                },
+            ),
+            patch("datavia.weather.saver_weather.prepare_netcdf") as mock_prepare,
+        ):
+            result = saver.save(str(nc_file))
+
+        assert result is True
+        mock_prepare.assert_called_once()
+        import os as _os
+
+        prepared_path = mock_prepare.call_args[0][0]
+        assert _os.path.dirname(prepared_path) == str(tmp_path)
+
+    def test_register_only_does_not_call_prepare_netcdf(
+        self, sqlite_db: None, tmp_path
+    ) -> None:
+        """register_only=True must not re-prepare an already-registered file."""
+        from datavia.weather.saver_weather import SaverWeather
+
+        nc_file = tmp_path / "era5_temperature_2m.nc"
+        nc_file.write_bytes(b"FAKE_NC_CONTENT")
+
+        saver = SaverWeather.__new__(SaverWeather)
+        saver.source_name = "era5"
+        saver.data_dir = str(tmp_path)
+
+        with (
+            patch(
+                "datavia.weather.saver_weather.extract_netcdf_layer_metadata",
+                return_value={
+                    "valid_from": "2024-01-01T00:00:00",
+                    "valid_until": "2024-01-31T23:00:00",
+                    "bbox": None,
+                    "crs": "EPSG:4326",
+                },
+            ),
+            patch("datavia.weather.saver_weather.prepare_netcdf") as mock_prepare,
+        ):
+            result = saver.save(str(nc_file), register_only=True)
+
+        assert result is True
+        mock_prepare.assert_not_called()
 
     def test_save_idempotent(self, sqlite_db: None, tmp_path) -> None:
         """Calling save() twice on the same file does not create duplicate rows."""
@@ -120,9 +190,12 @@ class TestSaverWeather:
             "bbox": None,
             "crs": "EPSG:4326",
         }
-        with patch(
-            "datavia.weather.saver_weather.extract_netcdf_layer_metadata",
-            return_value=meta,
+        with (
+            patch(
+                "datavia.weather.saver_weather.extract_netcdf_layer_metadata",
+                return_value=meta,
+            ),
+            patch("datavia.weather.saver_weather.prepare_netcdf"),
         ):
             saver.save(str(nc_file))
             saver.save(str(nc_file))
@@ -236,15 +309,18 @@ class TestSaverWeatherExplicitVariable:
         saver.source_name = "weather"
         saver.data_dir = str(tmp_path)
 
-        with patch(
-            "datavia.weather.saver_weather.extract_netcdf_layer_metadata",
-            return_value={
-                "valid_from": "2024-06-01T00:00:00",
-                "valid_until": "2024-06-30T23:00:00",
-                "bbox": None,
-                "crs": "EPSG:4326",
-                "variables": ["2m_temperature"],
-            },
+        with (
+            patch(
+                "datavia.weather.saver_weather.extract_netcdf_layer_metadata",
+                return_value={
+                    "valid_from": "2024-06-01T00:00:00",
+                    "valid_until": "2024-06-30T23:00:00",
+                    "bbox": None,
+                    "crs": "EPSG:4326",
+                    "variables": ["2m_temperature"],
+                },
+            ),
+            patch("datavia.weather.saver_weather.prepare_netcdf"),
         ):
             result = saver.save(str(nc_file), variable="2m_temperature")
 
@@ -273,15 +349,18 @@ class TestSaverWeatherExplicitVariable:
         saver.source_name = "weather"
         saver.data_dir = str(tmp_path)
 
-        with patch(
-            "datavia.weather.saver_weather.extract_netcdf_layer_metadata",
-            return_value={
-                "valid_from": "2024-06-01T00:00:00",
-                "valid_until": "2024-06-30T23:00:00",
-                "bbox": None,
-                "crs": "EPSG:4326",
-                "variables": ["2m_temperature", "total_precipitation"],
-            },
+        with (
+            patch(
+                "datavia.weather.saver_weather.extract_netcdf_layer_metadata",
+                return_value={
+                    "valid_from": "2024-06-01T00:00:00",
+                    "valid_until": "2024-06-30T23:00:00",
+                    "bbox": None,
+                    "crs": "EPSG:4326",
+                    "variables": ["2m_temperature", "total_precipitation"],
+                },
+            ),
+            patch("datavia.weather.saver_weather.prepare_netcdf"),
         ):
             result = saver.save(str(nc_file))
 
@@ -353,6 +432,7 @@ class TestSaverWeatherDestNaming:
                 "datavia.weather.saver_weather._has_zarr_grid",
                 return_value=False,
             ),
+            patch("datavia.weather.saver_weather.prepare_netcdf"),
         ):
             saver.save(str(nc_file))
 
@@ -400,6 +480,7 @@ class TestSaverWeatherDestNaming:
                 "datavia.weather.saver_weather._has_zarr_grid",
                 return_value=False,
             ),
+            patch("datavia.weather.saver_weather.prepare_netcdf"),
         ):
             saver.save(str(nc_file))
 

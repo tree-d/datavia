@@ -484,6 +484,7 @@ class TestWeatherSyncAdventure:
                 "datavia.weather.saver_weather._has_zarr_grid",
                 return_value=False,
             ),
+            patch("datavia.weather.saver_weather.prepare_netcdf"),
         ):
             # Full save (not register_only) so that the copy is made and the
             # registered URI is the destination path.
