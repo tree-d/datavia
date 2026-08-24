@@ -247,7 +247,7 @@ def _build_spatial_interp_coords(
                 "(e.g. HYRAS EPSG:3035). Install with `pip install pyproj`."
             )
         crs_file = pyproj.CRS.from_cf(ds[grid_mapping_name].attrs)
-        transformer = pyproj.Transformer.from_crs(input_crs, crs_file, always_xy=True)
+        transformer = get_transformer(input_crs, crs_file)
         # Batch-reproject all N points in a single transformer call.
         x_arr, y_arr = transformer.transform(lons, lats)
         return {
@@ -266,7 +266,7 @@ def _build_spatial_interp_coords(
                 "coordinates for geographic NetCDF files. "
                 "Install with `pip install pyproj`."
             )
-        t = pyproj.Transformer.from_crs(input_crs, "EPSG:4326", always_xy=True)
+        t = transformer = get_transformer(input_crs, "EPSG:4326")
         lons, lats = t.transform(lons, lats)
     return {
         lat_name: xr.DataArray(lats, dims="points"),
