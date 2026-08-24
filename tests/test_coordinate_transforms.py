@@ -41,6 +41,13 @@ class TestCoordinateTransforms:
         assert abs(x - 13.4050) < 1e-6
         assert abs(y - 52.5200) < 1e-6
 
+    def test_get_transformer_reuses_cached_instance(self):
+        """Repeated requests for one CRS pair return the cached Transformer."""
+        first = get_transformer("EPSG:4326", "EPSG:3035")
+        second = get_transformer("EPSG:4326", "EPSG:3035")
+
+        assert first is second
+
     def test_get_transformer_invalid_crs(self):
         """Test get_transformer with invalid CRS raises error."""
         with pytest.raises((ValueError, CRSError)):  # Handle both possible exceptions

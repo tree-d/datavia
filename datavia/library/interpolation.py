@@ -36,7 +36,7 @@ except ImportError:  # pragma: no cover - optional dependency
     pyproj = None  # type: ignore[assignment]
     PYPROJ_AVAILABLE = False
 
-from .coordinate_transforms import transform_coordinates
+from .coordinate_transforms import get_transformer, transform_coordinates
 
 logger = logging.getLogger(__name__)
 
@@ -266,8 +266,8 @@ def _build_spatial_interp_coords(
                 "coordinates for geographic NetCDF files. "
                 "Install with `pip install pyproj`."
             )
-        t = transformer = get_transformer(input_crs, "EPSG:4326")
-        lons, lats = t.transform(lons, lats)
+        transformer = get_transformer(input_crs, "EPSG:4326")
+        lons, lats = transformer.transform(lons, lats)
     return {
         lat_name: xr.DataArray(lats, dims="points"),
         lon_name: xr.DataArray(lons, dims="points"),

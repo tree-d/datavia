@@ -29,6 +29,8 @@ each existing coverage cell it subtracts the covered portion:
 Each returned :class:`CoverageCell` maps to one downloader call.
 """
 
+from __future__ import annotations
+
 import datetime
 import logging
 from pathlib import Path
@@ -400,6 +402,23 @@ class CoverageManager:
         str
             WKT POLYGON in EPSG:4326, or the full grid extent as fallback.
         """
+        # Fixed-domain sources such as HYRAS do not support spatial subset
+        # downloads.  Use the registry envelope verbatim so the request and
+        # rebuilt coverage use identical bounds; deriving projected corner
+        # bounds independently can differ by tiny fractions of a degree and
+        # cause an otherwise warm update to download the full annual files.
+        from .source_registry import SOURCE_REGISTRY
+
+        coverage_bbox = SOURCE_REGISTRY.get(self._source_name, {}).get(
+            "coverage_bbox"
+        )
+        if coverage_bbox is not None:
+            west, south, east, north = coverage_bbox
+            return (
+                f"POLYGON (({west} {south}, {east} {south}, "
+                f"{east} {north}, {west} {north}, {west} {south}))"
+            )
+
         has_data = da.notnull().any(dim="time").compute()
 
         if "latitude" in da.dims and "longitude" in da.dims:
@@ -422,7 +441,6 @@ class CoverageManager:
 
         # Projected store (e.g. HYRAS EPSG:3035): dimensions are x/y in metres.
         # Reproject the bbox corners to WGS84 for database storage.
-        from .source_registry import SOURCE_REGISTRY
         from .zarr_store_manager import _projected_bbox_to_wgs84
 
         zarr_crs = (
@@ -458,7 +476,11 @@ class CoverageManager:
         store_uri : str
             Absolute path to the Zarr store directory.
         """
-        layer_name = f"{self._source_name}_{variable}_{year}_rebuilt"
+        # One row represents one covered month.  Including the month in the
+        # key keeps later inserts from deleting earlier months in the same
+        # year during rebuild_from_store().
+        month_key = valid_from[:7].replace("-", "")
+        layer_name = f"{self._source_name}_{variable}_{month_key}_rebuilt"
         acquisition_time = datetime.datetime.now(datetime.UTC).isoformat()
 
         session = session_local()

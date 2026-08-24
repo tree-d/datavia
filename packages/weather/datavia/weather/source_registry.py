@@ -149,6 +149,15 @@ SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
             "rsds": "surface_solar_radiation_downwards",
             "hurs": "relative_humidity_2m",
         },
+        # Fixed WGS84 envelope of the national EPSG:3035 grid.  HYRAS does
+        # not support bbox-subset downloads, so coverage checks must use this
+        # same envelope for both requests and rebuilt store registrations.
+        "coverage_bbox": (
+            5.307613684411584,
+            47.07781030622338,
+            15.707082890486497,
+            55.08908843154143,
+        ),
         # HYRAS stores are kept in their native ETRS89-LAEA (EPSG:3035)
         # projection.  The x/y coordinate arrays are derived from the
         # downloaded .nc files at write time — no pre-defined grid is required.

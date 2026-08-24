@@ -22,6 +22,7 @@ import pandas as pd
 import pytest
 import xarray as xr
 from conftest import _MOCK_GRID
+from datavia.library.database.query import get_weather_metadata
 from datavia.weather.coverage_manager import (
     CoverageCell,
     CoverageManager,
@@ -228,6 +229,37 @@ class TestRebuildFromStoreInserts:
         assert first >= 0
         assert second >= 0
 
+    def test_preserves_distinct_month_rows(
+        self, tmp_path: Path, mock_registry: None, sqlite_db: None
+    ) -> None:
+        """Rebuilding a later month does not replace an earlier month row."""
+        mgr = CoverageManager(_MOCK_SOURCE, ["temperature"], data_dir=str(tmp_path))
+        bbox = "POLYGON ((10 54, 11 54, 11 55, 10 55, 10 54))"
+        store_uri = str(tmp_path / _MOCK_SOURCE / "temperature" / "2024.zarr")
+
+        mgr._insert_coverage_row(
+            "temperature",
+            2024,
+            "2024-01-01T00:00:00",
+            "2024-01-31T23:00:00",
+            bbox,
+            store_uri,
+        )
+        mgr._insert_coverage_row(
+            "temperature",
+            2024,
+            "2024-02-01T00:00:00",
+            "2024-02-29T23:00:00",
+            bbox,
+            store_uri,
+        )
+
+        rows = get_weather_metadata(_MOCK_SOURCE, "temperature")
+        assert [row["valid_from"] for row in rows] == [
+            "2024-01-01T00:00:00",
+            "2024-02-01T00:00:00",
+        ]
+
 
 # ---------------------------------------------------------------------------
 # _bbox_from_notnull
@@ -293,6 +325,26 @@ class TestBboxFromNotnull:
         # Should not raise and should return a valid WKT polygon.
         bbox = _parse_bbox_wkt(wkt)
         assert len(bbox) == 4
+
+    def test_fixed_source_uses_registry_coverage_bbox(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        mock_registry: None,
+        sqlite_db: None,
+    ) -> None:
+        """Fixed-domain stores register the exact request coverage envelope."""
+        expected = (5.3, 47.1, 15.7, 55.09)
+        monkeypatch.setitem(SOURCE_REGISTRY[_MOCK_SOURCE], "coverage_bbox", expected)
+        da = xr.DataArray(
+            np.ones((1, 2, 2), dtype=np.float32),
+            dims=["time", "y", "x"],
+            coords={"time": [pd.Timestamp("2024-01-01")], "y": [1, 2], "x": [3, 4]},
+        )
+
+        mgr = self._manager_instance(tmp_path, mock_registry, sqlite_db)
+
+        assert _parse_bbox_wkt(mgr._bbox_from_notnull(da)) == expected
 
 
 # ---------------------------------------------------------------------------

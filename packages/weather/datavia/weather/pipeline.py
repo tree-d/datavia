@@ -48,7 +48,7 @@ from .composite_downloader import CompositeWeatherDownloader
 from .coverage_manager import CoverageCell, CoverageManager
 from .getter_weather import GetterWeather
 from .saver_weather import SaverWeather
-from .source_registry import get_valid_variables
+from .source_registry import SOURCE_REGISTRY, get_valid_variables
 
 logger = logging.getLogger(__name__)
 
@@ -564,6 +564,10 @@ class WeatherPipeline(Pipeline):
             # era5_bbox is stored as [north, west, south, east] per CDS convention.
             n, w, s, e = era5_bbox
             return (w, s, e, n)
+        coverage_bbox = SOURCE_REGISTRY.get(self.name, {}).get("coverage_bbox")
+        if coverage_bbox is not None:
+            west, south, east, north = coverage_bbox
+            return (float(west), float(south), float(east), float(north))
         return _GERMANY_BBOX_WSNE
 
     def _build_cell_config(self, cell: CoverageCell) -> dict[str, Any]:

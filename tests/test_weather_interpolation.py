@@ -203,6 +203,52 @@ class TestInterpolateNetcdf:
         ds.to_netcdf(path)
         return path
 
+    @staticmethod
+    def _make_projected_nc(tmp_path) -> str:
+        """Write a tiny HYRAS-style EPSG:3035 NetCDF around Leipzig."""
+        import pyproj
+        import xarray as xr
+
+        transformer = pyproj.Transformer.from_crs(
+            "EPSG:4326", "EPSG:3035", always_xy=True
+        )
+        centre_x, centre_y = transformer.transform(12.37, 51.34)
+        x = centre_x + np.array([-1000.0, 0.0, 1000.0])
+        y = centre_y + np.array([-1000.0, 0.0, 1000.0])
+        times = np.array(["2025-07-01T00:00:00"], dtype="datetime64[ns]")
+        values = np.full((1, 3, 3), 18.25, dtype=np.float32)
+        crs = xr.DataArray(0, attrs=pyproj.CRS.from_epsg(3035).to_cf())
+        data = xr.DataArray(
+            values,
+            dims=["time", "y", "x"],
+            coords={"time": times, "y": y, "x": x},
+            attrs={"grid_mapping": "crs"},
+        )
+        path = str(tmp_path / "hyras_projected.nc")
+        xr.Dataset({"tas": data, "crs": crs}).to_netcdf(path)
+        return path
+
+    def test_projected_grid_resolves_transformer(self, tmp_path) -> None:
+        """HYRAS-style interpolation resolves the projected CRS transformer."""
+        from datavia.library import interpolation
+
+        nc = self._make_projected_nc(tmp_path)
+        with patch.object(
+            interpolation,
+            "get_transformer",
+            wraps=interpolation.get_transformer,
+        ) as cached_transformer:
+            first = interpolation.interpolate_netcdf(
+                nc, 51.34, 12.37, "tas", "2025-07-01T12:00:00"
+            )
+            second = interpolation.interpolate_netcdf(
+                nc, 51.34, 12.37, "tas", "2025-07-01T12:00:00"
+            )
+
+        assert first == pytest.approx(18.25)
+        assert second == pytest.approx(first)
+        assert cached_transformer.call_count == 2
+
     def test_scalar_input_returns_scalar(self, tmp_path) -> None:
         """A single lat/lon pair returns a Python float (backward compatible).
 
