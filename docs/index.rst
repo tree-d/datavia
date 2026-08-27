@@ -45,6 +45,20 @@ Installation (Modular):
     pip install datavia[all]
     
     # Or use pixi for development
+    # These instructions allow you to add the github repo as a
+    # pixi dependency. If necessary, replace main with the
+    # desired branch.
+
+    # Core system
+    pixi add --git https://github.com/tree-d/datavia --branch main --pypi datavia
+
+    # Pipelines
+    pixi add --git https://github.com/tree-d/datavia --branch main --subdirectory packages/elevation --pypi datavia-elevation
+    pixi add --git https://github.com/tree-d/datavia --branch main --subdirectory packages/soil --pypi datavia-soil
+    pixi add --git https://github.com/tree-d/datavia --branch main --subdirectory packages/weather --pypi datavia-weather
+
+    # NOT equivalent with pip install, but necessary for your python scripts
+    # to see Datavia.
     pixi install
 
 Basic usage with elevation data:

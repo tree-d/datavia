@@ -79,6 +79,17 @@ pixi add gdal -c conda-forge
 pixi add --pypi datavia[vector]
 ```
 
+#### Option 3: pixi (GitHub as source)
+```bash
+# Core system
+pixi add --git https://github.com/tree-d/datavia --branch main --pypi datavia
+
+# Pipelines
+pixi add --git https://github.com/tree-d/datavia --branch main --subdirectory packages/elevation --pypi datavia-elevation
+pixi add --git https://github.com/tree-d/datavia --branch main --subdirectory packages/soil --pypi datavia-soil
+pixi add --git https://github.com/tree-d/datavia --branch main --subdirectory packages/weather --pypi datavia-weather
+```
+
 ### Basic Setup
 
 1. **No database setup required** — a SQLite database is created automatically in your
