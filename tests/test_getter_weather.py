@@ -242,7 +242,9 @@ class TestGetterWeather:
 
         assert mock_nc.called
         called_datetime_utc = mock_nc.call_args.args[4]
-        assert isinstance(called_datetime_utc, list) and len(called_datetime_utc) == 2, (
+        assert (
+            isinstance(called_datetime_utc, list) and len(called_datetime_utc) == 2
+        ), (
             "Expected the numpy array to be treated as a multi-time batch "
             f"(list of 2), got {called_datetime_utc!r}"
         )

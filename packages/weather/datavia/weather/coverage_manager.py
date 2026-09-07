@@ -409,9 +409,7 @@ class CoverageManager:
         # cause an otherwise warm update to download the full annual files.
         from .source_registry import SOURCE_REGISTRY
 
-        coverage_bbox = SOURCE_REGISTRY.get(self._source_name, {}).get(
-            "coverage_bbox"
-        )
+        coverage_bbox = SOURCE_REGISTRY.get(self._source_name, {}).get("coverage_bbox")
         if coverage_bbox is not None:
             west, south, east, north = coverage_bbox
             return (

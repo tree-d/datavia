@@ -705,9 +705,7 @@ def interpolate_dataset(
                     "pandas is required for temporal_resolution='hourly'. "
                     "Install with `pip install pandas`."
                 )
-            _raw = (
-                datetime_utc[0] if not is_scalar_like(datetime_utc) else datetime_utc
-            )
+            _raw = datetime_utc[0] if not is_scalar_like(datetime_utc) else datetime_utc
             day_start = pd.Timestamp(_raw)
             if day_start.tzinfo is not None:
                 day_start = day_start.tz_convert("UTC").tz_localize(None)
