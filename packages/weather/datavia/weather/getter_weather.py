@@ -39,6 +39,7 @@ from datavia.library.interpolation import (
     interpolate_netcdf,
     interpolate_station_parquet,
 )
+from datavia.library.type_utils import is_scalar_like
 
 from .source_registry import SOURCE_REGISTRY, apply_conversion, get_nc_variable_name
 from .zarr_store_manager import ZarrStoreManager
@@ -311,31 +312,35 @@ class GetterWeather(Getter):
         # Coerce a single-element list to a scalar so that interpolate_netcdf
         # always receives either a plain value (single-time) or a list with at
         # least two entries (multi-time), avoiding shape mismatches.
-        if isinstance(datetime_utc, (list, tuple)) and len(datetime_utc) == 1:
+        is_multi_time = not is_scalar_like(datetime_utc)
+        if is_multi_time and len(datetime_utc) == 1:
             datetime_utc = datetime_utc[0]
+            is_multi_time = False
 
         # Normalise timezone-aware timestamps to timezone-naive UTC so they are
         # always comparable with the naive datetime64 time axes in NetCDF files.
         # This handles ISO-8601 strings ending in 'Z' as well as datetime objects
         # with tzinfo.  Elements in a list are normalised individually.
 
-        if isinstance(datetime_utc, (list, tuple)):
+        if is_multi_time:
             datetime_utc = [_to_naive_utc(dt) for dt in datetime_utc]
         else:
             datetime_utc = _to_naive_utc(datetime_utc)
 
-        is_multi_time = isinstance(datetime_utc, (list, tuple))
         n_times = len(datetime_utc) if is_multi_time else 1
 
+        # str() first: pd.Timestamp rejects numpy scalar types (e.g.
+        # numpy.str_ from a numpy string array) on some pandas/numpy version
+        # combinations even though it accepts the equivalent plain str.
         from_dt = (
-            pd.Timestamp(datetime_utc).isoformat()
-            if not isinstance(datetime_utc, (list, tuple))
-            else pd.Timestamp(datetime_utc[0]).isoformat()
+            pd.Timestamp(str(datetime_utc[0])).isoformat()
+            if is_multi_time
+            else pd.Timestamp(str(datetime_utc)).isoformat()
         )
         to_dt = (
-            pd.Timestamp(datetime_utc).isoformat()
-            if not isinstance(datetime_utc, (list, tuple))
-            else pd.Timestamp(datetime_utc[-1]).isoformat()
+            pd.Timestamp(str(datetime_utc[-1])).isoformat()
+            if is_multi_time
+            else pd.Timestamp(str(datetime_utc)).isoformat()
         )
 
         # For Zarr-enabled sources the store is the primary data backend.

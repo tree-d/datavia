@@ -9,6 +9,7 @@ Covers:
 from unittest.mock import patch
 
 import numpy as np
+import pandas as pd
 import pytest
 
 # ---------------------------------------------------------------------------
@@ -544,6 +545,101 @@ class TestInterpolateNetcdf:
         # Jan → value 1.0, Feb → value 2.0
         assert result[0] == pytest.approx(1.0)
         assert result[1] == pytest.approx(2.0)
+
+    @pytest.mark.parametrize("container", [tuple, np.array, pd.Series])
+    def test_sequence_of_timestamps_returns_array(self, tmp_path, container) -> None:
+        """Any sequence type of timestamps is treated the same as a list (Bug 8).
+
+        ``isinstance(datetime_utc, (list, tuple))`` previously excluded
+        numpy arrays, pandas Series, and other array-likes, causing them to
+        be treated as a single scalar timestamp instead of being iterated.
+        After the fix, any sequence of timestamps — list (see
+        ``test_list_of_timestamps_returns_array``), tuple, numpy array, or
+        pandas Series — takes the same multi-time code path.
+        """
+        import xarray as xr
+
+        from datavia.library.interpolation import interpolate_netcdf
+
+        lats = np.array([47.0, 49.0, 51.0], dtype=float)
+        lons = np.array([9.0, 11.0, 13.0], dtype=float)
+        timestamps = [
+            np.datetime64("2024-01-15T12:00:00"),
+            np.datetime64("2024-02-15T12:00:00"),
+            np.datetime64("2024-03-15T12:00:00"),
+        ]
+        data = np.stack(
+            [
+                np.full((len(lats), len(lons)), float(i + 1))
+                for i in range(len(timestamps))
+            ]
+        )  # shape (3, 3, 3)
+
+        da = xr.DataArray(
+            data,
+            dims=["time", "latitude", "longitude"],
+            coords={
+                "time": np.array(timestamps, dtype="datetime64[ns]"),
+                "latitude": lats,
+                "longitude": lons,
+            },
+        )
+        nc_path = str(tmp_path / "era5_multi_ts_seq.nc")
+        xr.Dataset({"t2m": da}).to_netcdf(nc_path)
+
+        ts_seq = container(["2024-01-15T12:00:00", "2024-02-15T12:00:00"])
+        result = interpolate_netcdf(nc_path, 49.0, 11.0, "t2m", ts_seq)
+
+        assert isinstance(result, np.ndarray), f"Expected ndarray, got {type(result)}"
+        assert result.shape == (2,), f"Expected shape (2,), got {result.shape}"
+        assert result[0] == pytest.approx(1.0)
+        assert result[1] == pytest.approx(2.0)
+
+    @pytest.mark.parametrize("container", [tuple, np.array, pd.Series])
+    def test_sequence_of_nc_paths_concatenates_files(self, tmp_path, container) -> None:
+        """Any sequence type of NetCDF paths is opened/concatenated like a list.
+
+        Mirrors ``test_multi_file_nc_returns_data_from_all_files`` (which
+        covers plain ``list``) but passes ``nc_path`` as a tuple, numpy
+        array, or pandas Series of strings instead.
+        """
+        import xarray as xr
+
+        from datavia.library.interpolation import interpolate_netcdf
+
+        lats = np.array([47.0, 48.0, 49.0, 50.0, 51.0], dtype=float)
+        lons = np.array([9.0, 10.0, 11.0, 12.0, 13.0], dtype=float)
+
+        june_ts = np.array(["2024-06-15T12:00:00"], dtype="datetime64[ns]")
+        june_data = np.full((1, len(lats), len(lons)), 20.0)
+        june_da = xr.DataArray(
+            june_data,
+            dims=["time", "latitude", "longitude"],
+            coords={"time": june_ts, "latitude": lats, "longitude": lons},
+        )
+        june_path = str(tmp_path / "era5_june_seq.nc")
+        xr.Dataset({"t2m": june_da}).to_netcdf(june_path)
+
+        july_ts = np.array(["2024-07-15T12:00:00"], dtype="datetime64[ns]")
+        july_data = np.full((1, len(lats), len(lons)), 25.0)
+        july_da = xr.DataArray(
+            july_data,
+            dims=["time", "latitude", "longitude"],
+            coords={"time": july_ts, "latitude": lats, "longitude": lons},
+        )
+        july_path = str(tmp_path / "era5_july_seq.nc")
+        xr.Dataset({"t2m": july_da}).to_netcdf(july_path)
+
+        nc_paths = container([june_path, july_path])
+        result_june = interpolate_netcdf(
+            nc_paths, 49.0, 11.0, "t2m", "2024-06-15T12:00:00"
+        )
+        result_july = interpolate_netcdf(
+            nc_paths, 49.0, 11.0, "t2m", "2024-07-15T12:00:00"
+        )
+
+        assert result_june == pytest.approx(20.0)
+        assert result_july == pytest.approx(25.0)
 
 
 # ---------------------------------------------------------------------------

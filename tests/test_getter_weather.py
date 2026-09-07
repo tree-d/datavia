@@ -7,6 +7,7 @@ get_weather_data(), temporal resolution, and unit conversion.
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pandas as pd
 import pytest
 
 
@@ -198,6 +199,54 @@ class TestGetterWeather:
                     variable="temperature_2m",
                     datetime_utc=["2024-01-15T12:00:00", "2024-01-16T12:00:00"],
                 )
+
+    @pytest.mark.parametrize("container", [list, tuple, np.array, pd.Series])
+    def test_get_data_sequence_datetime_utc_treated_as_multi_time(
+        self, sqlite_db: None, container
+    ) -> None:
+        """Any sequence type of timestamps takes the multi-time path (Bug 8).
+
+        Before the fix, ``isinstance(datetime_utc, (list, tuple))`` excluded
+        numpy arrays, pandas Series, and other array-likes, so e.g. a
+        ``np.array([...])`` of timestamps was silently treated as a single
+        scalar timestamp instead of a batch. This verifies
+        ``interpolate_netcdf`` is called with both normalised timestamps
+        (multi-time) regardless of whether ``datetime_utc`` is passed as a
+        list, tuple, numpy array, or pandas Series.
+        """
+        from datavia.weather.getter_weather import GetterWeather
+
+        _insert_weather_layer(
+            source_name="ERA5_land",
+            layer_name="ERA5_land_temperature_2m",
+            variable="temperature_2m",
+            file_format="netcdf",
+            valid_from="2024-01-01T00:00:00",
+            valid_until="2024-01-31T23:00:00",
+            uri="/data/era5_temperature_2m.nc",
+        )
+
+        getter = GetterWeather("ERA5_land")
+        coords = np.array([[13.4, 52.5]])
+        datetime_utc = container(["2024-01-15T12:00:00", "2024-01-16T12:00:00"])
+
+        with patch(
+            "datavia.weather.getter_weather.interpolate_netcdf",
+            return_value=np.array([20.0, 21.0]),
+        ) as mock_nc:
+            result = getter.get_data(
+                coords,
+                variable="temperature_2m",
+                datetime_utc=datetime_utc,
+            )
+
+        assert mock_nc.called
+        called_datetime_utc = mock_nc.call_args.args[4]
+        assert isinstance(called_datetime_utc, list) and len(called_datetime_utc) == 2, (
+            "Expected the numpy array to be treated as a multi-time batch "
+            f"(list of 2), got {called_datetime_utc!r}"
+        )
+        assert np.asarray(result).ravel().tolist() == pytest.approx([20.0, 21.0])
 
     def test_get_data_uses_netcdf_interpolation(self, sqlite_db: None) -> None:
         """When only a NetCDF path is found, interpolate_netcdf is called."""

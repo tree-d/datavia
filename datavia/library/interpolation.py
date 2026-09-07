@@ -37,6 +37,7 @@ except ImportError:  # pragma: no cover - optional dependency
     PYPROJ_AVAILABLE = False
 
 from .coordinate_transforms import get_transformer, transform_coordinates
+from .type_utils import is_scalar_like
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +62,10 @@ def _to_naive_ts(raw: Any) -> "pd.Timestamp":
     pd.Timestamp
         Timezone-naive UTC timestamp.
     """
-    t = pd.Timestamp(raw)
+    # str() first: pd.Timestamp rejects numpy scalar types (e.g. numpy.str_
+    # from a numpy string array, numpy.datetime64) on some pandas/numpy
+    # version combinations even though it accepts the equivalent plain str.
+    t = pd.Timestamp(str(raw))
     if t.tzinfo is not None:
         t = t.tz_convert("UTC").tz_localize(None)
     return t
@@ -397,7 +401,7 @@ def interpolate_netcdf(
     # that ERA5 files (which use 'valid_time' from cdsapi >= 0.7) are handled
     # correctly; using dim="time" blindly would create a new outer dimension
     # instead of concatenating along the existing one.
-    if isinstance(nc_path, list) and len(nc_path) > 1:
+    if not is_scalar_like(nc_path) and len(nc_path) > 1:
         opened_datasets = [xr.open_dataset(f) for f in nc_path]
         time_dim_name = next(
             (d for d in opened_datasets[0].dims if d in ("time", "valid_time")),
@@ -406,7 +410,7 @@ def interpolate_netcdf(
         dataset = xr.concat(opened_datasets, dim=time_dim_name)
         for _d in opened_datasets:
             _d.close()
-    elif isinstance(nc_path, list):
+    elif not is_scalar_like(nc_path):
         dataset = xr.open_dataset(nc_path[0])
     else:
         dataset = xr.open_dataset(nc_path)
@@ -702,9 +706,7 @@ def interpolate_dataset(
                     "Install with `pip install pandas`."
                 )
             _raw = (
-                datetime_utc[0]
-                if isinstance(datetime_utc, (list, tuple))
-                else datetime_utc
+                datetime_utc[0] if not is_scalar_like(datetime_utc) else datetime_utc
             )
             day_start = pd.Timestamp(_raw)
             if day_start.tzinfo is not None:
@@ -713,7 +715,7 @@ def interpolate_dataset(
             day_end = day_start + pd.Timedelta(days=1) - pd.Timedelta(nanoseconds=1)
             point = point.sel({time_dim: slice(day_start, day_end)})
         else:
-            if isinstance(datetime_utc, (list, tuple)):
+            if not is_scalar_like(datetime_utc):
                 ts_list = [_to_naive_ts(t) for t in datetime_utc]
                 point = point.sel({time_dim: ts_list}, method="nearest")
             else:
