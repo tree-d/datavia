@@ -14,7 +14,7 @@ zero disk cost.
 Write safety
 ------------
 ``write_dataset`` guards each write with a ``fasteners.InterProcessLock``
-(file-based) and a ``.write_in_progress`` sentinel inside the store directory.
+(file-based) and a ``.write_in_progress`` sentinel next to the store directory.
 If the process is killed during a write the sentinel persists, and subsequent
 calls to ``open_store`` / ``open_multi_year`` skip that store.
 ``CoverageManager.rebuild_from_store`` can recover such stores by scanning
@@ -55,8 +55,29 @@ from datavia.library.interpolation import fill_spatial_gaps
 
 from .source_registry import SOURCE_REGISTRY
 
-# Name of the sentinel file written inside a store while a write is in progress.
+# Name of the sentinel file written while a write is in progress.
 _SENTINEL = ".write_in_progress"
+
+
+def _sentinel_path(path: Path) -> Path:
+    """Return the sibling sentinel path for a store directory.
+
+    Placed next to the store directory (like the ``.lock`` file) rather than
+    inside it, so it never appears in the store's own Zarr member listing
+    (which would otherwise trip a ``ZarrUserWarning`` during ``to_zarr``/
+    ``open_zarr`` group enumeration).
+
+    Parameters
+    ----------
+    path : Path
+        Zarr store directory, e.g. ``.../2024.zarr``.
+
+    Returns
+    -------
+    Path
+        e.g. ``.../2024.zarr.write_in_progress``.
+    """
+    return path.parent / (path.name + _SENTINEL)
 
 
 class ZarrStoreManager:
@@ -248,7 +269,7 @@ class ZarrStoreManager:
         download) are split automatically and written to two separate stores.
 
         Each write is guarded by an ``InterProcessLock`` and a
-        ``.write_in_progress`` sentinel inside the store directory.  The
+        ``.write_in_progress`` sentinel next to the store directory.  The
         sentinel is removed only when the write completes without exception.
 
         Parameters
@@ -282,7 +303,7 @@ class ZarrStoreManager:
                 self.ensure_store(variable, year)
 
             path = self.store_path(variable, year)
-            sentinel = path / _SENTINEL
+            sentinel = _sentinel_path(path)
             lock = fasteners.InterProcessLock(str(path) + ".lock")
 
             with lock:
@@ -401,7 +422,7 @@ class ZarrStoreManager:
         paths = []
         for year in years:
             path = self.store_path(variable, year)
-            if path.exists() and not (path / _SENTINEL).exists():
+            if path.exists() and not _sentinel_path(path).exists():
                 paths.append(str(path))
 
         if not paths:
@@ -882,7 +903,7 @@ def _check_sentinel(path: Path) -> None:
     RuntimeError
         If the sentinel file is present.
     """
-    sentinel = path / _SENTINEL
+    sentinel = _sentinel_path(path)
     if sentinel.exists():
         raise RuntimeError(
             f"Store {path} has a '.write_in_progress' sentinel, indicating a "

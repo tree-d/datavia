@@ -374,7 +374,7 @@ Stores use Blosc + zstd level-3 compression and chunks of
 
 Every write is protected by two mechanisms:
 
-1. **Sentinel file** — `.write_in_progress` is created inside the store
+1. **Sentinel file** — `.write_in_progress` is created next to the store
    directory before writing begins and removed on success.  A store whose
    sentinel is present is treated as corrupt and skipped by all readers.
 2. **Inter-process lock** — `fasteners.InterProcessLock` serialises concurrent

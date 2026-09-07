@@ -284,7 +284,7 @@ class CoverageManager:
             )
             return 0
 
-        from .zarr_store_manager import _SENTINEL, ZarrStoreManager
+        from .zarr_store_manager import ZarrStoreManager, _sentinel_path
 
         mgr = ZarrStoreManager(self._data_dir, self._source_name)
         source_root = Path(self._data_dir) / self._source_name / variable
@@ -299,7 +299,7 @@ class CoverageManager:
                 logger.warning("Skipping unexpected store directory: %s", store_dir)
                 continue
 
-            sentinel = store_dir / _SENTINEL
+            sentinel = _sentinel_path(store_dir)
             try:
                 rows_inserted += self._rebuild_year(mgr, variable, year)
             except Exception as exc:

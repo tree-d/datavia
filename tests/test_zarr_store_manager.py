@@ -32,6 +32,7 @@ from datavia.weather.zarr_store_manager import (
     _SENTINEL,
     ZarrStoreManager,
     _check_sentinel,
+    _sentinel_path,
     _snap_coords,
 )
 
@@ -265,7 +266,7 @@ class TestWriteDataset:
         """The .write_in_progress sentinel is absent after a clean write."""
         ds = _make_synthetic_dataset("temperature", year=2024, n_hours=1)
         manager.write_dataset(ds, "temperature")
-        sentinel = manager.store_path("temperature", 2024) / _SENTINEL
+        sentinel = _sentinel_path(manager.store_path("temperature", 2024))
         assert not sentinel.exists()
 
     def test_valid_time_coord_is_normalised(self, manager: ZarrStoreManager) -> None:
@@ -428,7 +429,7 @@ class TestOpenStore:
     def test_sentinel_raises_runtime_error(self, manager: ZarrStoreManager) -> None:
         """RuntimeError is raised when a .write_in_progress sentinel is present."""
         manager.ensure_store("temperature", 2024)
-        (manager.store_path("temperature", 2024) / _SENTINEL).write_text(
+        _sentinel_path(manager.store_path("temperature", 2024)).write_text(
             "interrupted\n", encoding="utf-8"
         )
         with pytest.raises(RuntimeError, match=_SENTINEL):
@@ -456,7 +457,7 @@ class TestOpenMultiYear:
         """Years whose store has an active sentinel are silently skipped."""
         manager.ensure_store("temperature", 2023)
         manager.ensure_store("temperature", 2024)
-        (manager.store_path("temperature", 2023) / _SENTINEL).write_text(
+        _sentinel_path(manager.store_path("temperature", 2023)).write_text(
             "interrupted\n", encoding="utf-8"
         )
         ds = manager.open_multi_year("temperature", [2023, 2024])
@@ -719,7 +720,7 @@ class TestCheckSentinel:
 
     def test_sentinel_present_raises(self, tmp_path: Path) -> None:
         """RuntimeError is raised when .write_in_progress is present."""
-        (tmp_path / _SENTINEL).write_text("in progress\n", encoding="utf-8")
+        _sentinel_path(tmp_path).write_text("in progress\n", encoding="utf-8")
         with pytest.raises(RuntimeError, match=_SENTINEL):
             _check_sentinel(tmp_path)
 

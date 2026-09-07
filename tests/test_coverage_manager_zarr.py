@@ -29,7 +29,7 @@ from datavia.weather.coverage_manager import (
     _parse_bbox_wkt,
 )
 from datavia.weather.source_registry import SOURCE_REGISTRY
-from datavia.weather.zarr_store_manager import _SENTINEL, ZarrStoreManager
+from datavia.weather.zarr_store_manager import ZarrStoreManager, _sentinel_path
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -173,7 +173,7 @@ class TestRebuildFromStoreSentinel:
         """A .write_in_progress sentinel is removed once rebuild_from_store finishes."""
         _write_real_data(store_manager, "temperature", 2024)
         # Re-plant a sentinel to simulate an interrupted write.
-        sentinel = store_manager.store_path("temperature", 2024) / _SENTINEL
+        sentinel = _sentinel_path(store_manager.store_path("temperature", 2024))
         sentinel.write_text("interrupted\n", encoding="utf-8")
 
         # Build coverage manager that knows where the stores are.
