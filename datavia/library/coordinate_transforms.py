@@ -36,7 +36,9 @@ try:
         def __init__(self) -> None:
             self._transformer_cache: dict[str, Transformer] = {}
 
-        def get_transformer(self, source_crs: str, target_crs: str) -> Transformer:
+        def get_transformer(
+            self, source_crs: str, target_crs: str | PROJ_CRS
+        ) -> Transformer:
             """Get a cached or new Transformer for a given CRS pair."""
             cache_key = f"{source_crs}->{target_crs}"
             if cache_key not in self._transformer_cache:
@@ -47,7 +49,7 @@ try:
 
     _transformer_manager = _TransformerManager()
 
-    def get_transformer(source_crs: str, target_crs: str) -> Transformer:
+    def get_transformer(source_crs: str, target_crs: str | PROJ_CRS) -> Transformer:
         """
         Get a cached transformer for a given CRS pair.
 

@@ -191,8 +191,8 @@ Phase 2 (Core Implementation)
 Future Releases
 ---------------
 
-`[1.0.5] — Planned <https://github.com/tree-d/datavia/compare/v1.0.4...HEAD>`_
----------------------------------------------------------------------------------
+[1.0.5] — Planned
+------------------
 
 The Zarr store migration release. Replaces the per-download ``.nc`` file model
 with a consolidated Zarr store per ``(source, variable, year)`` triple,

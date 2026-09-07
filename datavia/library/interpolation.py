@@ -2,7 +2,7 @@
 
 import logging
 import os
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import numpy as np
 
@@ -413,7 +413,7 @@ def interpolate_netcdf(
     elif not is_scalar_like(nc_path):
         dataset = xr.open_dataset(nc_path[0])
     else:
-        dataset = xr.open_dataset(nc_path)
+        dataset = xr.open_dataset(cast(str, nc_path))
     with dataset as ds:
         return interpolate_dataset(
             ds,
