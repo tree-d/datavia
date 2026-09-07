@@ -22,7 +22,6 @@ import pandas as pd
 import pytest
 import xarray as xr
 from conftest import _MOCK_GRID
-from datavia.library.database.query import get_weather_metadata
 from datavia.weather.coverage_manager import (
     CoverageCell,
     CoverageManager,
@@ -30,6 +29,8 @@ from datavia.weather.coverage_manager import (
 )
 from datavia.weather.source_registry import SOURCE_REGISTRY
 from datavia.weather.zarr_store_manager import ZarrStoreManager, _sentinel_path
+
+from datavia.library.database.query import get_weather_metadata
 
 # ---------------------------------------------------------------------------
 # Shared fixtures

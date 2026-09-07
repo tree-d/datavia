@@ -26,6 +26,7 @@ from datavia.library.type_utils import is_scalar_like
     ],
 )
 def test_scalar_like_values_are_scalar(value):
+    """is_scalar_like returns True for scalar-like values."""
     assert is_scalar_like(value) is True
 
 
@@ -42,4 +43,5 @@ def test_scalar_like_values_are_scalar(value):
     ],
 )
 def test_sequence_like_values_are_not_scalar(value):
+    """is_scalar_like returns False for sequence-like values."""
     assert is_scalar_like(value) is False

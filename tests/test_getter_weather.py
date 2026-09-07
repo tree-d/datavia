@@ -161,13 +161,13 @@ class TestGetterWeather:
                 "datavia.weather.getter_weather.interpolate_station_parquet",
                 return_value=float("nan"),
             ),
+            pytest.raises(MissingWeatherDataError, match="temperature_2m"),
         ):
-            with pytest.raises(MissingWeatherDataError, match="temperature_2m"):
-                getter.get_data(
-                    coords,
-                    variable="temperature_2m",
-                    datetime_utc="2024-01-15T12:00:00",
-                )
+            getter.get_data(
+                coords,
+                variable="temperature_2m",
+                datetime_utc="2024-01-15T12:00:00",
+            )
 
     def test_get_data_raises_on_nan_multi_timestamp(self, sqlite_db: None) -> None:
         """MissingWeatherDataError is raised for a NaN in a multi-timestamp batch."""
@@ -189,16 +189,18 @@ class TestGetterWeather:
         getter = GetterWeather("ERA5_land")
         coords = np.array([[13.4, 52.5]])
 
-        with patch(
-            "datavia.weather.getter_weather.interpolate_netcdf",
-            return_value=np.array([20.0, float("nan")]),
+        with (
+            patch(
+                "datavia.weather.getter_weather.interpolate_netcdf",
+                return_value=np.array([20.0, float("nan")]),
+            ),
+            pytest.raises(MissingWeatherDataError, match="temperature_2m"),
         ):
-            with pytest.raises(MissingWeatherDataError, match="temperature_2m"):
-                getter.get_data(
-                    coords,
-                    variable="temperature_2m",
-                    datetime_utc=["2024-01-15T12:00:00", "2024-01-16T12:00:00"],
-                )
+            getter.get_data(
+                coords,
+                variable="temperature_2m",
+                datetime_utc=["2024-01-15T12:00:00", "2024-01-16T12:00:00"],
+            )
 
     @pytest.mark.parametrize("container", [list, tuple, np.array, pd.Series])
     def test_get_data_sequence_datetime_utc_treated_as_multi_time(
