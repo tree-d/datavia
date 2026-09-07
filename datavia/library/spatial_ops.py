@@ -1,7 +1,8 @@
 """Spatial raster operations for pipeline use.
 
 Provides in-place GeoTIFF reprojection. Coordinate-based value extraction and
-raster sampling are handled by :func:`datavia.library.interpolation.spatial_interpolate`,
+raster sampling are handled
+by :func:`datavia.library.interpolation.spatial_interpolate`,
 which is called by :class:`datavia.core.getter_tiff.GetterTiff`.
 """
 
@@ -22,7 +23,6 @@ try:
 
     RASTERIO_AVAILABLE = True
 except ImportError:
-    logger.warning("rasterio not available - TIFF operations will be limited")
     RASTERIO_AVAILABLE = False
 
 
@@ -64,6 +64,7 @@ def reproject_tiff(
         failure.
     """
     if not RASTERIO_AVAILABLE:
+        logger.warning("rasterio not available - TIFF operations will be limited")
         raise RuntimeError("rasterio is not available — cannot reproject GeoTIFF")
 
     with rasterio.open(filepath) as src:

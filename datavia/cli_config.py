@@ -13,10 +13,16 @@ logger = logging.getLogger(__name__)
 ELEVATION_EXAMPLE = """
     # Example 1: Get elevation data
     try:
-        elevations = datavia.elevation.get_data(coords=berlin_coords, crs_coords="EPSG:4326")
+        elevations = datavia.elevation.get_data(
+            coords=berlin_coords,
+            crs_coords="EPSG:4326",
+        )
         print(f"Berlin elevation: {elevations[0]:.1f}m")
 
-        elevations = datavia.elevation.get_data(coords=munich_coords, crs_coords="EPSG:4326")
+        elevations = datavia.elevation.get_data(
+            coords=munich_coords,
+            crs_coords="EPSG:4326",
+        )
         print(f"Munich elevation: {elevations[0]:.1f}m")
     except Exception as e:
         print(f"Elevation example failed: {e}")
@@ -24,7 +30,8 @@ ELEVATION_EXAMPLE = """
 
 SOIL_EXAMPLE = """
     # Example 2: Get soil data
-    # Note: SoilPipeline.get_data() returns dict[str, np.ndarray] - one array per property.
+    # Note: SoilPipeline.get_data() returns dict[str, np.ndarray]
+    # - one array per property.
     try:
         soil_data = datavia.soil.get_data(coords=berlin_coords, crs_coords="EPSG:4326")
         print("Berlin soil properties:")
@@ -41,9 +48,19 @@ SOIL_EXAMPLE = """
 
 WEATHER_EXAMPLE = """
     # Example 3: Get weather data
+    # get_weather_data() queries a single (lat, lon) point at a specific UTC time.
+    # get_data() accepts a coords array but requires 'variable' and 'datetime_utc'
+    # as keyword arguments.
     try:
-        weather_data = datavia.weather.get_data(coords=berlin_coords, crs_coords="EPSG:4326")
-        print(f"Berlin weather: {weather_data}")
+        import datetime
+        now = datetime.datetime.now(datetime.timezone.utc)
+        temp = datavia.weather.get_weather_data(
+            lat=52.5200,
+            lon=13.4050,
+            variable="temperature_2m",
+            datetime_utc=now,
+        )
+        print(f"Berlin temperature_2m: {temp:.1f} °C")
     except Exception as e:
         print(f"Weather example failed: {e}")
         print("Note: Make sure to run 'datavia update weather' first!")"""
@@ -51,7 +68,10 @@ WEATHER_EXAMPLE = """
 RADIATION_EXAMPLE = """
     # Example 4: Get radiation data
     try:
-        radiation_data = datavia.radiation.get_data(coords=berlin_coords, crs_coords="EPSG:4326")
+        radiation_data = datavia.radiation.get_data(
+            coords=berlin_coords,
+            crs_coords="EPSG:4326",
+        )
         print(f"Berlin solar radiation: {radiation_data}")
     except Exception as e:
         print(f"Radiation example failed: {e}")
@@ -63,7 +83,8 @@ GENERAL_EXAMPLE = """
         try:
             print(f"Testing {pipeline.name} pipeline...")
             data = pipeline.get_data(coords=berlin_coords, crs_coords="EPSG:4326")
-            # SoilPipeline returns dict[str, np.ndarray]; scalar pipelines return np.ndarray
+            # SoilPipeline returns dict[str, np.ndarray];
+            # scalar pipelines return np.ndarray.
             if isinstance(data, dict):
                 for prop, values in data.items():
                     print(f"  {pipeline.name}.{prop}: {values[0]:.2f}")
@@ -104,26 +125,27 @@ def create_config_file(selected_pipelines: list[str], config_file: str) -> None:
 
     if "elevation" in selected_pipelines:
         imports.append("from datavia.elevation import ElevationPipeline")
-        pipeline_instances.append(
-            """elevation = ElevationPipeline(
-    url="https://sgx.geodatenzentrum.de/wcs_dgm200_inspire?VERSION=2.0.1&SERVICE=WCS&REQUEST=GetCoverage&COVERAGEID=dgm200_inspire__EL.GridCoverage&format=image/tiff&crs=EPSG:25832&bbox=280000,5235000,921000,6101000"
-)"""
-        )
+        pipeline_instances.append("elevation = ElevationPipeline()")
 
     if "soil" in selected_pipelines:
         imports.append("from datavia.soil import SoilPipeline")
-        pipeline_instances.append(
-            """soil = SoilPipeline(
-    properties=["clay", "sand", "silt", "ph", "carbon"]
-)"""
-        )
+        pipeline_instances.append("soil = SoilPipeline()")
 
     if "weather" in selected_pipelines:
         imports.append("from datavia.weather import WeatherPipeline")
         pipeline_instances.append(
-            """weather = WeatherPipeline(
-    data_source="DWD",
-    variables=["temperature", "precipitation", "humidity"]
+            """# WeatherPipeline downloads gridded reanalysis (HYRAS / ERA5) and
+# optionally DWD point-station observations (Open-Meteo, no key required).
+# Adjust source, variables, date_start/date_end, and era5_bbox to your area.
+weather = WeatherPipeline(
+    config={
+        "source": "HYRAS",
+        "variables": ["2m_temperature"],
+        "date_start": "2024-01-01",
+        "date_end":   "2024-12-31",
+        # Bounding box override for ERA5 (lon_min, lat_min, lon_max, lat_max):
+        # "era5_bbox": [5.0, 47.0, 15.5, 55.5],
+    }
 )"""
         )
 
@@ -230,15 +252,29 @@ def main() -> None:
         coord_array = np.array([coords])
 
         # Use each available pipeline
+        import datetime
         for pipeline in datavia.pipelines:
             try:
+                if pipeline.name == "weather":
+                    # WeatherPipeline.get_data() requires 'variable' and
+                    # 'datetime_utc' kwargs; use get_weather_data() instead.
+                    temp = pipeline.get_weather_data(
+                        lat=float(coord_array[0, 1]),
+                        lon=float(coord_array[0, 0]),
+                        variable="temperature_2m",
+                        datetime_utc=datetime.datetime.now(datetime.timezone.utc),
+                    )
+                    print(f"{{pipeline.name}}: temperature_2m = {{temp:.1f}} °C")
+                    continue
+
                 data = pipeline.get_data(coords=coord_array, crs_coords="EPSG:4326")
                 # SoilPipeline returns dict[str, np.ndarray]; others return np.ndarray
                 if isinstance(data, dict):
                     summary = {{k: float(v[0]) for k, v in data.items()}}
                     print(f"{{pipeline.name}}: {{summary}}")
                 else:
-                    print(f"{{pipeline.name}}: {{data[0] if len(data) > 0 else 'No data'}}")
+                    value = data[0] if len(data) > 0 else "No data"
+                    print(f"{{pipeline.name}}: {{value}}")
             except Exception as e:
                 print(f"{{pipeline.name}}: Error - {{e}}")
 

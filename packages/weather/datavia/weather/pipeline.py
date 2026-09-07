@@ -1,0 +1,731 @@
+"""
+WeatherPipeline — end-to-end weather data integration pipeline.
+
+Integrates gridded reanalysis data (ERA5-Land or HYRAS) and optionally DWD
+station observations (Parquet) from Germany into a single pipeline.  Downloads
+are orchestrated by
+:class:`~datavia.weather.composite_downloader.CompositeWeatherDownloader`,
+which delegates to the appropriate grid downloader and optionally to
+:class:`~datavia.weather.dwd_downloader.DWDStationDownloader`.
+
+Files are registered in the ``weather_layers`` SQLite table via
+:class:`~datavia.weather.saver_weather.SaverWeather` and retrieved by
+:class:`~datavia.weather.getter_weather.GetterWeather`.
+
+The pipeline's ``name`` is taken from ``config["source"]`` so that two
+pipelines with different sources (e.g. ``"ERA5_land"`` and ``"HYRAS"``) write
+to separate ``source_name`` entries in the database and never shadow each
+other.
+
+Usage::
+
+    from datavia.weather import WeatherPipeline
+
+    pipe = WeatherPipeline(config={
+        "source":     "ERA5_land",
+        "variables":  ["2m_temperature", "total_precipitation"],
+        "date_start": "2024-06-01",
+        "date_end":   "2024-06-30",
+    })
+    pipe.update_data()
+    value = pipe.get_weather_data(
+        lat=52.5,
+        lon=13.4,
+        variable="2m_temperature",
+        datetime_utc="2024-06-15T12:00:00",
+    )
+"""
+
+import logging
+from typing import Any
+
+import numpy as np
+
+from datavia.core.interfaces import Pipeline
+from datavia.library.database.start import initialize_database
+
+from .composite_downloader import CompositeWeatherDownloader
+from .coverage_manager import CoverageCell, CoverageManager
+from .getter_weather import GetterWeather
+from .saver_weather import SaverWeather
+from .source_registry import SOURCE_REGISTRY, get_valid_variables
+
+logger = logging.getLogger(__name__)
+
+#: Default Germany bounding box as ``(west, south, east, north)`` in EPSG:4326.
+#: Used when the pipeline config contains no explicit ``era5_bbox``.
+_GERMANY_BBOX_WSNE: tuple[float, float, float, float] = (5.9, 47.3, 15.0, 55.1)
+
+#: Required keys that every WeatherPipeline config must contain.
+_REQUIRED_CONFIG_KEYS: frozenset[str] = frozenset(
+    {"source", "variables", "date_start", "date_end"}
+)
+
+#: Tolerance used when validating ``era5_bbox`` against the Zarr skeleton grid.
+#: Equal to half a 0.1° ERA5-Land grid cell.
+_ERA5_GRID_HALF_STEP: float = 0.05
+
+#: All valid WeatherPipeline config keys (required + optional).
+_KNOWN_CONFIG_KEYS: frozenset[str] = _REQUIRED_CONFIG_KEYS | frozenset(
+    {
+        "era5_bbox",
+        "dwd_stations",
+        "unit_conversions",
+        "buffer_days",
+        "temporal_resolution",
+        "cds_queue_timeout",
+        "chunk_by",
+    }
+)
+
+
+def _validate_era5_bbox_within_grid(config: dict) -> None:
+    """Raise ``ValueError`` if *config*'s ``era5_bbox`` falls outside the ERA5 grid.
+
+    Checks the user-supplied ``era5_bbox`` against the latitude and longitude
+    arrays registered in ``SOURCE_REGISTRY["ERA5_land"]["zarr_grid"]`` before
+    any network download is attempted.  This surfaces misconfigured bounding
+    boxes immediately at pipeline construction rather than after a potentially
+    long CDS API download.
+
+    Only runs when ``config["source"]`` is ``"ERA5_land"`` and an explicit
+    ``era5_bbox`` is present; all other sources and default-bbox cases are
+    silently skipped.
+
+    Parameters
+    ----------
+    config : dict
+        Pipeline configuration dict, as passed to :class:`WeatherPipeline`.
+
+    Raises
+    ------
+    ValueError
+        If any edge of ``era5_bbox`` lies outside the skeleton grid extent by
+        more than half a grid cell (0.05°).
+    """
+    if config.get("source") != "ERA5_land":
+        return
+    era5_bbox = config.get("era5_bbox")
+    if not era5_bbox:
+        return
+
+    from .source_registry import SOURCE_REGISTRY
+
+    grid = SOURCE_REGISTRY["ERA5_land"]["zarr_grid"]
+    lat = grid["latitude"]
+    lon = grid["longitude"]
+    tol = _ERA5_GRID_HALF_STEP
+
+    n, w, s, e = era5_bbox
+    grid_n, grid_s = float(lat.max()), float(lat.min())
+    grid_w, grid_e = float(lon.min()), float(lon.max())
+
+    problems = []
+    if n > grid_n + tol:
+        problems.append(f"north={n} exceeds grid ceiling {grid_n}°N")
+    if s < grid_s - tol:
+        problems.append(f"south={s} is below grid floor {grid_s}°N")
+    if w < grid_w - tol:
+        problems.append(f"west={w} is left of grid edge {grid_w}°E")
+    if e > grid_e + tol:
+        problems.append(f"east={e} exceeds grid edge {grid_e}°E")
+
+    if problems:
+        raise ValueError(
+            "era5_bbox is outside the ERA5_land Zarr skeleton grid and would "
+            "cause write failures after downloading.  Problems: "
+            + "; ".join(problems)
+            + f".  Skeleton covers lat [{grid_s}, {grid_n}], "
+            f"lon [{grid_w}, {grid_e}].  Adjust era5_bbox or widen the "
+            "skeleton in SOURCE_REGISTRY['ERA5_land']['zarr_grid']."
+        )
+
+
+class WeatherPipeline(Pipeline):
+    """End-to-end pipeline for multi-source weather data integration.
+
+    Composes :class:`~datavia.weather.composite_downloader.CompositeWeatherDownloader`,
+    :class:`~datavia.weather.saver_weather.SaverWeather`, and
+    :class:`~datavia.weather.getter_weather.GetterWeather` into a single
+    object following the :class:`~datavia.core.interfaces.Pipeline` contract.
+
+    The pipeline name is taken from ``config["source"]`` and is used as the
+    ``source_name`` for all database entries, allowing multiple pipelines with
+    different sources to coexist without collision.
+
+    Parameters
+    ----------
+    config : dict[str, Any]
+        Pipeline configuration.  Required keys: ``source``, ``variables``,
+        ``date_start``, ``date_end``.  Optional keys: ``era5_bbox``,
+        ``dwd_stations``, ``unit_conversions``, ``buffer_days``,
+        ``temporal_resolution``.
+    replace : bool, optional
+        When ``True`` the stored config is completely replaced by *config* on
+        construction.  When ``False`` (default) the config is merged with any
+        previously stored values — this matches the behaviour of
+        :meth:`reconfigure`.  For a freshly created instance both values are
+        equivalent because there is no prior config.
+    """
+
+    def __init__(self, config: dict[str, Any], replace: bool = False) -> None:
+        """Initialise the pipeline, validate config, and set the source name.
+
+        Validates *config* against the required and known key sets before any
+        other logic runs, so callers see all validation errors in one
+        ``ValueError``.
+
+        Parameters
+        ----------
+        config : dict[str, Any]
+            Pipeline configuration dict.  Must contain ``source``,
+            ``variables``, ``date_start``, and ``date_end``.  The value of
+            ``source`` (e.g. ``"ERA5_land"``, ``"HYRAS"``) becomes the
+            pipeline's ``name`` and the ``source_name`` stored in the database.
+        replace : bool, optional
+            Reserved for future use when upgrading an existing instance.
+            Currently unused during initial construction; included so that
+            :meth:`reconfigure` can pass the flag consistently.
+            Defaults to ``False``.
+
+        Raises
+        ------
+        ValueError
+            If required keys are missing, unknown keys are present, or any
+            requested variable is not valid for the configured source.
+        """
+        # Validate before any attribute assignment so errors surface immediately.
+        Pipeline.validate_pipeline_config(
+            config,
+            required_keys=_REQUIRED_CONFIG_KEYS,
+            known_keys=_KNOWN_CONFIG_KEYS,
+            pipeline_name="WeatherPipeline",
+        )
+        source_name: str = config["source"]
+
+        # Cross-reference the requested variables against the source's known
+        # variable set.  This catches typos and cross-source variable name
+        # confusion (e.g. HYRAS-only "temperature_2m_max" in an ERA5 pipeline)
+        # at construction time before any network access.
+        valid_variables = get_valid_variables(source_name)
+        if valid_variables is not None:
+            requested: list[str] = config["variables"]
+            invalid = [v for v in requested if v not in valid_variables]
+            if invalid:
+                raise ValueError(
+                    f"WeatherPipeline: variable(s) {invalid} are not valid for "
+                    f"source '{source_name}'. "
+                    f"Valid variables: {sorted(valid_variables)}"
+                )
+        _validate_era5_bbox_within_grid(config)
+        # The source value becomes the pipeline name and DB source_name.
+        super().__init__(
+            name=source_name,
+            downloader=CompositeWeatherDownloader,
+            saver=SaverWeather,
+            getter=GetterWeather,
+        )
+        self._config: dict[str, Any] = dict(config)
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Pipeline:
+        """Instantiate the composite downloader, saver, and getter.
+
+        Overrides the base :meth:`~datavia.core.interfaces.Pipeline.__call__`
+        to pass the stored *config* to
+        :class:`~datavia.weather.composite_downloader.CompositeWeatherDownloader`
+        instead of a URL.
+
+        Returns
+        -------
+        Pipeline
+            Self for method chaining.
+        """
+        initialize_database()
+        self.downloader = CompositeWeatherDownloader(config=self._config)
+        self.saver = SaverWeather(self.name)
+        # Forward any user-provided unit conversion overrides so the getter
+        # can pass them to apply_conversion for each variable.
+        self.getter = GetterWeather(
+            self.name,
+            unit_overrides=self._config.get("unit_conversions"),
+            temporal_resolution=self._config.get("temporal_resolution", "daily"),
+        )
+        return self
+
+    def get_config(self) -> dict[str, Any]:
+        """Return a copy of the effective pipeline configuration.
+
+        Returns a shallow copy so callers cannot mutate the internal state
+        inadvertently.  Use :meth:`reconfigure` to change the pipeline config.
+
+        Returns
+        -------
+        dict[str, Any]
+            Copy of the current pipeline configuration dict.
+        """
+        return dict(self._config)
+
+    def reconfigure(
+        self,
+        config_updates: dict[str, Any],
+        replace: bool = False,
+    ) -> None:
+        """Update the pipeline configuration and re-initialise components.
+
+        Applies *config_updates* to the stored configuration.  By default the
+        updates are *merged* (delta mode): only keys present in *config_updates*
+        are changed; all other keys keep their current values.  When *replace*
+        is ``True`` the entire stored config is replaced by *config_updates*
+        (which must then satisfy all required-key constraints).
+
+        After updating the config the downloader and getter instances are
+        rebuilt so that the next :meth:`update_data` or :meth:`get_data` call
+        uses the new parameters.  The saver is not rebuilt because it depends
+        only on the immutable ``source_name`` (``config["source"]``), which
+        cannot change via :meth:`reconfigure`.
+
+        ``config["source"]`` cannot be changed via this method.  Attempting to
+        supply a different ``"source"`` value raises ``ValueError`` because the
+        source name is baked into the pipeline's ``name``, the database rows,
+        and the on-disk filenames.  Create a new :class:`WeatherPipeline`
+        instance instead.
+
+        Parameters
+        ----------
+        config_updates : dict[str, Any]
+            Keys and values to apply to the stored configuration.  In delta
+            mode only the listed keys are changed.  In replace mode this dict
+            must include all required keys.
+        replace : bool, optional
+            When ``True`` the stored config is replaced entirely by
+            *config_updates*.  When ``False`` (default) *config_updates* is
+            merged into the current config.
+
+        Raises
+        ------
+        ValueError
+            If *config_updates* contains a ``"source"`` key whose value
+            differs from the pipeline's current source name.
+        ValueError
+            If the merged or replacement config fails validation (missing
+            required keys or unknown keys present).
+        """
+        new_source = config_updates.get("source")
+        if new_source is not None and new_source != self._config["source"]:
+            raise ValueError(
+                f"WeatherPipeline.reconfigure: cannot change 'source' from "
+                f"'{self._config['source']}' to '{new_source}'. "
+                "Create a new WeatherPipeline instance instead."
+            )
+
+        if replace:
+            candidate = dict(config_updates)
+        else:
+            candidate = {**self._config, **config_updates}
+
+        Pipeline.validate_pipeline_config(
+            candidate,
+            required_keys=_REQUIRED_CONFIG_KEYS,
+            known_keys=_KNOWN_CONFIG_KEYS,
+            pipeline_name="WeatherPipeline.reconfigure",
+        )
+
+        self._config = candidate
+
+        # Rebuild the downloader so the next update_data() uses the new config.
+        self.downloader = CompositeWeatherDownloader(config=self._config)
+        # Rebuild the getter in case unit_conversions or temporal_resolution changed.
+        self.getter = GetterWeather(
+            self.name,
+            unit_overrides=self._config.get("unit_conversions"),
+            temporal_resolution=self._config.get("temporal_resolution", "daily"),
+        )
+        logger.info(
+            "WeatherPipeline '%s': configuration updated. mode=%s",
+            self.name,
+            "replace" if replace else "merge",
+        )
+
+    def update_data(
+        self,
+        reproject: bool = False,
+        resolution_m: int | None = None,
+    ) -> bool:
+        """Download and register weather data.
+
+        Steps:
+
+        1. **Reconcile** disk with DB via
+           :meth:`~datavia.core.interfaces.Pipeline.sync_files_and_database`:
+           removes stale DB rows and re-registers orphan disk files.
+        2. **Migrate legacy NetCDF** — for Zarr-enabled sources, any ``.nc``
+           files still in the data directory are ingested into their Zarr
+           store by :meth:`_migrate_legacy_nc_files` so that CoverageManager
+           can compute coverage from the store and avoid redundant downloads.
+        3. **Download delta** — computes uncovered cells and issues the
+           minimum number of downloader calls.
+        4. **Save** — calls :meth:`SaverWeather.save` for each downloaded
+           file, writing directly into the Zarr store for Zarr-enabled sources.
+
+        Parameters
+        ----------
+        reproject : bool, optional
+            Ignored for weather files; present for interface compatibility.
+            Defaults to ``False``.
+        resolution_m : int, optional
+            Ignored for weather files. Defaults to ``None``.
+
+        Returns
+        -------
+        bool
+            ``True`` when all files were saved successfully.
+
+        Raises
+        ------
+        RuntimeError
+            If one or more cells failed to download or save.  All cells are
+            always attempted so that partial data is still registered in the
+            database and available to the caller before the error is raised.
+        """
+        if not self.downloader or not self.saver:
+            self()
+
+        # Reconcile disk with DB before checking what to download.
+        self.sync_files_and_database()
+
+        # Pure DWD station sources have no grid bbox: CoverageManager falls back
+        # to the Germany default and would report "all covered" after any prior
+        # DWD download, regardless of which stations were requested.  Use a
+        # direct station-aware DB check instead and, when data is missing,
+        # issue a single download cell for the full configured date range.
+        # Hybrid ERA5+DWD pipelines are excluded: they still need CoverageManager
+        # to compute the ERA5 grid delta, and CompositeWeatherDownloader handles
+        # the DWD parquet download alongside the ERA5 NetCDF in the same cell.
+        if self._is_dwd_source():
+            station_ids = self._get_dwd_station_ids()
+            variable = self._config["variables"][0]
+            if self.saver.check_data_exists(
+                variable=variable,
+                from_dt=self._config["date_start"],
+                to_dt=self._config["date_end"],
+                station_ids=station_ids,
+            ):
+                logger.info(
+                    "WeatherPipeline '%s': all requested data already registered. "
+                    "Nothing to download.",
+                    self.name,
+                )
+                return True
+        # Migrate any legacy .nc files to Zarr before the coverage check so
+        # that already-downloaded data is not re-fetched from the network.
+        self._migrate_legacy_nc_files()
+
+        # Compute the uncovered (bbox, date_range) cells before issuing any
+        # requests.  This avoids redundant downloads on repeated update_data()
+        # calls and supports incremental spatial or temporal extension.
+        coverage_manager = CoverageManager(self.name, self._config["variables"])
+        req_bbox = self._get_request_bbox()
+        missing_cells = coverage_manager.missing_spatiotemporal(
+            req_bbox,
+            self._config["date_start"],
+            self._config["date_end"],
+        )
+
+        if not missing_cells:
+            logger.info(
+                "WeatherPipeline '%s': all requested data already registered. "
+                "Nothing to download.",
+                self.name,
+            )
+            return True
+
+        logger.info(
+            "WeatherPipeline '%s': %d cell(s) to download.",
+            self.name,
+            len(missing_cells),
+        )
+
+        # Collect failures without aborting: all cells are always attempted so
+        # that successfully downloaded data is still registered in the database
+        # and queryable even when one cell fails.
+        failed_items: list[str] = []
+        for cell in missing_cells:
+            cell_config = self._build_cell_config(cell)
+            cell_downloader = CompositeWeatherDownloader(config=cell_config)
+            combined_paths = cell_downloader.download()
+            if combined_paths == "failed":
+                logger.error(
+                    "WeatherPipeline '%s': download failed for cell %s.",
+                    self.name,
+                    cell,
+                )
+                failed_items.append(str(cell))
+                continue
+
+            for raw_path in combined_paths.splitlines():
+                file_path = raw_path.strip()
+                if not file_path:
+                    continue
+                success = self.saver.save(file_path)
+                if not success:
+                    logger.error("Failed to save weather file: %s", file_path)
+                    failed_items.append(file_path)
+
+        if failed_items:
+            raise RuntimeError(
+                f"WeatherPipeline '{self.name}': {len(failed_items)} item(s) failed "
+                f"to download or save: {failed_items}. "
+                "Successfully registered cells remain available in the database."
+            )
+        return True
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    def _migrate_legacy_nc_files(self) -> None:
+        """Ingest any leftover ``.nc`` files into Zarr stores.
+
+        Scans the data directory for ``<source_name>_*.nc`` files that belong
+        to a Zarr-enabled source.  Each file is passed to
+        :meth:`~datavia.weather.saver_weather.SaverWeather.save_nc_to_zarr`
+        and removed from disk after a successful write so that:
+
+        - The Zarr store becomes the sole on-disk data backend.
+        - :class:`~datavia.weather.coverage_manager.CoverageManager`'s
+          auto-rebuild can reconstruct DB rows from the store without
+          triggering redundant network downloads.
+
+        A no-op when the source has no ``zarr_grid`` entry or no ``.nc``
+        files are present.
+        """
+        from pathlib import Path
+
+        from .saver_weather import SaverWeather, _has_zarr_grid
+
+        if not isinstance(self.saver, SaverWeather):
+            return
+        if not _has_zarr_grid(self.name):
+            return
+
+        data_dir = Path(self.saver.data_dir)
+        prefix = f"{self.name}_"
+        try:
+            nc_files = sorted(
+                p
+                for p in data_dir.iterdir()
+                if p.name.startswith(prefix) and p.suffix == ".nc"
+            )
+        except FileNotFoundError:
+            return
+
+        for nc_path in nc_files:
+            logger.info(
+                "WeatherPipeline '%s': migrating legacy NetCDF to Zarr: %s",
+                self.name,
+                nc_path,
+            )
+            success = self.saver.save_nc_to_zarr(str(nc_path))
+            if success:
+                try:
+                    nc_path.unlink()
+                    logger.info(
+                        "Removed legacy NetCDF after Zarr migration: %s", nc_path
+                    )
+                except OSError as exc:
+                    logger.warning(
+                        "Could not remove legacy NetCDF '%s' after migration: %s",
+                        nc_path,
+                        exc,
+                    )
+            else:
+                logger.warning(
+                    "Zarr migration failed for '%s'; file retained for safety.",
+                    nc_path,
+                )
+
+    def _get_request_bbox(self) -> tuple[float, float, float, float]:
+        """Return the configured bounding box as ``(west, south, east, north)``.
+
+        ERA5 stores the bbox in the config as ``[north, west, south, east]``
+        (CDS API convention).  This method converts it to the Shapely-standard
+        ``(west, south, east, north)`` tuple used by :class:`CoverageManager`.
+
+        For sources that do not declare an explicit bbox (HYRAS, DWD), the
+        Germany default :data:`_GERMANY_BBOX_WSNE` is returned.
+
+        Returns
+        -------
+        tuple[float, float, float, float]
+            Bounding box as ``(west, south, east, north)`` in EPSG:4326 degrees.
+        """
+        era5_bbox = self._config.get("era5_bbox")
+        if era5_bbox:
+            # era5_bbox is stored as [north, west, south, east] per CDS convention.
+            n, w, s, e = era5_bbox
+            return (w, s, e, n)
+        coverage_bbox = SOURCE_REGISTRY.get(self.name, {}).get("coverage_bbox")
+        if coverage_bbox is not None:
+            west, south, east, north = coverage_bbox
+            return (float(west), float(south), float(east), float(north))
+        return _GERMANY_BBOX_WSNE
+
+    def _build_cell_config(self, cell: CoverageCell) -> dict[str, Any]:
+        """Build a per-cell download config from the pipeline config and a cell.
+
+        Copies the pipeline config and overrides ``date_start`` and
+        ``date_end`` with the cell's values.  For ``"ERA5_land"`` sources, also
+        overrides ``era5_bbox`` with the cell's bbox converted back to the CDS
+        API format ``[north, west, south, east]``.
+
+        Parameters
+        ----------
+        cell : CoverageCell
+            The coverage cell defining the spatial and temporal extent to
+            download.
+
+        Returns
+        -------
+        dict[str, Any]
+            Updated config dict suitable for
+            :class:`~datavia.weather.composite_downloader.CompositeWeatherDownloader`.
+        """
+        cell_config = dict(self._config)
+        cell_config["date_start"] = cell.date_start
+        cell_config["date_end"] = cell.date_end
+        if self._config.get("source") == "ERA5_land":
+            w, s, e, n = cell.bbox
+            # Convert back to CDS API convention: [north, west, south, east].
+            cell_config["era5_bbox"] = [n, w, s, e]
+        return cell_config
+
+    def _is_dwd_source(self) -> bool:
+        """Return ``True`` when this pipeline targets DWD station data only.
+
+        Only the pure DWD-only mode (``config["source"] == "DWD_stations"``) is
+        considered a DWD source here.  Hybrid ERA5+DWD pipelines
+        (``"dwd_stations"`` in config but ``source != "DWD_stations"``) must
+        still run :class:`CoverageManager` for the ERA5 grid, so they are
+        deliberately excluded.
+
+        Returns
+        -------
+        bool
+            ``True`` only for pure DWD station pipelines, ``False`` otherwise.
+        """
+        return self._config.get("source") == "DWD_stations"
+
+    def _get_dwd_station_ids(self) -> list[str] | None:
+        """Return sorted station IDs from the configured DWD station list.
+
+        Reads ``config["dwd_stations"]``, which is a list of dicts each
+        containing an ``"id"`` key (station identifier).
+
+        Returns
+        -------
+        list[str] or None
+            Sorted string station IDs, or ``None`` when the station list is
+            absent or empty.
+        """
+        stations: list[dict] = self._config.get("dwd_stations", [])
+        if not stations:
+            return None
+        return sorted(str(station["id"]) for station in stations)
+
+    def get_weather_data(
+        self,
+        lat: float,
+        lon: float,
+        variable: str,
+        datetime_utc: Any,
+        radius_km: float = 50.0,
+        station_weight: float = 0.6,
+    ) -> float:
+        """Convenience single-point weather query.
+
+        Parameters
+        ----------
+        lat : float
+            Geographic latitude in degrees North.
+        lon : float
+            Geographic longitude in degrees East.
+        variable : str
+            Variable name, e.g. ``"temperature_2m"``.
+        datetime_utc : datetime-like
+            Target UTC timestamp.
+        radius_km : float, optional
+            Station search radius in km. Defaults to 50 km.
+        station_weight : float, optional
+            Blending weight for station data. Defaults to 0.6.
+
+        Returns
+        -------
+        float
+            Interpolated value at the given coordinate and time.
+            ``float("nan")`` when no data is available.
+        """
+        if not self.getter:
+            self()
+
+        if self.getter is None:
+            raise RuntimeError(
+                "WeatherPipeline.get_weather_data: getter was not initialised."
+            )
+        if not isinstance(self.getter, GetterWeather):
+            raise RuntimeError(
+                "WeatherPipeline.get_weather_data: getter is not a "
+                "GetterWeather instance."
+            )
+
+        return self.getter.get_weather_data(
+            lat=lat,
+            lon=lon,
+            variable=variable,
+            datetime_utc=datetime_utc,
+            radius_km=radius_km,
+            station_weight=station_weight,
+        )
+
+    def get_data(
+        self,
+        coords: np.ndarray,
+        crs_coords: str = "EPSG:4326",
+        interpolation_order: int = 3,
+        band: int = 1,
+        **kwargs: Any,
+    ) -> np.ndarray:
+        """Return interpolated weather values at all requested coordinates.
+
+        Parameters
+        ----------
+        coords : np.ndarray
+            Coordinate array of shape ``(N, 2)`` as ``[longitude, latitude]``
+            pairs in EPSG:4326.
+        crs_coords : str, optional
+            CRS of input coordinates. Defaults to ``"EPSG:4326"``.
+        interpolation_order : int, optional
+            Accepted for interface compatibility; not used. Defaults to 3.
+        band : int, optional
+            Accepted for interface compatibility; not used. Defaults to 1.
+        **kwargs : Any
+            Forwarded to :meth:`GetterWeather.get_data`. Required:
+            ``variable`` and ``datetime_utc``.
+
+        Returns
+        -------
+        np.ndarray
+            Shape ``(N,)`` array of interpolated values.
+        """
+        if not self.getter:
+            self()
+
+        if self.getter is None:
+            raise RuntimeError("WeatherPipeline.get_data: getter was not initialised.")
+
+        return self.getter.get_data(
+            coords=coords,
+            crs_coords=crs_coords,
+            interpolation_order=interpolation_order,
+            band=band,
+            **kwargs,
+        )

@@ -78,6 +78,25 @@ Database Integration
    :members:
    :undoc-members:
 
+Weather Pipeline
+----------------
+
+.. automodule:: datavia.weather.zarr_store_manager
+   :members:
+   :undoc-members:
+
+.. automodule:: datavia.weather.coverage_manager
+   :members:
+   :undoc-members:
+
+.. automodule:: datavia.weather.saver_weather
+   :members:
+   :undoc-members:
+
+.. automodule:: datavia.weather.getter_weather
+   :members:
+   :undoc-members:
+
 Pipeline Packages
 -----------------
 

@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 class TiffSaver(Saver):
-    """Saver implementation for TIFF files with SQLite metadata management and multi-band support."""
+    """Saver for TIFF files with SQLite metadata and multi-band support."""
 
     def __init__(self, source_name: str):
         """Initialize TiffSaver with data directory and CRS from config.
@@ -53,53 +53,64 @@ class TiffSaver(Saver):
         data_path: str,
         reproject: bool = False,
         resolution_m: int | None = None,
+        register_only: bool = False,
     ) -> bool:
-        """Save a TIFF file to the data directory and register it in the metadata database.
+        """Save a TIFF file and register it in the metadata database.
 
         Handles both single-band and multi-band TIFF files. When *reproject*
         is ``True`` the file is reprojected in-place to ``self.target_crs``
         (derived from ``get_config().default_crs``) after being copied to the
         data directory but before metadata is registered in the database.
 
+        When *register_only* is ``True`` the file-copy step is skipped and
+        only the database registration is performed.  Use this when the file
+        is already in the data directory, e.g. when re-registering an orphan
+        file discovered by
+        :meth:`~datavia.core.interfaces.Pipeline.sync_files_and_database`.
+
         Parameters
         ----------
         data_path : str
-            Path to the source TIFF file to save.
+            Path to the source TIFF file to save.  When *register_only* is
+            ``True`` this must already be the absolute path inside the data
+            directory.
         reproject : bool, optional
             Reproject the saved file to ``self.target_crs`` before registering
             metadata. Skipped silently when the file is already in the target
-            CRS. Defaults to ``False``.
+            CRS. Ignored when *register_only* is ``True``. Defaults to
+            ``False``.
         resolution_m : int, optional
             Target pixel resolution in metres for reprojection. Only applied
             for projected (metric) CRSs; unused for geographic CRSs where
             rasterio derives the resolution automatically. Defaults to
             ``None``.
+        register_only : bool, optional
+            When ``True`` skip the file-copy step and only register metadata.
+            Defaults to ``False``.
 
         Returns
         -------
         bool
-            ``True`` if the file was saved (and optionally reprojected)
-            and its metadata was registered successfully.
+            ``True`` if the operation completed successfully.
         """
         try:
-            # Derive the layer name from the full file stem so that any filename
-            # maps to a unique, unambiguous layer: ``clay_0-5cm_mean.tif`` →
-            # ``soil_clay_0-5cm_mean``, ``downloaded_file_1234.tif`` →
-            # ``elevation_downloaded_file_1234``.
             stem = os.path.splitext(os.path.basename(data_path))[0]
-            layer_name = f"{self.source_name}_{stem}"
+            layer_name = (
+                f"{self.source_name}_{stem}"
+                if not stem.startswith(self.source_name + "_")
+                else stem
+            )
 
-            # Destination path in data directory
-            dest_path = os.path.join(self.data_dir, layer_name + ".tif")
-
-            # Copy file to data directory
-            shutil.copy2(data_path, dest_path)
-            logger.info("Copied TIFF file to %s", dest_path)
-
-            # Optionally reproject in-place before registering metadata so
-            # the database always records the reprojected extent and CRS.
-            if reproject:
-                reproject_tiff(dest_path, self.target_crs, resolution_m=resolution_m)
+            if register_only:
+                dest_path = data_path
+            else:
+                dest_path = os.path.join(self.data_dir, layer_name + ".tif")
+                shutil.copy2(data_path, dest_path)
+                logger.info("Copied TIFF file to %s", dest_path)
+                if reproject:
+                    reproject_tiff(
+                        dest_path, self.target_crs, resolution_m=resolution_m
+                    )
 
             # Import metadata to the SQLite database with multi-band support
             self._import_raster_metadata_with_bands(dest_path, layer_name)
@@ -111,86 +122,53 @@ class TiffSaver(Saver):
             logger.error("Failed to save TIFF file %s: %s", data_path, e)
             return False
 
-    def check_data_exists(self) -> tuple[set[Any], set[Any], set[Any]]:
-        """
-        Check if a TIFF file with the given layer name exists in the data directory.
+    def list_managed_files(self) -> list[str]:
+        """Return absolute paths of all TIFF files written by this saver.
 
-        Args:
-            layer_name: Name of the layer (filename without extension)
-        Returns:
-            Tuple[set, set, set]: (found_files, missing_files, new_files)
+        Scans the data directory for files matching
+        ``<source_name>_*.tif``.  This is a pure filesystem operation and
+        must not access the database.
+
+        Returns
+        -------
+        list[str]
+            Absolute paths to every matching ``.tif`` file currently on
+            disk.  Returns an empty list when no files are found or the
+            data directory does not exist.
         """
+        result: list[str] = []
         try:
-            # Get all .tif files in data directory
-            tiff_files = {
-                os.path.splitext(f)[0]: f
-                for f in os.listdir(self.data_dir)
-                if f.lower().endswith(".tif") and f.startswith(self.source_name + "_")
-            }
+            for fname in os.listdir(self.data_dir):
+                if fname.lower().endswith(".tif") and fname.startswith(
+                    self.source_name + "_"
+                ):
+                    result.append(os.path.join(self.data_dir, fname))
+        except FileNotFoundError:
+            logger.warning("Data directory not found: %s", self.data_dir)
+        return result
 
-            session = session_local()
+    def delete_registration(self, uri: str) -> None:
+        """Remove all database registrations for the given file URI.
 
-            logger.info(
-                f"Checking data existence for source {self.source_name} in {self.data_dir}"
-            )
-            logger.info(f"Found {len(tiff_files)} TIFF files in data directory.")
+        Derives the ``layer_name`` from the file path and deletes the
+        corresponding rows from both ``raster_layers`` and
+        ``raster_band_metadata``.  The file itself is not touched.
 
-            try:
-                # Get existing layers from database for this source
-                db_layers = {
-                    row[0]
-                    for row in session.execute(
-                        text(
-                            "SELECT layer_name FROM raster_layers WHERE source_name = :source_name"
-                        ),
-                        {"source_name": self.source_name},
-                    ).fetchall()
-                }
-                # Check if any layer exists in both file system and database
-                missing_files = db_layers - tiff_files.keys()
-                new_files = tiff_files.keys() - db_layers
-                found_files = db_layers & tiff_files.keys()
-                logger.info(
-                    f"Checked data existence for source {self.source_name}: "
-                    f"{len(found_files)} found, {len(missing_files)} missing, {len(new_files)} new"
-                )
-                return found_files, missing_files, new_files
-            except Exception as e:
-                session.rollback()
-                raise e
-            finally:
-                session.close()
-
-        except Exception as e:
-            logger.error(
-                f"Failed to find files and database info for source {self.source_name}: {e}"
-            )
-            return set(), set(), set()
-
-    def sync_files_and_database(self) -> bool:
+        Parameters
+        ----------
+        uri : str
+            Absolute path to the TIFF file whose registrations should be
+            removed.
         """
-        Sync TIFF files in data directory with SQLite metadata records.
-        Enhanced to handle multi-band metadata cleanup and source-specific filtering.
-
-        Returns:
-            bool: True if sync operation was successful, False if there is nothing to sync or an error occurred
-        """
-        found_files, missing_files, new_files = self.check_data_exists()
-        for layer_name in missing_files:
-            self._delete_layer_metadata(layer_name)
-            self._delete_band_metadata(layer_name)
-            logger.info(f"Removed metadata for missing file: {layer_name}")
-        for layer_name in new_files:
-            file_path = os.path.join(
-                self.data_dir,
-                layer_name + ".tif",
-            )
-            self._import_raster_metadata_with_bands(file_path, layer_name)
-            logger.info(f"Added metadata for new file: {layer_name}")
-        logger.info(
-            f"Sync completed. Found: {len(found_files)}, Missing: {len(missing_files)}, New: {len(new_files)}"
+        stem = os.path.splitext(os.path.basename(uri))[0]
+        layer_name = (
+            f"{self.source_name}_{stem}"
+            if not stem.startswith(self.source_name + "_")
+            else stem
         )
-        return bool(found_files or new_files)
+        self._delete_layer_metadata(layer_name)
+        self._delete_band_metadata(layer_name)
+        logger.info("Removed database registration for URI: %s", uri)
 
     def _import_raster_metadata(
         self, filepath: str, layer_name: str, session: Any = None
@@ -223,11 +201,8 @@ class TiffSaver(Saver):
                 resolution = src.res
                 src_crs = src.crs
 
-                # Always record the file's native CRS in the crs column.
                 src_crs_str = src_crs.to_string() if src_crs else "EPSG:4326"
 
-                # The bbox column is fixed to EPSG:4326 by the DB schema.
-                # Always transform bounds to that CRS for metadata storage.
                 if src_crs_str != "EPSG:4326" and src_crs:
                     bounds_target = transform_bbox(
                         (bounds.left, bounds.bottom, bounds.right, bounds.top),
@@ -251,7 +226,8 @@ class TiffSaver(Saver):
 
             existing = session.execute(
                 text(
-                    "SELECT 1 FROM raster_layers WHERE layer_name = :layer_name AND source_name = :source_name"
+                    "SELECT 1 FROM raster_layers "
+                    "WHERE layer_name = :layer_name AND source_name = :source_name"
                 ),
                 {"layer_name": layer_name, "source_name": self.source_name},
             ).fetchone()
@@ -259,12 +235,14 @@ class TiffSaver(Saver):
             if existing:
                 self._delete_layer_metadata(layer_name, session)
 
-            # Insert new metadata — bbox is stored as WKT text (no PostGIS required).
             session.execute(
                 text(
                     """
                     INSERT INTO raster_layers
-                    (layer_name, source_name, bbox, resolution_x, resolution_y, crs, uri, acquisition_time)
+                    (
+                        layer_name, source_name, bbox, resolution_x,
+                        resolution_y, crs, uri, acquisition_time
+                    )
                     VALUES (:layer_name, :source_name, :bbox_wkt,
                             :res_x, :res_y, :crs, :uri, :acq_time)
                 """
@@ -295,32 +273,26 @@ class TiffSaver(Saver):
     def _import_raster_metadata_with_bands(
         self, filepath: str, layer_name: str, session: Any = None
     ) -> None:
-        """
-        Import raster metadata and handle multi-band TIFF files.
-        Determines if file is single-band or multi-band and processes accordingly.
-        """
+        """Import raster metadata and per-band descriptions for multi-band TIFFs."""
         should_close_session = session is None
         if session is None:
             session = session_local()
 
         try:
-            # Check band count
             with rasterio.open(filepath) as src:
                 band_count = src.count
 
-            # Import main raster metadata
             self._import_raster_metadata(filepath, layer_name, session)
 
-            # If multi-band, import per-band metadata
             if band_count > 1:
                 logger.info(
-                    f"Detected multi-band TIFF ({band_count} bands): {filepath}"
+                    "Detected multi-band TIFF (%d bands): %s", band_count, filepath
                 )
                 try:
                     self._import_multiband_metadata(filepath, layer_name, session)
                 except Exception as e:
                     logger.warning(
-                        f"Could not import per-band metadata for {layer_name}: {e}"
+                        "Could not import per-band metadata for %s: %s", layer_name, e
                     )
 
             if should_close_session:
@@ -337,23 +309,16 @@ class TiffSaver(Saver):
     def _import_multiband_metadata(
         self, filepath: str, layer_name: str, session: Any
     ) -> None:
-        """
-        Extract and store band metadata for multi-band TIFF files.
-        Stores in raster_band_metadata table if available.
-        """
+        """Extract and store per-band descriptions in ``raster_band_metadata``."""
         try:
             with rasterio.open(filepath) as src:
                 band_count = src.count
-                # src_descriptions holds the rasterio per-band description
-                # strings (may be None); descriptions is the accumulator of
-                # (band_index, description_str) tuples built below.
                 src_descriptions = getattr(src, "descriptions", None)
                 descriptions: list[tuple[int, str]] = []
 
                 for i in range(1, band_count + 1):
                     src_description: str | None = None
 
-                    # Try rasterio descriptions array first
                     try:
                         if (
                             src_descriptions
@@ -364,12 +329,10 @@ class TiffSaver(Saver):
                     except Exception:  # nosec B110
                         pass
 
-                    # Fallback to get_band_description
                     if not src_description:
                         with contextlib.suppress(Exception):
                             src_description = src.get_band_description(i)
 
-                    # Final fallback: tags or generated name
                     if not src_description:
                         try:
                             tags = src.tags(i)
@@ -387,35 +350,38 @@ class TiffSaver(Saver):
 
             session.execute(
                 text(
-                    "DELETE FROM raster_band_metadata WHERE layer_name = :layer_name AND source_name = :source_name"
+                    "DELETE FROM raster_band_metadata "
+                    "WHERE layer_name = :layer_name AND source_name = :source_name"
                 ),
                 {"layer_name": layer_name, "source_name": self.source_name},
             )
 
-            # Insert new band metadata - using 'band_index' to match schema
             for band_index, band_description in descriptions:
                 session.execute(
                     text(
                         """
-                        INSERT INTO raster_band_metadata (layer_name, source_name, band_index, description)
+                        INSERT INTO raster_band_metadata (
+                            layer_name, source_name, band_index, description
+                        )
                         VALUES (:layer_name, :source_name, :band_index, :description)
                     """
                     ),
                     {
                         "layer_name": layer_name,
                         "source_name": self.source_name,
-                        "band_index": band_index,  # Using band_index to match schema
+                        "band_index": band_index,
                         "description": band_description,
                     },
                 )
 
             logger.info(
-                f"Imported {len(descriptions)} band metadata entries for {layer_name}"
+                "Imported %d band metadata entries for %s",
+                len(descriptions),
+                layer_name,
             )
 
         except Exception as e:
-            # Log as debug to not affect main raster import if band metadata table doesn't exist
-            logger.debug(f"Could not store band metadata (table might be missing): {e}")
+            logger.debug("Could not store band metadata for %s: %s", layer_name, e)
 
     def _delete_layer_metadata(self, layer_name: str, session: Any = None) -> None:
         """Delete layer metadata from the database."""
@@ -449,7 +415,8 @@ class TiffSaver(Saver):
         try:
             session.execute(
                 text(
-                    "DELETE FROM raster_band_metadata WHERE layer_name = :layer_name AND source_name = :source_name"
+                    "DELETE FROM raster_band_metadata "
+                    "WHERE layer_name = :layer_name AND source_name = :source_name"
                 ),
                 {"layer_name": layer_name, "source_name": self.source_name},
             )

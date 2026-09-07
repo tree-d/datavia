@@ -4,7 +4,7 @@ Datavia Documentation
 **Datavia** is a modular, pipeline-based system for integrating geospatial data sources. It uses **namespace packages** for truly modular installation - install only the data sources you need.
 
 .. note::
-   Datavia uses a multi-package architecture. The core system (``datavia``) contains NO pipeline code. Pipelines are separate packages (``datavia-elevation``, ``datavia-soil``) installed on demand.
+   Datavia uses a multi-package architecture. The core system (``datavia``) contains NO pipeline code. Pipelines are separate packages (``datavia-elevation``, ``datavia-soil``, ``datavia-weather``) installed on demand.
 
 
 
@@ -21,8 +21,10 @@ Available pipeline packages:
 
 * **Elevation Pipeline** (``datavia[elevation]``): German BKG DGM200 (200 m resolution)
 * **Soil Pipeline** (``datavia[soil]``): SoilGrids (WCS) + HiHydroSoil (HTTP GeoTIFF) — incremental download per coverage
-* **Weather Pipeline** (``datavia[weather]``): Planned — DWD weather data
-* **Radiation Pipeline**: Planned — CAMS radiation data
+* **Weather Pipeline** (``datavia[weather]``): ERA5-Land (CDS API), HYRAS, and DWD station data —
+  temperature, precipitation, solar radiation, humidity, and wind speed.
+  Radiation (``surface_solar_radiation_downwards``) is available as a variable within this pipeline
+  via ERA5 (``ssrd``) and HYRAS (``rsds``); no separate radiation pipeline is required.
 
 Quick Start
 -----------
@@ -43,6 +45,20 @@ Installation (Modular):
     pip install datavia[all]
     
     # Or use pixi for development
+    # These instructions allow you to add the github repo as a
+    # pixi dependency. If necessary, replace main with the
+    # desired branch.
+
+    # Core system
+    pixi add --git https://github.com/tree-d/datavia --branch main --pypi datavia
+
+    # Pipelines
+    pixi add --git https://github.com/tree-d/datavia --branch main --subdirectory packages/elevation --pypi datavia-elevation
+    pixi add --git https://github.com/tree-d/datavia --branch main --subdirectory packages/soil --pypi datavia-soil
+    pixi add --git https://github.com/tree-d/datavia --branch main --subdirectory packages/weather --pypi datavia-weather
+
+    # NOT equivalent with pip install, but necessary for your python scripts
+    # to see Datavia.
     pixi install
 
 Basic usage with elevation data:

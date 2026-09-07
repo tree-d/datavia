@@ -1,0 +1,214 @@
+"""
+CompositeWeatherDownloader — orchestrates gridded and DWD station downloads.
+
+Presents a single :class:`~datavia.core.interfaces.CompositeDownloader`-
+compatible interface to :class:`~datavia.weather.pipeline.WeatherPipeline`.
+Internally it uses :func:`~datavia.weather.source_registry.get_grid_downloader_class`
+to select the appropriate grid downloader (e.g.
+:class:`~datavia.weather.era5_downloader.ERA5Downloader` or
+:class:`~datavia.weather.hyras_downloader.HYRASDownloader`) and optionally
+instantiates :class:`~datavia.weather.dwd_downloader.DWDStationDownloader`
+when station data is requested. All output paths are returned as a
+newline-joined string so the pipeline
+can hand them to ``SaverWeather.save()`` one at a time.  ERA5 monthly
+chunking means a single ERA5 download may contribute multiple paths (one
+per calendar-month chunk); they are incorporated into the flat newline-
+joined string transparently.
+
+The multi-path string convention is an internal protocol between
+``CompositeWeatherDownloader`` and ``WeatherPipeline``; callers outside the
+package should not depend on it.
+"""
+
+import logging
+from typing import Any
+
+from datavia.core.interfaces import CompositeDownloader, Downloader
+
+from .dwd_downloader import DWDStationDownloader
+from .source_registry import get_grid_downloader_class
+
+logger = logging.getLogger(__name__)
+
+
+class CompositeWeatherDownloader(CompositeDownloader):
+    """Download gridded weather data and optionally DWD station data in sequence.
+
+    The active sub-downloaders depend on ``config["source"]`` and the presence
+    of ``config["dwd_stations"]``:
+
+    .. list-table::
+       :header-rows: 1
+
+       * - ``source``
+         - ``dwd_stations`` in config?
+         - Active downloaders
+       * - ``"ERA5_land"``
+         - no
+         - :class:`~datavia.weather.era5_downloader.ERA5Downloader`
+       * - ``"ERA5_land"``
+         - yes
+         - ERA5 + :class:`~datavia.weather.dwd_downloader.DWDStationDownloader`
+       * - ``"HYRAS"``
+         - no
+         - :class:`~datavia.weather.hyras_downloader.HYRASDownloader`
+       * - ``"HYRAS"``
+         - yes
+         - HYRAS + DWD
+       * - ``"DWD_stations"``
+         - (implied)
+         - DWD only
+
+    Keys used from *config*:
+
+    - ``source`` (str): Source identifier (see table above).
+      Defaults to ``"ERA5_land"``.
+    - ``variables`` (list[str]): Variable names forwarded to all backends.
+    - ``date_start`` (str): Download start date.
+    - ``date_end`` (str): Download end date.
+    - ``era5_bbox`` (list[float], optional): Override for the ERA5 bounding box.
+    - ``buffer_days`` (int, optional): Extra days prepended for ERA5
+      accumulative variables.
+    - ``dwd_stations`` (list[dict], optional): Override for the DWD station
+      list.  When present, a DWD downloader is always added alongside the
+      grid downloader.
+    """
+
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
+        """Initialise sub-downloaders from a shared configuration dict.
+
+        Parameters
+        ----------
+        config : dict[str, Any], optional
+            Configuration dictionary.  See class docstring for recognised keys.
+            When *config* is omitted the ``"ERA5_land"`` grid downloader is
+            used with all sub-downloader defaults.
+        """
+        super().__init__()
+        cfg = config or {}
+        source: str = cfg.get("source", "ERA5_land")
+        variables: list[str] = cfg.get("variables", ["temperature_2m"])
+        date_start: str | None = cfg.get("date_start")
+        date_end: str | None = cfg.get("date_end")
+
+        # --- Grid downloader (ERA5, HYRAS, or None for DWD-only) ---
+        grid_class = get_grid_downloader_class(source)
+        if grid_class is not None:
+            grid_kwargs: dict[str, Any] = {
+                "variables": variables,
+                "date_start": date_start,
+                "date_end": date_end,
+            }
+            # Source-specific kwargs: only forward params accepted by each downloader.
+            if source == "ERA5_land":
+                grid_kwargs["bbox"] = cfg.get("era5_bbox")
+                grid_kwargs["buffer_days"] = cfg.get("buffer_days", 1)
+                # Forward optional ERA5-specific tuning parameters.
+                if "cds_queue_timeout" in cfg:
+                    grid_kwargs["cds_queue_timeout"] = cfg["cds_queue_timeout"]
+                if "chunk_by" in cfg:
+                    grid_kwargs["chunk_by"] = cfg["chunk_by"]
+            elif source == "HYRAS":
+                grid_kwargs["temporal_resolution"] = cfg.get(
+                    "temporal_resolution", "daily"
+                )
+            self._grid: Downloader | None = grid_class(**grid_kwargs)
+        else:
+            self._grid = None
+
+        # --- DWD station downloader (when explicitly configured or DWD-only) ---
+        use_dwd = "dwd_stations" in cfg or source == "DWD_stations"
+        if use_dwd:
+            self._dwd: DWDStationDownloader | None = DWDStationDownloader(
+                variables=variables,
+                date_start=date_start,
+                date_end=date_end,
+                stations=cfg.get("dwd_stations"),
+            )
+        else:
+            self._dwd = None
+
+        logger.info(
+            "CompositeWeatherDownloader initialised — source=%s, variables=%s,"
+            " %s to %s",
+            source,
+            variables,
+            date_start,
+            date_end,
+        )
+
+    # ------------------------------------------------------------------
+    # CompositeDownloader interface
+    # ------------------------------------------------------------------
+
+    @property
+    def downloaders(self) -> list[Downloader]:
+        """Return the active sub-downloaders in execution order.
+
+        Returns
+        -------
+        list[Downloader]
+            Non-None downloaders in order: grid downloader (if any) then
+            :class:`~datavia.weather.dwd_downloader.DWDStationDownloader`
+            (if any).
+        """
+        return [d for d in (self._grid, self._dwd) if d is not None]
+
+    def download(self) -> str:
+        """Run all active sub-downloads and return their output paths.
+
+        Each sub-downloader writes its result(s) to temporary file(s).
+        The absolute paths are returned as a newline-joined string so
+        ``WeatherPipeline`` can split and pass them individually to
+        ``SaverWeather.save()``.
+
+        ERA5 monthly chunking means the grid downloader may return a
+        newline-joined string containing multiple paths (one per calendar
+        month).  These are incorporated directly — the final return value
+        is a flat newline-joined list of all paths from all sub-downloaders.
+
+        Returns
+        -------
+        str
+            Newline-joined absolute file paths for every successful download.
+            If the grid downloader is unavailable (e.g. missing ``cdsapi`` for
+            ERA5, or a network error) its path is omitted and only station
+            data is returned — allowing partial updates without blocking.
+
+            Returns ``"failed"`` only when *all* active sub-downloads fail.
+
+        Raises
+        ------
+        RuntimeError
+            If the DWD download raises an unexpected exception (logged and
+            re-raised so the pipeline can mark the update as failed).
+        TimeoutError
+            Propagated unchanged from
+            :class:`~datavia.weather.era5_downloader.ERA5Downloader` when
+            ``cds_queue_timeout`` is exceeded.
+        """
+        paths: list[str] = []
+
+        if self._grid is not None:
+            logger.info("CompositeWeatherDownloader: starting grid download")
+            try:
+                grid_path = self._grid.download()
+                logger.info("CompositeWeatherDownloader: grid done -> %s", grid_path)
+                paths.extend(p for p in grid_path.splitlines() if p and p != "failed")
+            except (ImportError, RuntimeError) as exc:
+                logger.warning(
+                    "CompositeWeatherDownloader: grid download skipped (%s). "
+                    "Continuing with DWD station data only. "
+                    "To enable ERA5, install cdsapi and create ~/.cdsapirc.",
+                    exc,
+                )
+
+        if self._dwd is not None:
+            logger.info("CompositeWeatherDownloader: starting DWD download")
+            dwd_path = self._dwd.download()
+            logger.info("CompositeWeatherDownloader: DWD done -> %s", dwd_path)
+            paths.extend(p for p in dwd_path.splitlines() if p and p != "failed")
+
+        if not paths:
+            return "failed"
+        return "\n".join(paths)

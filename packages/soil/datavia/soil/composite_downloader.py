@@ -14,6 +14,7 @@ object, unaware that two different remote sources are involved.
 import logging
 from typing import Any
 
+from datavia.core.interfaces import CompositeDownloader as CompositeDownloaderABC
 from datavia.core.interfaces import Downloader
 
 from .hihydrosoil_downloader import HiHydroSoilDownloader
@@ -22,7 +23,7 @@ from .soilgrids_downloader import SoilGridsDownloader
 logger = logging.getLogger(__name__)
 
 
-class CompositeDownloader(Downloader):
+class CompositeDownloader(CompositeDownloaderABC):
     """Downloader that aggregates SoilGrids and HiHydroSoil into one interface.
 
     Presents the same two-method contract as every other downloader
@@ -51,6 +52,7 @@ class CompositeDownloader(Downloader):
         """
         # Build per-backend configs, splitting the shared property list so
         # each backends only receives components it recognises.
+        super().__init__()
         hihydro_known = set(HiHydroSoilDownloader._CANONICAL_TO_PREFIX)
         all_properties: list[str] = config.get("properties", [])
 
@@ -72,8 +74,20 @@ class CompositeDownloader(Downloader):
         )
 
     # ------------------------------------------------------------------
-    # Downloader interface
+    # CompositeDownloader interface
     # ------------------------------------------------------------------
+
+    @property
+    def downloaders(self) -> list[Downloader]:
+        """Return the two backend downloaders managed by this composite.
+
+        Returns
+        -------
+        list[Downloader]
+            Both backend downloaders in declaration order: SoilGrids first,
+            then HiHydroSoil.
+        """
+        return [self.soilgrids, self.hihydrosoil]
 
     def get_coverage_ids(
         self,
@@ -113,7 +127,8 @@ class CompositeDownloader(Downloader):
         )
         all_ids = sorted(set(sg_ids) | set(hh_ids))
         logger.info(
-            "CompositeDownloader: %d SoilGrids + %d HiHydroSoil = %d total coverage IDs",
+            "CompositeDownloader: %d SoilGrids + %d HiHydroSoil"
+            " = %d total coverage IDs",
             len(sg_ids),
             len(hh_ids),
             len(all_ids),
@@ -181,14 +196,14 @@ class CompositeDownloader(Downloader):
             Path to the first successfully downloaded file across either
             backend, or ``"failed"`` if nothing could be downloaded.
         """
-        import tempfile  # noqa: PLC0415 — deferred: this method is an interface-only edge-case
+        import tempfile
 
         with tempfile.TemporaryDirectory() as temp_dir:
             results = self.download_coverages(self.get_coverage_ids(), temp_dir)
         return results[0][0] if results else "failed"
 
     def get_remote_available_properties(self) -> dict[str, list[str]]:
-        """Discover all properties and depth layers available across both remote backends.
+        """Discover available properties/depths across both remote backends.
 
         Delegates to
         :meth:`~datavia.soil.soilgrids_downloader.SoilGridsDownloader.get_remote_available_properties`
@@ -215,7 +230,8 @@ class CompositeDownloader(Downloader):
 
         result = {prop: sorted(depths) for prop, depths in sorted(merged.items())}
         logger.info(
-            "CompositeDownloader remote catalogue: %d SoilGrids + %d HiHydroSoil properties, "
+            "CompositeDownloader remote catalogue: "
+            "%d SoilGrids + %d HiHydroSoil properties, "
             "%d total unique properties",
             len(sg_catalogue),
             len(hh_catalogue),

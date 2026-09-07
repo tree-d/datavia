@@ -63,3 +63,46 @@ pixi run test-all        # Run all tests with coverage
 pixi run ci-check        # Run all checks like CI pipeline
 pixi run ci-pr-check
 ```
+
+## CI/CD Pipelines
+
+Three GitHub Actions workflows handle different stages of development.
+
+### Workflows
+
+| Workflow | Trigger | Purpose |
+|---|---|---|
+| `ci-pull-request.yml` | Pull request to `dev` | Format, lint, type-check, test, security scan |
+| `cd-main.yml` | Push to `main` | Deploy docs to GitHub Pages, create dev release |
+| `release-pypi.yml` | Push to `release` / tag `v*.*.*` | Full test matrix, publish to TestPyPI → PyPI, GitHub release |
+
+### Auto-formatting
+
+The CI pipeline runs `ruff format` and commits the result back to your PR
+automatically (`[skip ci]` commit).  You do not need to format locally before
+pushing.
+
+### Branch strategy
+
+```
+feature/* → dev  (CI runs)
+dev → main       (CD runs, dev release created)
+main → release   (release pipeline, PyPI publish)
+```
+
+### Version management
+
+```bash
+./scripts/version.sh          # show current version
+./scripts/version.sh patch    # 1.0.0 → 1.0.1
+./scripts/version.sh minor    # 1.0.0 → 1.1.0
+./scripts/version.sh major    # 1.0.0 → 2.0.0
+./scripts/version.sh set 1.2.3
+```
+
+### Required repository secrets
+
+| Secret | Purpose |
+|---|---|
+| `PYPI_API_TOKEN` | Publish to PyPI |
+| `TEST_PYPI_API_TOKEN` | Publish to TestPyPI (optional) |
