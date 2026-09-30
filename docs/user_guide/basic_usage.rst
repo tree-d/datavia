@@ -472,7 +472,9 @@ restore the database coverage rows:
 
 .. code-block:: python
 
-    mgr = CoverageManager(source_name="ERA5_land")
+    mgr = CoverageManager(
+        source_name="ERA5_land", variables=["2m_temperature"]
+    )
     rows = mgr.rebuild_from_store("2m_temperature")
     print(f"Rebuilt {rows} coverage rows from disk")
 
