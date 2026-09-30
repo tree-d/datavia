@@ -119,7 +119,6 @@ include = [
     "datavia/__init__.py",
     "datavia/core/**/*.py", 
     "datavia/library/**/*.py",
-    "datavia/library/**/*.sql",
     "datavia/cli.py",
     "datavia/cli_config.py",
     "datavia/cli_utils.py",
