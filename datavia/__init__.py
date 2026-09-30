@@ -19,7 +19,10 @@ Example usage:
         from datavia.elevation import ElevationPipeline
         elevation = ElevationPipeline()
     except ImportError:
-        print("Elevation pipeline not installed. Install with: pip install datavia[elevation]")
+        print(
+            "Elevation pipeline not installed. "
+            "Install with: pip install datavia[elevation]"
+        )
         elevation = None
 
     try:

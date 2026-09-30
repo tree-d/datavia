@@ -54,10 +54,10 @@ class GetterTiff(Getter):
                             - Shape: (n_points, 2)
             crs_coords (str): CRS of input coordinates. Defaults to "EPSG:4326".
             interpolation_order (int): Interpolation order for raster sampling.
-            band (int): Band number to extract (1-indexed). Defaults to 1 for
-                        backward compatibility with single-band sources. For
-                        multi-band TIFFs use :meth:`get_band_mapping` to find
-                        the correct band index for a given property.
+            band (int): Band number to extract (1-indexed). Defaults to 1,
+                        which selects the first band. For multi-band TIFFs
+                        use :meth:`get_band_mapping` to find the correct band
+                        index for a given property.
 
         Returns:
             np.ndarray: Extracted raster values at coordinate locations.
@@ -68,7 +68,11 @@ class GetterTiff(Getter):
         """
         coord_type = "lon/lat" if crs_coords == "EPSG:4326" else "x/y"
         logger.debug(
-            f"Handling TIFF request for {self.source_name} at {len(coords)} ({coord_type}) coordinate pairs, band={band}"
+            "Handling TIFF request for %s at %d (%s) coordinate pairs, band=%d",
+            self.source_name,
+            len(coords),
+            coord_type,
+            band,
         )
 
         try:
@@ -82,7 +86,9 @@ class GetterTiff(Getter):
             metadata_list = get_raster_metadata(self.source_name)
             for metadata in metadata_list:
                 logger.debug(
-                    f"Available layer: {metadata['layer_name']} (CRS: {metadata['crs']})"
+                    "Available layer: %s (CRS: %s)",
+                    metadata["layer_name"],
+                    metadata["crs"],
                 )
 
         except Exception as db_error:
@@ -139,6 +145,32 @@ class GetterTiff(Getter):
         except Exception as exc:
             logger.warning(
                 "Could not retrieve existing layers for source '%s': %s",
+                self.source_name,
+                exc,
+            )
+            return set()
+
+    def get_registered_uris(self) -> set[str]:
+        """Return the set of file URIs currently registered for this source.
+
+        Queries the ``raster_layers`` table for all distinct ``uri`` values
+        belonging to this source.  Used by
+        :meth:`~datavia.core.interfaces.Pipeline.sync_files_and_database`
+        to compare what the database knows about against what is on disk.
+
+        Returns
+        -------
+        set[str]
+            Absolute file paths registered for this source.  Returns an
+            empty set when nothing has been stored yet or the database is
+            unavailable.
+        """
+        try:
+            metadata_list = get_raster_metadata(self.source_name)
+            return {m["uri"] for m in metadata_list if m.get("uri")}
+        except Exception as exc:
+            logger.warning(
+                "Could not retrieve registered URIs for source '%s': %s",
                 self.source_name,
                 exc,
             )

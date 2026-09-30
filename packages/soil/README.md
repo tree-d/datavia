@@ -49,17 +49,21 @@ coords = np.array([[10.0, 50.0], [11.0, 51.0]])
 soil_data = soil.get_data(coords=coords, crs_coords="EPSG:4326")
 
 # SoilGrids values are integer-scaled — convert to common units:
-print(f"Clay:  {soil_data['clay_0-5cm_mean'] / 10:.1f} %")      # g/kg → %
+print(f"Clay:  {soil_data['clay_0-5cm_mean'] / 10:.1f} %")  # g/kg → %
 print(f"Sand:  {soil_data['sand_0-5cm_mean'] / 10:.1f} %")
 print(f"Silt:  {soil_data['silt_0-5cm_mean'] / 10:.1f} %")
-print(f"pH:    {soil_data['ph_0-5cm_mean'] / 10:.2f}")           # pH×10 → pH
+print(f"pH:    {soil_data['ph_0-5cm_mean'] / 10:.2f}")  # pH×10 → pH
 print(f"SOC:   {soil_data['carbon_0-5cm_mean'] / 10:.1f} g/kg")  # dg/kg → g/kg
 
 # HiHydroSoil values are stored as integers × 10 000 → multiply by 0.0001
-print(f"Field capacity:         {soil_data['field_capacity_0-5cm_mean'] * 0.0001:.4f} cm³/cm³")
-print(f"Wilting point:          {soil_data['wilting_point_0-5cm_mean'] * 0.0001:.4f} cm³/cm³")
-print(f"Porosity:               {soil_data['porosity_0-5cm_mean'] * 0.0001:.4f} cm³/cm³")
-print(f"Hydraulic conductivity: {soil_data['hydraulic_conductivity_0-5cm_mean'] * 0.0001:.4f} cm/day")
+for label, prop, unit in [
+    ("Field capacity", "field_capacity", "cm³/cm³"),
+    ("Wilting point", "wilting_point", "cm³/cm³"),
+    ("Porosity", "porosity", "cm³/cm³"),
+    ("Hydraulic conductivity", "hydraulic_conductivity", "cm/day"),
+]:
+    value = soil_data[f"{prop}_0-5cm_mean"] * 0.0001
+    print(f"{label + ':':<24}{value:.4f} {unit}")
 ```
 
 ### Requesting specific properties and depths
@@ -74,7 +78,7 @@ clay_values = soil.get_data(
 )
 
 # Reconfigure the pipeline for a different property set
-soil.configure(
+soil.reconfigure(
     properties=["clay", "ph", "field_capacity"],
     depths=["0-5cm", "5-15cm"],
 )

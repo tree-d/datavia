@@ -3,7 +3,8 @@
 MAIN CLI MODULE
 
 This module defines the main command-line interface for Datavia using Click.
-It includes commands for managing the Datavia environment, configuration, and pipeline updates.
+It includes commands for managing the Datavia environment, configuration,
+and pipeline updates.
 The CLI is designed to be user-friendly and provides clear feedback on operations.
 """
 
@@ -18,6 +19,7 @@ from .cli_utils import (
     get_datavia_instance,
     get_pipeline_status,
     update_pipeline,
+    update_weather_pipelines,
     validate_config_file,
 )
 
@@ -157,9 +159,18 @@ def soil(config_file: str) -> None:
 @click.option(
     "--config-file", default="datavia_config.py", help="Configuration file path"
 )
-def weather(config_file: str) -> None:
-    """Update weather data."""
-    if update_pipeline("weather", config_file):
+@click.option(
+    "--source",
+    default=None,
+    help=(
+        "Update only the weather pipeline with this source name "
+        "(e.g. ERA5_land, HYRAS, DWD_stations). "
+        "Omit to update all configured weather pipelines."
+    ),
+)
+def weather(config_file: str, source: str | None) -> None:
+    """Update weather data for one or all configured weather sources."""
+    if update_weather_pipelines(source, config_file):
         logger.info("✅ Weather update completed")
     else:
         logger.error("❌ Weather update failed")
