@@ -29,7 +29,7 @@ _PIPELINE_TO_OPEN_METEO: dict[str, str] = {
     "2m_temperature": "temperature_2m",
     "total_precipitation": "precipitation",
     "surface_solar_radiation_downwards": "shortwave_radiation",
-    "relative_humidity_2m": "relativehumidity_2m",
+    "relative_humidity_2m": "relative_humidity_2m",
     "temperature_2m_max": "temperature_2m_max",
     "temperature_2m_min": "temperature_2m_min",
 }
