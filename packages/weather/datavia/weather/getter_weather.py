@@ -508,6 +508,13 @@ class GetterWeather(Getter):
                         break
                     station_val = candidate
 
+            # Station parquet files are always DWD: bring them to the same
+            # target unit as the gridded value before blending.
+            if station_val is not None and not np.isnan(station_val):
+                station_val = float(
+                    apply_conversion("DWD_stations", variable, station_val)
+                )
+
             gridded_val = results[i] if not np.isnan(results[i]) else None
 
             if (

@@ -82,6 +82,33 @@ def precipitation_m_to_mm(values: np.ndarray | float) -> np.ndarray | float:
     )
 
 
+def w_m2_to_par(irradiance_w_m2: np.ndarray | float) -> np.ndarray | float:
+    """Convert shortwave irradiance to PAR photon flux.
+
+    Converts global shortwave irradiance in W m⁻² to photosynthetically
+    active radiation (PAR) in µmol(photons) m⁻² s⁻¹:
+
+    1. W m⁻²     →  PAR W m⁻² (multiply by :data:`_PAR_FRACTION` = 0.5).
+    2. PAR W m⁻² →  µmol m⁻² s⁻¹ (multiply by :data:`_W_TO_UMOL` ≈ 4.57).
+
+    Parameters
+    ----------
+    irradiance_w_m2 : np.ndarray or float
+        Shortwave irradiance in W m⁻².
+
+    Returns
+    -------
+    np.ndarray or float
+        PAR flux in µmol(photons) m⁻² s⁻¹.  Same type and shape as
+        *irradiance_w_m2*.
+    """
+    arr = np.asarray(irradiance_w_m2, dtype=float)
+    result = arr * _PAR_FRACTION * _W_TO_UMOL
+    if np.ndim(irradiance_w_m2) == 0:
+        return float(result)
+    return result
+
+
 def ssrd_to_par(ssrd_daily_j_m2: np.ndarray | float) -> np.ndarray | float:
     """Convert daily SSRD accumulation to mean PAR flux.
 
@@ -91,8 +118,7 @@ def ssrd_to_par(ssrd_daily_j_m2: np.ndarray | float) -> np.ndarray | float:
 
     The conversion pipeline is:
     1. J m⁻² day⁻¹  →  W m⁻² (divide by seconds per day).
-    2. W m⁻²        →  PAR W m⁻² (multiply by :data:`_PAR_FRACTION` = 0.5).
-    3. PAR W m⁻²    →  µmol m⁻² s⁻¹ (multiply by :data:`_W_TO_UMOL` ≈ 4.57).
+    2. W m⁻²        →  PAR µmol m⁻² s⁻¹ (see :func:`w_m2_to_par`).
 
     Parameters
     ----------
@@ -106,14 +132,12 @@ def ssrd_to_par(ssrd_daily_j_m2: np.ndarray | float) -> np.ndarray | float:
         *ssrd_daily_j_m2*.
     """
     arr = np.asarray(ssrd_daily_j_m2, dtype=float)
-    result = arr / _SECONDS_PER_DAY * _PAR_FRACTION * _W_TO_UMOL
-    if np.ndim(ssrd_daily_j_m2) == 0:
-        return float(result)
-    return result
+    return w_m2_to_par(arr / _SECONDS_PER_DAY)
 
 
 __all__ = [
     "kelvin_to_celsius",
     "precipitation_m_to_mm",
     "ssrd_to_par",
+    "w_m2_to_par",
 ]

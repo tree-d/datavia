@@ -318,6 +318,56 @@ class TestGetterWeather:
         assert isinstance(value, float)
         assert value == pytest.approx(7.1)
 
+    def test_get_data_blends_radiation_in_par(self, sqlite_db: None) -> None:
+        """ERA5 PAR and DWD W m⁻² station radiation are blended in one unit."""
+        from datavia.weather.getter_weather import GetterWeather
+
+        variable = "surface_solar_radiation_downwards"
+        _insert_weather_layer(
+            source_name="ERA5_land",
+            layer_name="ERA5_land_ssrd",
+            variable=variable,
+            file_format="netcdf",
+            valid_from="2024-01-01T00:00:00",
+            valid_until="2024-01-31T23:00:00",
+            uri="/data/era5_ssrd.nc",
+        )
+        _insert_weather_layer(
+            source_name="ERA5_land",
+            layer_name="DWD_ssrd",
+            variable=variable,
+            file_format="parquet",
+            valid_from="2024-01-01T00:00:00",
+            valid_until="2024-01-31T23:00:00",
+            uri="/data/dwd_ssrd.parquet",
+        )
+
+        getter = GetterWeather("ERA5_land")
+        coords = np.array([[13.4, 52.5]])
+        era5_j_m2 = 86400.0 * 200.0  # 200 W m-2 daily mean
+        station_w_m2 = 300.0
+
+        with (
+            patch(
+                "datavia.weather.getter_weather.interpolate_netcdf",
+                return_value=era5_j_m2,
+            ),
+            patch(
+                "datavia.weather.getter_weather.interpolate_station_parquet",
+                return_value=station_w_m2,
+            ),
+        ):
+            result = getter.get_data(
+                coords,
+                variable=variable,
+                datetime_utc="2024-01-15T12:00:00",
+                station_weight=0.6,
+            )
+
+        par = 0.5 * 4.57
+        expected = 0.4 * (200.0 * par) + 0.6 * (station_w_m2 * par)
+        assert result[0] == pytest.approx(expected)
+
     def test_get_data_timezone_aware_timestamp_not_nan(self, sqlite_db: None) -> None:
         """Timezone-aware timestamps (e.g. UTC 'Z' suffix) must not produce NaN.
 

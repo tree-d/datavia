@@ -28,6 +28,7 @@ from datavia.library.unit_conversions import (
     kelvin_to_celsius,
     precipitation_m_to_mm,
     ssrd_to_par,
+    w_m2_to_par,
 )
 
 # HYRASDownloader is introduced in Phase D.  Import it lazily so that the
@@ -54,6 +55,7 @@ _FROM_TO_CONVERSION_MAP: dict[tuple[str, str], Any] = {
     ("K", "degC"): kelvin_to_celsius,
     ("m", "mm"): precipitation_m_to_mm,
     ("J_m2", "PAR"): ssrd_to_par,
+    ("W_m2", "PAR"): w_m2_to_par,
 }
 
 # ---------------------------------------------------------------------------
@@ -135,8 +137,11 @@ SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
     "HYRAS": {
         # Populated with HYRASDownloader once Phase D is implemented.
         "grid_downloader": _HYRASDownloader,
-        # HYRAS files are already in target units (°C, mm/day, W/m²).
-        "conversions": {},
+        # HYRAS files are already in target units (°C, mm/day) except radiation:
+        # rsds is W/m², converted to PAR to match every other source.
+        "conversions": {
+            "surface_solar_radiation_downwards": {"from": "W_m2", "to": "PAR"},
+        },
         # Maps NetCDF CF variable names (as they appear inside the .nc file)
         # to the pipeline variable names used throughout the datavia API.
         # Needed because HYRAS uses short CF names (e.g. "tas") while the rest
@@ -176,7 +181,10 @@ SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
     "DWD_stations": {
         # Station-only source — no gridded downloader.
         "grid_downloader": None,
-        "conversions": {},
+        # Open-Meteo shortwave_radiation is W/m²; convert to PAR.
+        "conversions": {
+            "surface_solar_radiation_downwards": {"from": "W_m2", "to": "PAR"},
+        },
     },
 }
 

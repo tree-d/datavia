@@ -18,6 +18,7 @@ from datavia.library.unit_conversions import (
     kelvin_to_celsius,
     precipitation_m_to_mm,
     ssrd_to_par,
+    w_m2_to_par,
 )
 
 # ---------------------------------------------------------------------------
@@ -278,3 +279,30 @@ class TestSsrdToPar:
         result = np.asarray(ssrd_to_par(ssrd))
         diffs = np.diff(result)
         assert np.all(diffs >= 0.0)
+
+
+# ---------------------------------------------------------------------------
+# w_m2_to_par
+# ---------------------------------------------------------------------------
+
+
+class TestWm2ToPar:
+    """Tests for w_m2_to_par()."""
+
+    def test_known_value(self) -> None:
+        """1 W m⁻² equals 0.5 * 4.57 µmol m⁻² s⁻¹."""
+        assert w_m2_to_par(1.0) == pytest.approx(0.5 * 4.57)
+
+    def test_zero(self) -> None:
+        """Zero irradiance yields zero PAR."""
+        assert w_m2_to_par(0.0) == pytest.approx(0.0)
+
+    def test_return_types(self) -> None:
+        """Scalars return float, arrays return ndarray."""
+        assert isinstance(w_m2_to_par(100.0), float)
+        assert isinstance(w_m2_to_par(np.array([1.0, 2.0])), np.ndarray)
+
+    def test_consistent_with_ssrd_to_par(self) -> None:
+        """A daily J m⁻² total equals the mean W m⁻² converted directly."""
+        w_m2 = 250.0
+        assert ssrd_to_par(w_m2 * 86400.0) == pytest.approx(w_m2_to_par(w_m2))

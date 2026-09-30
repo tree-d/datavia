@@ -161,6 +161,12 @@ observational gridding, no reanalysis background), or replace the fixed weight
 with a distance- or uncertainty-based scheme.  Track this as a scientific
 concern in the project backlog.
 
+**Radiation time bases:** `surface_solar_radiation_downwards` is now PAR
+(µmol m⁻² s⁻¹) for every source, but time bases still differ: `ssrd_to_par`
+assumes a daily J m⁻² total while the ERA5 store is hourly accumulation since
+00 UTC (nothing de-accumulates it); HYRAS is a daily mean and DWD an hourly
+instantaneous value.
+
 ---
 
 ### ⚠️ Open-Meteo licensing for `DWDStationDownloader`

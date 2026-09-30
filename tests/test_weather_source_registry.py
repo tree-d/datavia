@@ -60,14 +60,39 @@ class TestUnitConversions:
 
         assert precipitation_m_to_mm(0.005) == pytest.approx(5.0)
 
-    def test_convert_era5_variable_unknown_passthrough(self) -> None:
-        """Unknown variables are returned unchanged
-        (identity test on ssrd_to_par passthrough)."""
-        from datavia.library.unit_conversions import kelvin_to_celsius
+    def test_apply_conversion_unknown_variable_passthrough(self) -> None:
+        """Variables without a registry entry are returned unchanged."""
+        from datavia.weather.source_registry import apply_conversion
 
-        # kelvin_to_celsius always applies the offset; test with a value
-        # that maps to a known result to confirm the function is still callable.
-        assert kelvin_to_celsius(273.15) == pytest.approx(0.0)
+        assert apply_conversion("ERA5_land", "no_such_variable", 42.0) == 42.0
+        arr = np.array([1.0, 2.0])
+        np.testing.assert_array_equal(
+            apply_conversion("ERA5_land", "no_such_variable", arr), arr
+        )
+
+    def test_apply_conversion_unknown_unit_pair_returns_raw(self) -> None:
+        """A spec with no matching (from, to) function returns the raw value."""
+        from datavia.weather.source_registry import apply_conversion
+
+        overrides = {"2m_temperature": {"from": "bogus", "to": "other"}}
+        assert apply_conversion("ERA5_land", "2m_temperature", 5.0, overrides) == 5.0
+
+    @pytest.mark.parametrize("source", ["HYRAS", "DWD_stations"])
+    def test_radiation_w_m2_converted_to_par(self, source: str) -> None:
+        """HYRAS and DWD W m⁻² radiation is converted to PAR."""
+        from datavia.weather.source_registry import apply_conversion
+
+        result = apply_conversion(source, "surface_solar_radiation_downwards", 100.0)
+        assert result == pytest.approx(100.0 * 0.5 * 4.57)
+
+    def test_radiation_era5_still_ssrd_to_par(self) -> None:
+        """ERA5 J m⁻² radiation still converts to the same PAR unit."""
+        from datavia.weather.source_registry import apply_conversion
+
+        result = apply_conversion(
+            "ERA5_land", "surface_solar_radiation_downwards", 86400.0
+        )
+        assert result == pytest.approx(0.5 * 4.57)
 
 
 # ---------------------------------------------------------------------------

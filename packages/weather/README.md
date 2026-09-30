@@ -229,7 +229,8 @@ WeatherPipeline(
 
 ### HYRAS variables
 
-HYRAS files are already in the final target units — no conversion is applied.
+HYRAS files are already in the final target units, except
+`surface_solar_radiation_downwards` (W/m²), which is converted to PAR.
 The pipeline internally translates between the short CF names stored in the
 NetCDF files (e.g. `tas`) and the descriptive pipeline API names (e.g.
 `2m_temperature`) via `nc_variable_map` in `source_registry.py`.
@@ -240,7 +241,7 @@ NetCDF files (e.g. `tas`) and the descriptive pipeline API names (e.g.
 | `temperature_2m_max` | `tasmax` | °C | Daily maximum 2-m air temperature |
 | `temperature_2m_min` | `tasmin` | °C | Daily minimum 2-m air temperature |
 | `total_precipitation` | `pr` | mm/day | Daily precipitation sum |
-| `surface_solar_radiation_downwards` | `rsds` | W/m² | Daily mean global solar radiation |
+| `surface_solar_radiation_downwards` | `rsds` | W/m² (returned as µmol m⁻² s⁻¹ PAR) | Daily mean global solar radiation |
 | `relative_humidity_2m` | `hurs` | % | Daily mean 2-m relative humidity |
 
 ### ERA5-Land variables (commonly used)
@@ -256,7 +257,12 @@ Unit conversions (K→°C, m→mm, SSRD→PAR) are applied automatically in
 
 ### DWD / Open-Meteo variables (commonly used)
 
-`temperature_2m`, `precipitation`, `wind_speed_10m`, `relative_humidity_2m`
+`temperature_2m`, `precipitation`, `wind_speed_10m`, `relative_humidity_2m`,
+`surface_solar_radiation_downwards` (Open-Meteo `shortwave_radiation`, W/m²)
+
+`surface_solar_radiation_downwards` is returned as PAR (µmol(photons) m⁻² s⁻¹)
+for every source; HYRAS and DWD values (W/m²) are converted with
+`w_m2_to_par`, so ERA5 + station blending operates on a single unit.
 
 ---
 
