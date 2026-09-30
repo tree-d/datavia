@@ -166,7 +166,10 @@ class DWDStationDownloader(APIDownloader):
             raise RuntimeError("DWD download produced no records.")
 
         df = pd.DataFrame(records)
-        _, output_path = tempfile.mkstemp(suffix=".parquet", prefix="dwd_stations_")
+        with tempfile.NamedTemporaryFile(
+            suffix=".parquet", prefix="dwd_stations_", delete=False
+        ) as output_file:
+            output_path = output_file.name
         df.to_parquet(output_path, engine="pyarrow", compression="snappy", index=False)
         logger.info(
             "DWD download complete: %d records written to %s",
