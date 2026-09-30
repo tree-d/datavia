@@ -699,7 +699,7 @@ ds.to_zarr(
     consolidated=False,
     encoding={
         "temperature": {
-            "compressors": [compressor],   # ← plural list, zarr v3 style
+            "compressors": [compressor],  # ← plural list, zarr v3 style
             "chunks": (720, 5, 5),
         }
     },
@@ -722,10 +722,10 @@ Our target settings: `cname="zstd", clevel=3, shuffle="shuffle"`.
 In zarr v3, `fill_value` (used for unwritten chunks) and `_FillValue` (xarray's
 CF masking sentinel) are decoupled. Both must be set explicitly:
 ```python
-encoding={
+encoding = {
     "temperature": {
-        "fill_value": float("nan"),    # zarr store default for unwritten chunks
-        "_FillValue": float("nan"),    # CF convention masking value
+        "fill_value": float("nan"),  # zarr store default for unwritten chunks
+        "_FillValue": float("nan"),  # CF convention masking value
         "compressors": [compressor],
         "chunks": (720, 5, 5),
     }

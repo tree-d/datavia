@@ -40,6 +40,7 @@ pip install datavia
 # Install with specific pipelines (downloads additional packages)
 pip install datavia[elevation]     # Core + elevation pipeline code
 pip install datavia[soil]          # Core + soil pipeline code  
+pip install datavia[weather]       # Core + weather pipeline code
 pip install datavia[elevation,soil] # Core + multiple pipelines
 
 # or use this (as datavia is dependency of the pipeline packages)
@@ -142,9 +143,9 @@ pixi add --git https://github.com/tree-d/datavia --branch main --subdirectory pa
    # 4. Query values at coordinates [longitude, latitude] in WGS84.
    #    Returns a numpy array of shape (N,) — one value per coordinate.
    #    Other CRS are supported via crs_coords, e.g. "EPSG:25832".
-   coords = np.array([[10.0, 50.0]])          # [lon, lat]
+   coords = np.array([[10.0, 50.0]])  # [lon, lat]
    elevation_data = dv.elevation.get_data(coords, crs_coords="EPSG:4326")
-   print(elevation_data)                      # e.g. [471.3]
+   print(elevation_data)  # e.g. [471.3]
    ```
 
 
@@ -201,16 +202,20 @@ pipelines = []
 
 try:
     from datavia.elevation import ElevationPipeline
+
     elevation = ElevationPipeline()
     pipelines.append(elevation)
     print("✅ Elevation pipeline loaded")
 except ImportError:
-    print("❌ Elevation pipeline not installed. Install: pip install datavia[elevation]")
+    print(
+        "❌ Elevation pipeline not installed. Install: pip install datavia[elevation]"
+    )
     elevation = None
 
 try:
     from datavia.soil import SoilPipeline
-    soil = SoilPipeline() 
+
+    soil = SoilPipeline()
     pipelines.append(soil)
     print("✅ Soil pipeline loaded")
 except ImportError:
@@ -221,13 +226,12 @@ except ImportError:
 dv = Datavia(pipelines=pipelines)
 dv()
 
-#update data
+# update data
 dv.elevation.update_data()
 
 # Use available pipelines
 coordinates = np.array([[10.0, 50.0], [11.0, 51.0]])  # [longitude, latitude]
 elevations = dv.elevation.get_data(coords=coordinates, crs_coords="EPSG:4326")
-
 ```
 
 ### Command Line Interface

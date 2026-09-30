@@ -45,6 +45,7 @@ def test_ids_autogenerate_without_explicit_id(sqlite_db) -> None:
 
 def test_initialize_propagates_errors(sqlite_db, monkeypatch) -> None:
     """Errors raised by metadata.create_all() are not swallowed."""
+
     def boom(*args, **kwargs):
         raise RuntimeError("boom")
 

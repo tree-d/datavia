@@ -68,6 +68,7 @@ vector = [
 pipelines = [
     "datavia[elevation]",
     "datavia[soil]",
+    "datavia[weather]",
 ]
 all = [
     "datavia[pipelines]",

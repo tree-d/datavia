@@ -87,12 +87,14 @@ from datavia.weather import WeatherPipeline
 import numpy as np
 
 # Build a HYRAS pipeline for a one-week summer window.
-pipeline = WeatherPipeline(config={
-    "source":     "HYRAS",
-    "variables":  ["2m_temperature", "total_precipitation"],
-    "date_start": "2024-06-01",
-    "date_end":   "2024-06-07",
-})
+pipeline = WeatherPipeline(
+    config={
+        "source": "HYRAS",
+        "variables": ["2m_temperature", "total_precipitation"],
+        "date_start": "2024-06-01",
+        "date_end": "2024-06-07",
+    }
+)
 
 # Wire up all components (downloader, saver, getter).
 pipeline()
@@ -107,7 +109,7 @@ pipeline.update_data()
 coords = np.array([[13.4, 52.5], [10.0, 50.0]])  # Berlin, Kassel
 values = pipeline.get_data(
     coords=coords,
-    crs_coords="EPSG:4326",   # default — WGS84 lon/lat
+    crs_coords="EPSG:4326",  # default — WGS84 lon/lat
     variable="2m_temperature",
     datetime_utc="2024-06-15T12:00:00",
 )
@@ -134,12 +136,14 @@ temperature = pipeline.get_weather_data(
 ### ERA5-Land (requires Copernicus credentials)
 
 ```python
-pipeline = WeatherPipeline(config={
-    "source":     "ERA5_land",
-    "variables":  ["2m_temperature", "total_precipitation"],
-    "date_start": "2024-06-01",
-    "date_end":   "2024-06-30",
-})
+pipeline = WeatherPipeline(
+    config={
+        "source": "ERA5_land",
+        "variables": ["2m_temperature", "total_precipitation"],
+        "date_start": "2024-06-01",
+        "date_end": "2024-06-30",
+    }
+)
 pipeline()
 pipeline.update_data()
 ```
@@ -187,29 +191,30 @@ WeatherPipeline(config={
 ### ERA5-Land
 
 ```python
-WeatherPipeline(config={
-    "source":     "ERA5_land",
-
-    # CDS API variable names for reanalysis-era5-land:
-    "variables":  ["2m_temperature", "total_precipitation",
-                   "surface_solar_radiation_downwards"],
-
-    # Date range for the download (ISO-8601 strings).
-    "date_start": "2024-01-01",
-    "date_end":   "2024-12-31",
-
-    # ERA5 bounding box [north, west, south, east] in degrees.
-    # Edges are automatically snapped outward to the 0.1° ERA5-Land grid.
-    "era5_bbox": [55.1, 5.9, 47.3, 15.0],  # Germany default
-
-    # Optional: blend in DWD point-station observations.
-    "dwd_stations": [
-        {"id": "Berlin",    "latitude": 52.52, "longitude": 13.41},
-        {"id": "Munich",    "latitude": 48.14, "longitude": 11.58},
-        {"id": "Hamburg",   "latitude": 53.55, "longitude": 10.0},
-        {"id": "Frankfurt", "latitude": 50.11, "longitude": 8.68},
-    ],
-})
+WeatherPipeline(
+    config={
+        "source": "ERA5_land",
+        # CDS API variable names for reanalysis-era5-land:
+        "variables": [
+            "2m_temperature",
+            "total_precipitation",
+            "surface_solar_radiation_downwards",
+        ],
+        # Date range for the download (ISO-8601 strings).
+        "date_start": "2024-01-01",
+        "date_end": "2024-12-31",
+        # ERA5 bounding box [north, west, south, east] in degrees.
+        # Edges are automatically snapped outward to the 0.1° ERA5-Land grid.
+        "era5_bbox": [55.1, 5.9, 47.3, 15.0],  # Germany default
+        # Optional: blend in DWD point-station observations.
+        "dwd_stations": [
+            {"id": "Berlin", "latitude": 52.52, "longitude": 13.41},
+            {"id": "Munich", "latitude": 48.14, "longitude": 11.58},
+            {"id": "Hamburg", "latitude": 53.55, "longitude": 10.0},
+            {"id": "Frankfurt", "latitude": 50.11, "longitude": 8.68},
+        ],
+    }
+)
 ```
 
 ---
@@ -452,13 +457,15 @@ reprojected to WGS84 degrees before being handed to xarray.
 `"temporal_resolution"` is a recognised pipeline config key:
 
 ```python
-WeatherPipeline(config={
-    "source":               "ERA5_land",
-    "variables":            ["2m_temperature"],
-    "date_start":           "2024-01-01",
-    "date_end":             "2024-12-31",
-    "temporal_resolution":  "hourly",   # or "daily" (default)
-})
+WeatherPipeline(
+    config={
+        "source": "ERA5_land",
+        "variables": ["2m_temperature"],
+        "date_start": "2024-01-01",
+        "date_end": "2024-12-31",
+        "temporal_resolution": "hourly",  # or "daily" (default)
+    }
+)
 ```
 
 - `"daily"` (default) — one interpolated value per calendar day (nearest time
@@ -514,12 +521,14 @@ address this and related lifecycle issues:
   the full effective config so callers can always inspect the real state:
 
   ```python
-  pipeline = WeatherPipeline(config={
-      "source": "ERA5_land",
-      "variables": ["2m_temperature"],
-      "date_start": "2024-07-01",   # Jul–Dec not yet downloaded
-      "date_end":   "2024-12-31",
-  })
+  pipeline = WeatherPipeline(
+      config={
+          "source": "ERA5_land",
+          "variables": ["2m_temperature"],
+          "date_start": "2024-07-01",  # Jul–Dec not yet downloaded
+          "date_end": "2024-12-31",
+      }
+  )
   # Jan–Jun already on disk → effective config spans Jan–Dec
   print(pipeline.get_config()["date_start"])  # "2024-01-01"
   ```

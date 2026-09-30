@@ -214,8 +214,8 @@ string value silently succeeds and is ignored.
 `WeatherPipeline` is documented as requiring:
 ```python
 pipe = WeatherPipeline(config={...})  # 1. construct
-pipe()                                 # 2. wire components
-pipe.update_data()                     # 3. download
+pipe()  # 2. wire components
+pipe.update_data()  # 3. download
 ```
 In practice, all three public methods (`update_data`, `get_weather_data`,
 `get_data`) contain an `if not self.<component>: self()` guard and auto-wire
