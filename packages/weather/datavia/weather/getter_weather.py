@@ -41,7 +41,12 @@ from datavia.library.interpolation import (
 )
 from datavia.library.type_utils import is_scalar_like
 
-from .source_registry import SOURCE_REGISTRY, apply_conversion, get_nc_variable_name
+from .source_registry import (
+    SOURCE_REGISTRY,
+    apply_conversion,
+    get_day_start_hour,
+    get_nc_variable_name,
+)
 from .zarr_store_manager import ZarrStoreManager
 
 logger = logging.getLogger(__name__)
@@ -142,7 +147,9 @@ class GetterWeather(Getter):
         temporal_resolution : str, optional
             ``"daily"`` (default) or ``"hourly"``.  Forwarded to
             :func:`~datavia.library.interpolation.interpolate_netcdf` for
-            each query.
+            each query.  Both return one value per requested timestamp: the
+            value for the day containing it (daily; precipitation days run
+            06-06 UTC) or at the nearest hour (hourly).
         """
         self.source_name: str = source_name
         self._unit_overrides: dict[str, dict[str, str]] | None = unit_overrides
@@ -377,6 +384,7 @@ class GetterWeather(Getter):
         period_s = (
             3600.0 if accumulated and self._temporal_resolution == "hourly" else None
         )
+        day_start_hour = get_day_start_hour(self.source_name, variable)
         conv_kwargs = {} if period_s is None else {"period_s": period_s}
 
         # --- Gridded path ---
@@ -404,6 +412,7 @@ class GetterWeather(Getter):
                                 input_crs=crs_coords,
                                 temporal_resolution=self._temporal_resolution,
                                 accumulated=accumulated,
+                                day_start_hour=day_start_hour,
                             )
                     elif nc_files:
                         # Zarr store not yet written (e.g. first run not completed or
@@ -427,6 +436,7 @@ class GetterWeather(Getter):
                             input_crs=crs_coords,
                             temporal_resolution=self._temporal_resolution,
                             accumulated=accumulated,
+                            day_start_hour=day_start_hour,
                         )
                     elif not parquet_files:
                         raise RuntimeError(
@@ -448,6 +458,7 @@ class GetterWeather(Getter):
                         input_crs=crs_coords,
                         temporal_resolution=self._temporal_resolution,
                         accumulated=accumulated,
+                        day_start_hour=day_start_hour,
                     )
 
                 if raw_batch is not None:
@@ -520,6 +531,7 @@ class GetterWeather(Getter):
                             datetime_utc,
                             radius_km,
                             daily_aggregation=station_aggregation,
+                            day_start_hour=get_day_start_hour("DWD_stations", variable),
                         )
                     except Exception as exc:
                         logger.warning(

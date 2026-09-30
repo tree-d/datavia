@@ -161,33 +161,28 @@ observational gridding, no reanalysis background), or replace the fixed weight
 with a distance- or uncertainty-based scheme.  Track this as a scientific
 concern in the project backlog.
 
-**Time bases (radiation and precipitation):** all sources are compared as
-a mean flux (radiation) or total (precipitation) over one UTC day in daily
-mode.  Timestamps are interval-end for ERA5-Land and Open-Meteo, so day D is
-the stamps `D 01:00 .. D+1 00:00`.
+**Time bases (radiation and precipitation):** timestamps are interval-end for
+ERA5-Land and Open-Meteo, and all sources are brought to one daily convention:
 
-- ERA5-Land `ssrd`/`tp` are stored raw (running total since 00 UTC; the 00:00
-  stamp holds the previous day's total).  Daily mode reads the next day's
-  00:00 stamp; hourly mode de-accumulates
-  (`datavia.library.temporal.deaccumulate_since_midnight`) and converts with
-  `period_s=3600`.  A day whose next-00:00 stamp is not in the store is
-  reported missing rather than approximated.
-- DWD (Open-Meteo) `shortwave_radiation` is the **mean of the preceding
-  hour** (not instantaneous); in daily mode it is averaged (precipitation:
-  summed) over the UTC day, and stations with fewer than 24 hourly values are
-  dropped.
-- HYRAS `rsds` is a daily mean over **00:00-24:00 UTC** (time stamp at 12:00,
-  bounds 00:00-00:00; verified in `rsds_hyras_5_2020_v3-1_de.nc`), so it
-  matches the UTC day above.
-- HYRAS `pr` covers **06:00-06:00 UTC** (time stamp = interval start), so its
-  daily totals are offset by 6 h from ERA5/DWD precipitation totals.  This is
-  not corrected; it needs hourly data or a deliberate convention.
-- `temporal_resolution="hourly"` through `GetterWeather.get_data` with a
-  single timestamp fails (`TypeError: only 0-dimensional arrays can be
-  converted to Python scalars`) for every variable, because the single-time
-  branch expects one value per coordinate but hourly mode returns 24.  This
-  predates the de-accumulation work; `interpolate_dataset` itself returns the
-  hourly array correctly.
+- **Radiation:** day = 00:00-24:00 UTC, as a mean flux.  HYRAS `rsds` is a
+  00-24 UTC daily mean (time stamp 12:00, bounds 00:00-00:00; verified in
+  `rsds_hyras_5_2020_v3-1_de.nc`).  DWD (Open-Meteo) `shortwave_radiation`
+  is the mean of the preceding hour and is averaged over the day, dropping
+  stations with fewer than 24 hourly values.
+- **Precipitation:** day = **06:00-06:00 UTC**, as a total.  This is HYRAS
+  `pr` (time stamp = interval start, verified in `pr_hyras_1_2020_v6-1_de.nc`)
+  and DWD's own daily convention.  ERA5 and DWD hourly data are summed over
+  that window; HYRAS daily stamps are chosen by window containment (a plain
+  nearest-stamp pick would return the next day for queries after 18:00 UTC).
+  The hour is set per variable by `day_start_hour` in the source registry.
+- **ERA5-Land `ssrd`/`tp`** are stored raw (running total since 00 UTC; the
+  00:00 stamp holds the previous day's total).  Daily mode forms the window
+  total from the accumulation; hourly mode returns the de-accumulated
+  increment of the nearest hour (converted with `period_s=3600`).  A window
+  whose stamps are not in the store is reported missing, never approximated.
+- `temporal_resolution="hourly"` returns the value at the requested hour, with
+  the same shapes as daily mode (`(N,)` for one timestamp, `(N, T)` for a
+  list).  Only the time base of the value differs.
 
 ---
 

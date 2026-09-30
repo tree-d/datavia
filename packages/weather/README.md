@@ -476,12 +476,17 @@ WeatherPipeline(
 )
 ```
 
-- `"daily"` (default) — one interpolated value per calendar day (nearest time
-  step).  Compatible with HYRAS, ERA5, and DWD station data.
-- `"hourly"` — all sub-daily time steps for the requested day are returned as
-  a 1-D array of shape `(T,)` or `(N, T)`.  Supported by ERA5 and DWD
-  stations; `HYRASDownloader` raises `ValueError` at initialisation if
-  hourly is requested (HYRAS is daily-only).
+- `"daily"` (default) — one value per requested timestamp, for the day that
+  contains it.  Precipitation days run 06:00-06:00 UTC (the HYRAS and DWD
+  convention); all other variables use the 00-24 UTC day.  Accumulated ERA5
+  variables (precipitation, radiation) return the day total, and DWD station
+  data are averaged (radiation) or summed (precipitation) over the day.
+  Compatible with HYRAS, ERA5, and DWD station data.
+- `"hourly"` — one value per requested timestamp, at the nearest hour (for
+  accumulated ERA5 variables, that hour's de-accumulated increment).  Same
+  output shape as `"daily"`: `(N,)` for one timestamp, `(N, T)` for a list.
+  Supported by ERA5 and DWD stations; `HYRASDownloader` raises `ValueError`
+  at initialisation if hourly is requested (HYRAS is daily-only).
 
 ## Planned enhancements
 

@@ -474,8 +474,8 @@ class TestTemporalResolution:
     Covers:
 
     - ``"daily"`` returns a scalar (unchanged behaviour).
-    - ``"hourly"`` returns a 1-D time-series for all sub-daily steps in the
-      requested day.
+    - ``"hourly"`` returns the value at the requested hour (same shape as
+      daily).
     - Unknown resolution values raise :exc:`ValueError`.
     - :class:`~datavia.weather.hyras_downloader.HYRASDownloader` raises
       :exc:`ValueError` immediately when ``temporal_resolution="hourly"``.
@@ -538,8 +538,10 @@ class TestTemporalResolution:
         assert isinstance(result, float)
         assert np.isfinite(result)
 
-    def test_hourly_resolution_returns_time_series(self, tmp_path) -> None:
-        """``temporal_resolution="hourly"`` returns all 24 sub-daily steps as an array.
+    def test_hourly_resolution_returns_value_at_requested_hour(self, tmp_path) -> None:
+        """``temporal_resolution="hourly"`` returns the value at the nearest hour.
+
+        One timestamp gives a scalar, a list of timestamps gives ``(T,)``.
 
         Parameters
         ----------
@@ -549,7 +551,7 @@ class TestTemporalResolution:
         from datavia.library.interpolation import interpolate_netcdf
 
         nc = self._make_hourly_nc(tmp_path)
-        result = interpolate_netcdf(
+        single = interpolate_netcdf(
             nc,
             49.0,
             11.0,
@@ -557,12 +559,20 @@ class TestTemporalResolution:
             "2024-06-15T06:00:00",
             temporal_resolution="hourly",
         )
-        assert isinstance(result, np.ndarray), (
-            f"Expected ndarray for hourly resolution, got {type(result)}"
+        assert isinstance(single, float)
+        assert single == pytest.approx(20.0, abs=1e-6)
+
+        series = interpolate_netcdf(
+            nc,
+            49.0,
+            11.0,
+            "t2m",
+            ["2024-06-15T06:00:00", "2024-06-15T07:00:00"],
+            temporal_resolution="hourly",
         )
-        assert result.ndim == 1
-        assert result.shape[0] == 24, f"Expected 24 hourly steps, got {result.shape[0]}"
-        np.testing.assert_allclose(result, 20.0, atol=1e-6)
+        assert isinstance(series, np.ndarray)
+        assert series.shape == (2,)
+        np.testing.assert_allclose(series, 20.0, atol=1e-6)
 
     def test_unknown_resolution_raises_value_error(self, tmp_path) -> None:
         """An unrecognised ``temporal_resolution`` value raises :exc:`ValueError`.

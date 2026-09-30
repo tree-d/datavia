@@ -35,6 +35,27 @@ def _era5_accumulated(days: int = 3, start: str = "2025-06-01") -> xr.Dataset:
     return da.to_dataset(name="ssrd")
 
 
+def _random_accumulated(name: str, days: int = 3):
+    """Accumulated dataset from random hourly increments; returns (increments, ds).
+
+    Stamps run ``2025-06-01 01:00`` upward (interval end); the accumulation
+    resets after each 00:00 stamp, which holds the previous day's total.
+    """
+    times = pd.date_range("2025-06-01 01:00", periods=days * 24, freq="1h")
+    inc = pd.Series(np.random.default_rng(7).random(len(times)) * 1e6, index=times)
+    accum = inc.groupby((inc.index - pd.Timedelta(hours=1)).normalize()).cumsum()
+    da = xr.DataArray(
+        np.broadcast_to(accum.values[:, None, None], (len(times), 3, 3)).copy(),
+        dims=["time", "latitude", "longitude"],
+        coords={
+            "time": times,
+            "latitude": [50.0, 50.1, 50.2],
+            "longitude": [10.0, 10.1, 10.2],
+        },
+    )
+    return inc, da.to_dataset(name=name)
+
+
 class TestDeaccumulate:
     """``deaccumulate_since_midnight`` edge cases."""
 
@@ -92,32 +113,135 @@ class TestAccumulatedSampling:
         )
         assert np.isnan(got)
 
-    def test_hourly_returns_increments_for_whole_day(self):
-        ds = _era5_accumulated()
+    def test_hourly_returns_increment_at_requested_hour(self):
+        inc, ds = _random_accumulated("ssrd")
+        for stamp in [
+            "2025-06-02 00:00",
+            "2025-06-02 01:00",
+            "2025-06-02 02:00",
+            "2025-06-02 13:00",
+        ]:
+            got = interpolate_dataset(
+                ds,
+                50.1,
+                10.1,
+                "ssrd",
+                pd.Timestamp(stamp),
+                temporal_resolution="hourly",
+                accumulated=True,
+            )
+            assert got == pytest.approx(inc[pd.Timestamp(stamp)]), stamp
+
+    def test_hourly_list_gives_one_value_per_timestamp(self):
+        inc, ds = _random_accumulated("ssrd")
+        stamps = ["2025-06-02 00:00", "2025-06-02 05:00"]
         got = interpolate_dataset(
             ds,
             50.1,
             10.1,
             "ssrd",
-            pd.Timestamp("2025-06-02"),
+            [pd.Timestamp(t) for t in stamps],
             temporal_resolution="hourly",
             accumulated=True,
         )
-        assert got.shape == (24,)
-        np.testing.assert_allclose(got, _HOURLY_J)
+        np.testing.assert_allclose(got, [inc[pd.Timestamp(t)] for t in stamps])
 
-    def test_hourly_and_daily_agree_in_par(self):
-        ds = _era5_accumulated()
-        t = pd.Timestamp("2025-06-02")
-        hourly = interpolate_dataset(
-            ds, 50.1, 10.1, "ssrd", t, "EPSG:4326", "hourly", True
+    def test_hourly_first_stamp_without_predecessor_is_nan(self):
+        _, ds = _random_accumulated("ssrd")
+        got = interpolate_dataset(
+            ds.isel(time=slice(23, None)),
+            50.1,
+            10.1,
+            "ssrd",
+            pd.Timestamp("2025-06-02 00:00"),
+            temporal_resolution="hourly",
+            accumulated=True,
         )
+        assert np.isnan(got)
+
+    def test_daily_total_matches_sum_of_hourly_increments(self):
+        inc, ds = _random_accumulated("ssrd")
+        t = pd.Timestamp("2025-06-02 17:30")
         daily = interpolate_dataset(
-            ds, 50.1, 10.1, "ssrd", t, "EPSG:4326", "daily", True
+            ds, 50.1, 10.1, "ssrd", t, temporal_resolution="daily", accumulated=True
         )
-        assert ssrd_to_par(hourly, period_s=3600).mean() == pytest.approx(
-            ssrd_to_par(daily)
+        day = inc[(inc.index > "2025-06-02 00:00") & (inc.index <= "2025-06-03 00:00")]
+        assert daily == pytest.approx(day.sum())
+
+    def test_daily_precipitation_window_is_06_to_06_utc(self):
+        inc, ds = _random_accumulated("tp")
+        expected = inc[
+            (inc.index > "2025-06-02 06:00") & (inc.index <= "2025-06-03 06:00")
+        ].sum()
+        # 03:00 UTC on June 3 still belongs to the 06-06 window that started June 2.
+        for q in ["2025-06-02 06:30", "2025-06-02 20:00", "2025-06-03 03:00"]:
+            got = interpolate_dataset(
+                ds,
+                50.1,
+                10.1,
+                "tp",
+                pd.Timestamp(q),
+                temporal_resolution="daily",
+                accumulated=True,
+                day_start_hour=6,
+            )
+            assert got == pytest.approx(expected), q
+
+    def test_daily_window_without_closing_stamps_is_nan(self):
+        _, ds = _random_accumulated("tp", days=1)
+        got = interpolate_dataset(
+            ds,
+            50.1,
+            10.1,
+            "tp",
+            pd.Timestamp("2025-06-01 12:00"),
+            temporal_resolution="daily",
+            accumulated=True,
+            day_start_hour=6,
         )
+        assert np.isnan(got)
+
+
+class TestDailyNativeWindow:
+    """HYRAS pr style data: one value per day, stamped at the window start (06:00)."""
+
+    def _ds(self):
+        times = pd.date_range("2025-06-01 06:00", periods=4, freq="1D")
+        return xr.Dataset(
+            {
+                "pr": (
+                    ("time", "latitude", "longitude"),
+                    np.arange(4.0).repeat(9).reshape(4, 3, 3),
+                )
+            },
+            coords={
+                "time": times,
+                "latitude": [50.0, 50.1, 50.2],
+                "longitude": [10.0, 10.1, 10.2],
+            },
+        )
+
+    @pytest.mark.parametrize(
+        ("query", "expected"),
+        [
+            ("2025-06-02 00:00", 0.0),  # before 06:00 -> window that began June 1
+            ("2025-06-02 06:00", 1.0),
+            ("2025-06-02 12:00", 1.0),
+            ("2025-06-02 20:00", 1.0),  # nearest-stamp would give 2.0
+            ("2025-06-03 05:59", 1.0),
+        ],
+    )
+    def test_query_resolves_to_containing_window(self, query, expected):
+        got = interpolate_dataset(
+            self._ds(), 50.1, 10.1, "pr", pd.Timestamp(query), day_start_hour=6
+        )
+        assert got == expected
+
+    def test_nearest_would_have_picked_next_day_after_18_utc(self):
+        naive = interpolate_dataset(
+            self._ds(), 50.1, 10.1, "pr", pd.Timestamp("2025-06-02 20:00")
+        )
+        assert naive == 2.0  # the regression day_start_hour=6 fixes
 
 
 class TestStationDaily:
@@ -332,3 +456,121 @@ def test_station_daily_precipitation_sum(tmp_path):
     )
     assert agg == "sum"
     assert got == pytest.approx(12.0)
+
+
+class TestHourlyThroughGetter:
+    """Hourly mode returns the same shapes as daily mode (value at the hour)."""
+
+    _VAR = "surface_solar_radiation_downwards"
+
+    def _query(self, tmp_path, when):
+        from unittest.mock import patch
+
+        from datavia.weather.getter_weather import GetterWeather
+
+        inc, ds = _random_accumulated(self._VAR)
+        ds.to_zarr(tmp_path / "z.zarr", mode="w")
+        store = xr.open_zarr(tmp_path / "z.zarr")
+        getter = GetterWeather("ERA5_land", temporal_resolution="hourly")
+        with (
+            patch("datavia.weather.getter_weather.get_weather_paths", return_value=[]),
+            patch("datavia.weather.getter_weather._try_open_zarr", return_value=store),
+        ):
+            got = getter.get_data(
+                np.array([[10.1, 50.1], [10.0, 50.0]]),
+                variable=self._VAR,
+                datetime_utc=when,
+            )
+        return inc, got
+
+    def test_single_timestamp_gives_one_value_per_coordinate(self, tmp_path):
+        inc, got = self._query(tmp_path, "2025-06-02 12:00")
+        assert got.shape == (2,)
+        np.testing.assert_allclose(
+            got, w_m2_to_par(inc[pd.Timestamp("2025-06-02 12:00")] / 3600.0), rtol=1e-5
+        )
+
+    def test_timestamp_list_gives_coordinates_by_time(self, tmp_path):
+        inc, got = self._query(tmp_path, ["2025-06-02 00:00", "2025-06-02 01:00"])
+        assert got.shape == (2, 2)
+        expected = [
+            w_m2_to_par(inc[pd.Timestamp(t)] / 3600.0)
+            for t in ["2025-06-02 00:00", "2025-06-02 01:00"]
+        ]
+        np.testing.assert_allclose(got[0], expected, rtol=1e-5)
+
+
+class TestPrecipitationWindowsAgree:
+    """ERA5, DWD and HYRAS-style precipitation give the same daily totals."""
+
+    def test_same_rain_same_daily_totals(self, tmp_path):
+        rng = np.random.default_rng(3)
+        times = pd.date_range("2025-06-01 01:00", periods=72, freq="1h")
+        rain = pd.Series(rng.random(72), index=times)  # mm per hour, interval-end
+
+        # ERA5: accumulated metres since 00 UTC.
+        accum = (
+            (rain / 1000.0)
+            .groupby((times - pd.Timedelta(hours=1)).normalize())
+            .cumsum()
+        )
+        era5 = xr.DataArray(
+            np.broadcast_to(accum.values[:, None, None], (72, 3, 3)).copy(),
+            dims=["time", "latitude", "longitude"],
+            coords={
+                "time": times,
+                "latitude": [50.0, 50.1, 50.2],
+                "longitude": [10.0, 10.1, 10.2],
+            },
+        ).to_dataset(name="tp")
+
+        # DWD: hourly station rows.
+        path = tmp_path / "p.parquet"
+        pd.DataFrame(
+            {
+                "station_id": "A",
+                "latitude": 50.1,
+                "longitude": 10.1,
+                "datetime": times,
+                "total_precipitation": rain.values,
+            }
+        ).to_parquet(path)
+
+        # HYRAS: 06-06 totals stamped at 06:00 (only June 2 is complete).
+        hyras_total = rain[
+            (times > "2025-06-02 06:00") & (times <= "2025-06-03 06:00")
+        ].sum()
+        hyras = xr.Dataset(
+            {
+                "pr": (
+                    ("time", "latitude", "longitude"),
+                    np.full((1, 3, 3), hyras_total),
+                )
+            },
+            coords={
+                "time": [pd.Timestamp("2025-06-02 06:00")],
+                "latitude": [50.0, 50.1, 50.2],
+                "longitude": [10.0, 10.1, 10.2],
+            },
+        )
+
+        q = pd.Timestamp("2025-06-02 15:00")
+        e = (
+            interpolate_dataset(
+                era5, 50.1, 10.1, "tp", q, accumulated=True, day_start_hour=6
+            )
+            * 1000.0
+        )
+        d = interpolate_station_parquet(
+            str(path),
+            50.1,
+            10.1,
+            "total_precipitation",
+            q,
+            daily_aggregation="sum",
+            day_start_hour=6,
+        )
+        h = interpolate_dataset(hyras, 50.1, 10.1, "pr", q, day_start_hour=6)
+        assert e == pytest.approx(hyras_total, rel=1e-5)
+        assert d == pytest.approx(hyras_total)
+        assert h == pytest.approx(hyras_total)

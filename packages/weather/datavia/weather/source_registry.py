@@ -58,6 +58,9 @@ _FROM_TO_CONVERSION_MAP: dict[tuple[str, str], Any] = {
     ("W_m2", "PAR"): w_m2_to_par,
 }
 
+#: UTC hour at which the precipitation day starts (HYRAS and DWD convention).
+_PRECIPITATION_DAY_START_HOUR: int = 6
+
 # ---------------------------------------------------------------------------
 # ERA5-Land grid boundary constants
 # ---------------------------------------------------------------------------
@@ -113,6 +116,9 @@ SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
         "accumulated_variables": frozenset(
             {"total_precipitation", "surface_solar_radiation_downwards"}
         ),
+        # Precipitation "day" = 06:00-06:00 UTC, like HYRAS pr and DWD station
+        # daily totals.  Unlisted variables use the 00-24 UTC day.
+        "day_start_hour": {"total_precipitation": _PRECIPITATION_DAY_START_HOUR},
         # Maps ECMWF short variable names (as stored in ERA5-Land NetCDF files)
         # to the pipeline variable names used throughout the datavia API.
         "nc_variable_map": {
@@ -148,6 +154,10 @@ SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
         "conversions": {
             "surface_solar_radiation_downwards": {"from": "W_m2", "to": "PAR"},
         },
+        # HYRAS pr covers 06:00 D to 06:00 D+1 UTC and is stamped at interval
+        # start; rsds is a 00-24 UTC mean stamped at 12:00 (verified in the
+        # DWD files).
+        "day_start_hour": {"total_precipitation": _PRECIPITATION_DAY_START_HOUR},
         # Maps NetCDF CF variable names (as they appear inside the .nc file)
         # to the pipeline variable names used throughout the datavia API.
         # Needed because HYRAS uses short CF names (e.g. "tas") while the rest
@@ -198,6 +208,7 @@ SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
             "surface_solar_radiation_downwards": "mean",
             "total_precipitation": "sum",
         },
+        "day_start_hour": {"total_precipitation": _PRECIPITATION_DAY_START_HOUR},
     },
 }
 
@@ -240,6 +251,17 @@ def get_grid_downloader_class(source_name: str) -> type[Downloader] | None:
             f"Valid sources: {sorted(SOURCE_REGISTRY)}"
         )
     return SOURCE_REGISTRY[source_name]["grid_downloader"]
+
+
+def get_day_start_hour(source_name: str, variable: str) -> int:
+    """Return the UTC hour at which *variable*'s daily window starts.
+
+    0 (the 00-24 UTC day) unless the source registry lists the variable under
+    ``"day_start_hour"`` (precipitation: 6).
+    """
+    return int(
+        SOURCE_REGISTRY.get(source_name, {}).get("day_start_hour", {}).get(variable, 0)
+    )
 
 
 def get_nc_variable_name(source_name: str, pipeline_variable: str) -> str:

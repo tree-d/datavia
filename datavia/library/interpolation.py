@@ -287,6 +287,7 @@ def interpolate_netcdf(
     input_crs: str = "EPSG:4326",
     temporal_resolution: str = "daily",
     accumulated: bool = False,
+    day_start_hour: int = 0,
 ) -> float | np.ndarray:
     r"""Sample a NetCDF variable at one or more geographic points.
 
@@ -332,31 +333,35 @@ def interpolate_netcdf(
         trailing ``Z`` notation) are accepted: they are converted to UTC and
         then stripped of timezone information before comparison with the
         timezone-naive time axis stored in ERA5/HYRAS NetCDF files.
-        Used with ``method="nearest"`` for ``temporal_resolution="daily"``.
-        For ``temporal_resolution="hourly"``, used to identify the calendar
-        day from which all sub-daily time steps are returned.
+        Each timestamp is resolved to the nearest time step (hourly), or to the
+        day containing it (daily); see *temporal_resolution*.
     input_crs : str, optional
         CRS of the input *lats*/*lons* coordinates, as an EPSG string
         (e.g. ``"EPSG:4326"`` or ``"EPSG:3035"``).  Defaults to
         ``"EPSG:4326"``.  Coordinates are reprojected to the file's native
         CRS automatically.
     temporal_resolution : str, optional
-        ``"daily"`` (default) — return the single nearest time step.
-        ``"hourly"`` — return all sub-daily time steps for the requested day
-        as an extra trailing dimension.
+        ``"daily"`` (default) — one value per requested timestamp, for the day
+        containing it (nearest stamp, or the day total for *accumulated*
+        data).  ``"hourly"`` — one value per requested timestamp, at the
+        nearest hour (for *accumulated* data, that hour's increment).  Both
+        give the same shape; only the time base of the value differs.
+    accumulated : bool, optional
+        Variable is a running total since 00 UTC (ERA5-Land ``tp``/``ssrd``);
+        see :func:`interpolate_dataset`.
+    day_start_hour : int, optional
+        UTC hour at which a daily window starts; see
+        :func:`interpolate_dataset`.
 
     Returns
     -------
     float
         Interpolated scalar value when *lats*/*lons* are scalars,
-        ``temporal_resolution="daily"``, and a single timestamp is provided.
+        and a single timestamp is provided (either resolution).
     np.ndarray
-        - Shape ``(T,)`` — scalar coordinate, sequence of daily timestamps.
-        - Shape ``(N,)`` — array of coordinates, single daily timestamp.
-        - Shape ``(N, T)`` — array of coordinates, sequence of daily timestamps.
-        - Shape ``(T,)`` — scalar coordinate, ``temporal_resolution="hourly"``,
-          all *T* sub-daily steps for the requested day.
-        - Shape ``(N, T)`` — array of coordinates, ``temporal_resolution="hourly"``.
+        - Shape ``(T,)`` — scalar coordinate, sequence of timestamps.
+        - Shape ``(N,)`` — array of coordinates, single timestamp.
+        - Shape ``(N, T)`` — array of coordinates, sequence of timestamps.
 
     Raises
     ------
@@ -425,6 +430,7 @@ def interpolate_netcdf(
             input_crs=input_crs,
             temporal_resolution=temporal_resolution,
             accumulated=accumulated,
+            day_start_hour=day_start_hour,
         )
 
 
@@ -609,6 +615,7 @@ def interpolate_dataset(
     input_crs: str = "EPSG:4326",
     temporal_resolution: str = "daily",
     accumulated: bool = False,
+    day_start_hour: int = 0,
 ) -> float | np.ndarray:
     r"""Sample a variable from an already-open xarray Dataset at one or more points.
 
@@ -645,10 +652,17 @@ def interpolate_dataset(
         for full semantics.
     accumulated : bool, optional
         ``True`` for ERA5-Land style accumulations that run from 00 UTC.
-        ``"daily"`` then returns the day's total (the next day's ``00:00``
-        stamp, NaN if absent); ``"hourly"`` returns per-hour increments
-        (see :func:`datavia.library.temporal.deaccumulate_since_midnight`).
-
+        ``"daily"`` then returns the total of the day containing each
+        timestamp; ``"hourly"`` returns the increment of the hour ending at
+        the nearest stamp (see
+        :func:`datavia.library.temporal.deaccumulate_since_midnight`).  NaN when
+        a needed stamp is absent.
+    day_start_hour : int, optional
+        UTC hour at which a *daily* value's window starts (0 by default, 6 for
+        precipitation).  Only used by ``"daily"``: each timestamp is mapped to
+        the window containing it (for ``accumulated`` data the window total is
+        formed from the accumulation; for other data the stamp at the window
+        start is selected).
     Returns
     -------
     float or np.ndarray
@@ -707,57 +721,39 @@ def interpolate_dataset(
         )
     time_dim = "time" if "time" in point.coords else "valid_time"
     if time_dim in point.coords:
-        if temporal_resolution == "hourly":
-            if not PANDAS_AVAILABLE:
-                raise ImportError(
-                    "pandas is required for temporal_resolution='hourly'. "
-                    "Install with `pip install pandas`."
-                )
-            _raw = datetime_utc[0] if not is_scalar_like(datetime_utc) else datetime_utc
-            day_start = pd.Timestamp(_raw)
-            if day_start.tzinfo is not None:
-                day_start = day_start.tz_convert("UTC").tz_localize(None)
-            day_start = day_start.normalize()
-            day_end = day_start + pd.Timedelta(days=1) - pd.Timedelta(nanoseconds=1)
-            if accumulated:
-                # Lazy: temporal.py needs xarray, which is an optional dependency.
-                from .temporal import deaccumulate_since_midnight  # noqa: PLC0415
-
-                # Include 23:00 of the previous day: the 00:00 increment needs it.
-                window = point.sel(
-                    {time_dim: slice(day_start - pd.Timedelta(hours=1), day_end)}
-                )
-                point = deaccumulate_since_midnight(window, time_dim).sel(
-                    {time_dim: slice(day_start, day_end)}
-                )
-            else:
-                point = point.sel({time_dim: slice(day_start, day_end)})
-        else:
-            targets = (
-                [_to_naive_ts(t) for t in datetime_utc]
-                if not is_scalar_like(datetime_utc)
-                else _to_naive_ts(datetime_utc)
+        if not PANDAS_AVAILABLE:
+            raise ImportError(
+                "pandas is required for temporal selection. "
+                "Install with `pip install pandas`."
             )
-            if accumulated:
-                # Day total = accumulation at the next day's 00:00 stamp.  A
-                # tolerance (reindex -> NaN) stops a missing stamp silently
-                # falling back to a partial-day running total.
-                def _day_total_stamp(t: Any) -> Any:
-                    return pd.Timestamp(t).normalize() + pd.Timedelta(days=1)
+        scalar_time = is_scalar_like(datetime_utc)
+        targets = [
+            _to_naive_ts(t) for t in ([datetime_utc] if scalar_time else datetime_utc)
+        ]
+        if accumulated:
+            # Lazy: temporal.py needs xarray, which is an optional dependency.
+            from .temporal import (  # noqa: PLC0415
+                accumulated_day_total,
+                deaccumulate_since_midnight,
+            )
 
-                scalar_time = not isinstance(targets, list)
-                stamps = [
-                    _day_total_stamp(t) for t in ([targets] if scalar_time else targets)
-                ]
-                point = point.reindex(
-                    {time_dim: stamps},
-                    method="nearest",
-                    tolerance=pd.Timedelta(minutes=30),
-                )
-                if scalar_time:
-                    point = point.isel({time_dim: 0}, drop=True)
+            # Missing stamps give NaN instead of falling back to a partial-day
+            # running total.
+            if temporal_resolution == "hourly":
+                point = deaccumulate_since_midnight(point, time_dim, at=targets)
             else:
-                point = point.sel({time_dim: targets}, method="nearest")
+                point = accumulated_day_total(point, targets, day_start_hour, time_dim)
+            if scalar_time:
+                point = point.isel({time_dim: 0}, drop=True)
+        else:
+            if temporal_resolution == "daily" and day_start_hour:
+                # Daily-native data stamped at interval start (HYRAS pr: 06:00):
+                # pick the stamp of the window that contains each target.
+                offset = pd.Timedelta(hours=day_start_hour)
+                targets = [(t - offset).normalize() + offset for t in targets]
+            point = point.sel(
+                {time_dim: targets[0] if scalar_time else targets}, method="nearest"
+            )
 
     values = np.asarray(point.values, dtype=float)
 
@@ -780,6 +776,7 @@ def interpolate_station_parquet(
     datetime_utc: Any,
     radius_km: float = 50.0,
     daily_aggregation: Literal["mean", "sum"] | None = None,
+    day_start_hour: int = 0,
 ) -> float:
     """Estimate a weather variable at a point using nearby station observations.
 
@@ -809,6 +806,9 @@ def interpolate_station_parquet(
         day of *datetime_utc*.  Stamps are interval-end, so day D is
         ``D 01:00 .. D+1 00:00``.  Stations with fewer than 24 hourly values
         that day are dropped.
+    day_start_hour : int, optional
+        UTC hour at which the aggregation day starts (6 for precipitation, so
+        day D is ``D 07:00 .. D+1 06:00``).  Only used with *daily_aggregation*.
 
     Returns
     -------
@@ -884,6 +884,7 @@ def interpolate_station_parquet(
             daily_aggregation,
             target,
             group_cols=["latitude", "longitude"],
+            day_start_hour=day_start_hour,
         )
         if daily.empty:
             return float("nan")
