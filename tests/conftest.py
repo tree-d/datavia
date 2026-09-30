@@ -31,9 +31,9 @@ def sqlite_db():
 
     Configures the global ``DataviaConfig`` singleton to use
     ``sqlite:///:memory:`` and resets the SQLAlchemy engine so it rebuilds
-    with the new URL.  The schema is initialised via ``initialize_database()`` before the
-    test body runs.  After the test completes the engine is disposed and the
-    injected URL is removed, restoring the config to its previous state.
+    with the new URL.  The schema is initialised via ``initialize_database()``
+    before the test body runs.  After the test completes the engine is disposed
+    and the injected URL is removed, restoring the config to its previous state.
 
     Yields
     ------

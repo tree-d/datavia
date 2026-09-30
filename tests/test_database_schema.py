@@ -21,18 +21,21 @@ def test_postgres_ddl_has_generated_ids() -> None:
 
 
 def test_initialize_creates_tables_and_indexes(sqlite_db) -> None:
+    """initialize_database() creates all expected tables and weather indexes."""
     insp = inspect(get_engine())
-    assert EXPECTED_TABLES <= set(insp.get_table_names())
+    assert set(insp.get_table_names()) >= EXPECTED_TABLES
     names = {i["name"] for i in insp.get_indexes("weather_layers")}
     assert "idx_weather_source_variable_time" in names
     assert "idx_weather_source_variable_format" in names
 
 
 def test_initialize_is_idempotent(sqlite_db) -> None:
+    """Calling initialize_database() a second time must not raise."""
     start.initialize_database()
 
 
 def test_ids_autogenerate_without_explicit_id(sqlite_db) -> None:
+    """Rows inserted without an explicit id receive sequential generated ids."""
     with get_engine().begin() as conn:
         for _ in range(2):
             conn.execute(text("INSERT INTO weather_layers (layer_name) VALUES ('x')"))
@@ -41,6 +44,7 @@ def test_ids_autogenerate_without_explicit_id(sqlite_db) -> None:
 
 
 def test_initialize_propagates_errors(sqlite_db, monkeypatch) -> None:
+    """Errors raised by metadata.create_all() are not swallowed."""
     def boom(*args, **kwargs):
         raise RuntimeError("boom")
 
