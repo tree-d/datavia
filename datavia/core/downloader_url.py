@@ -199,7 +199,7 @@ class URLDownloader(Downloader):
                         # Handle rate limiting
                         if r.status_code in [202, 429]:
                             retry_after = r.headers.get("Retry-After")
-                            wait_time = (
+                            wait_time: float = (
                                 int(retry_after)
                                 if retry_after and retry_after.isdigit()
                                 else 30

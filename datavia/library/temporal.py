@@ -115,7 +115,7 @@ def instantaneous_day_mean(
     hours = np.arange(24) * np.timedelta64(1, "h")
     stamps = pd.DatetimeIndex((days.values[:, None] + hours).ravel())
     picked = da.reindex({time_dim: stamps}, method="nearest", tolerance=tolerance)
-    means = picked.drop_vars(time_dim).coarsen({time_dim: 24}).mean(skipna=False)
+    means = picked.drop_vars(time_dim).coarsen({time_dim: 24}).reduce(np.mean)
     return means.assign_coords({time_dim: days})
 
 
@@ -159,7 +159,8 @@ def deaccumulate_since_midnight(
     first_step = xr.DataArray(
         stamps.hour == 1, dims=[time_dim], coords={time_dim: current[time_dim]}
     )
-    return xr.where(first_step, current, current - prev).clip(min=0)
+    increments: xr.DataArray = xr.where(first_step, current, current - prev)
+    return increments.clip(min=0)
 
 
 def accumulated_day_total(

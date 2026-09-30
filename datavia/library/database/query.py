@@ -251,7 +251,7 @@ def check_source_exists(source_name: str) -> bool:
         ).fetchone()
 
         count = result[0] if result else 0
-        exists = count > 0
+        exists = bool(count > 0)
         logger.debug(f"Source '{source_name}' exists: {exists} ({count} layers)")
         return exists
 
@@ -510,7 +510,7 @@ def check_weather_source_exists(
 
         result = session.execute(text(sql), params).fetchone()
         count = result[0] if result else 0
-        exists = count > 0
+        exists = bool(count > 0)
         logger.debug(
             "Weather source '%s' (variable=%s) exists: %s (%d layers)",
             source_name,

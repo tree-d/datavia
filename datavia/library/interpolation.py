@@ -17,7 +17,7 @@ try:
 
     XARRAY_AVAILABLE = True
 except ImportError:  # pragma: no cover - optional dependency
-    xr = None  # type: ignore[assignment]
+    xr = None  # type: ignore[assignment,unused-ignore]
     XARRAY_AVAILABLE = False
 
 try:
