@@ -287,7 +287,7 @@ class TestWeatherPipeline:
         pipe = WeatherPipeline(
             config={
                 "source": "DWD_stations",
-                "variables": ["temperature_2m"],
+                "variables": ["2m_temperature"],
                 "date_start": "2024-07-01",
                 "date_end": "2024-07-31",
                 "dwd_stations": [
@@ -305,7 +305,7 @@ class TestWeatherPipeline:
 
         assert result is True
         pipe.saver.check_data_exists.assert_called_once_with(
-            variable="temperature_2m",
+            variable="2m_temperature",
             from_dt="2024-07-01",
             to_dt="2024-07-31",
             station_ids=["01234"],
@@ -324,7 +324,7 @@ class TestWeatherPipeline:
         pipe = WeatherPipeline(
             config={
                 "source": "DWD_stations",
-                "variables": ["temperature_2m"],
+                "variables": ["2m_temperature"],
                 "date_start": "2024-07-01",
                 "date_end": "2024-07-31",
                 "dwd_stations": [

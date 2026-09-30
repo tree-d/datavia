@@ -30,9 +30,13 @@ _PIPELINE_TO_OPEN_METEO: dict[str, str] = {
     "total_precipitation": "precipitation",
     "surface_solar_radiation_downwards": "shortwave_radiation",
     "relative_humidity_2m": "relative_humidity_2m",
-    "temperature_2m_max": "temperature_2m_max",
-    "temperature_2m_min": "temperature_2m_min",
 }
+
+#: Variables Open-Meteo only provides as daily aggregates.  The downloader
+#: requests hourly data only, so these cannot be fetched here.
+_DAILY_ONLY_VARIABLES: frozenset[str] = frozenset(
+    {"temperature_2m_max", "temperature_2m_min"}
+)
 
 #: Default DWD station locations covering the German climate regions.
 #: A more complete list can be generated at runtime from the Open-Meteo
@@ -84,9 +88,21 @@ class DWDStationDownloader(APIDownloader):
         """
         super().__init__(url=_OPEN_METEO_URL, **kwargs)
         self.variables: list[str] = variables or ["2m_temperature"]
+        daily_only = [v for v in self.variables if v in _DAILY_ONLY_VARIABLES]
+        if daily_only:
+            raise ValueError(
+                f"DWD station download is hourly-only; daily-only variables "
+                f"are not supported: {daily_only}"
+            )
+        unknown = [v for v in self.variables if v not in _PIPELINE_TO_OPEN_METEO]
+        if unknown:
+            raise ValueError(
+                f"Unsupported DWD station variables {unknown}. "
+                f"Supported: {sorted(_PIPELINE_TO_OPEN_METEO)}"
+            )
         # Translate pipeline names to Open-Meteo API names for the HTTP request.
         self._open_meteo_vars: list[str] = [
-            _PIPELINE_TO_OPEN_METEO.get(v, v) for v in self.variables
+            _PIPELINE_TO_OPEN_METEO[v] for v in self.variables
         ]
         self.date_start: str = (
             str(date_start) if date_start is not None else str(date.today())

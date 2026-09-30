@@ -194,3 +194,50 @@ class TestCompositeDownloaderChunkByForwarding:
 
 # ---------------------------------------------------------------------------
 # WeatherPipeline — chunk_by config key acceptance
+
+
+class TestCompositeDailyOnlyVariables:
+    """Daily-only variables are served by the grid source, never by DWD."""
+
+    _CFG: ClassVar[dict] = {
+        "date_start": "2024-01-01",
+        "date_end": "2024-01-31",
+        "dwd_stations": [],
+    }
+
+    def test_hybrid_filters_daily_only_from_dwd(self) -> None:
+        from datavia.weather.composite_downloader import CompositeWeatherDownloader
+
+        variables = ["temperature_2m_max", "2m_temperature"]
+        composite = CompositeWeatherDownloader(
+            config={"source": "HYRAS", "variables": variables, **self._CFG}
+        )
+        assert composite._dwd is not None
+        assert composite._dwd.variables == ["2m_temperature"]
+        assert composite._grid is not None
+
+    def test_hybrid_only_daily_only_disables_dwd(self) -> None:
+        from datavia.weather.composite_downloader import CompositeWeatherDownloader
+
+        composite = CompositeWeatherDownloader(
+            config={
+                "source": "HYRAS",
+                "variables": ["temperature_2m_max", "temperature_2m_min"],
+                **self._CFG,
+            }
+        )
+        assert composite._dwd is None
+        assert len(composite.downloaders) == 1
+
+    def test_dwd_only_daily_only_raises(self) -> None:
+        import pytest
+        from datavia.weather.composite_downloader import CompositeWeatherDownloader
+
+        with pytest.raises(ValueError, match="does not support"):
+            CompositeWeatherDownloader(
+                config={
+                    "source": "DWD_stations",
+                    "variables": ["temperature_2m_max"],
+                    **self._CFG,
+                }
+            )
