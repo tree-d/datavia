@@ -52,3 +52,30 @@ def test_initialize_propagates_errors(sqlite_db, monkeypatch) -> None:
     monkeypatch.setattr(metadata, "create_all", boom)
     with pytest.raises(RuntimeError):
         start.initialize_database()
+
+
+def test_sqlite_weather_layers_uses_autoincrement() -> None:
+    """weather_layers never reuses ids of deleted rows on SQLite."""
+    from sqlalchemy.dialects import sqlite
+
+    from datavia.library.database.schema import weather_layers
+
+    ddl = str(CreateTable(weather_layers).compile(dialect=sqlite.dialect()))
+    assert "AUTOINCREMENT" in ddl
+
+
+def test_initialize_adds_indexes_to_existing_table(sqlite_db) -> None:
+    """Indexes missing from a pre-existing table are created (create_all skips them)."""
+    engine = get_engine()
+    with engine.begin() as conn:
+        conn.execute(text("DROP INDEX idx_weather_source_variable_time"))
+        conn.execute(text("DROP INDEX idx_weather_source_variable_format"))
+    assert inspect(engine).get_indexes("weather_layers") == []
+
+    start.initialize_database()
+
+    names = {i["name"] for i in inspect(engine).get_indexes("weather_layers")}
+    assert names == {
+        "idx_weather_source_variable_time",
+        "idx_weather_source_variable_format",
+    }

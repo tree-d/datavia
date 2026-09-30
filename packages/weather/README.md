@@ -225,7 +225,7 @@ WeatherPipeline(
 |---|---|---|---|
 | **HYRAS** (DWD OpenData) | NetCDF (`.nc`) | ETRS89-LAEA (EPSG:3035), ~1 km | none |
 | **ERA5-Land** (Copernicus CDS) | NetCDF (`.nc`) | WGS84, 0.1° (~9 km) | `~/.cdsapirc` |
-| **DWD stations** (Open-Meteo archive API) | Parquet (`.parquet`) | point observations | none |
+| **DWD stations** (Open-Meteo archive API) | Parquet (`.parquet`) | model output at station points | none |
 
 ### HYRAS variables
 
@@ -255,14 +255,24 @@ Unit conversions (K→°C, m→mm, SSRD→PAR) are applied automatically in
 | `total_precipitation` | m water equiv. | mm |
 | `surface_solar_radiation_downwards` | J m⁻² | µmol(photons) m⁻² s⁻¹ PAR |
 
-### DWD / Open-Meteo variables (commonly used)
+### DWD / Open-Meteo variables
 
-`temperature_2m`, `precipitation`, `wind_speed_10m`, `relative_humidity_2m`,
-`surface_solar_radiation_downwards` (Open-Meteo `shortwave_radiation`, W/m²)
+The station source supports exactly these pipeline variable names; any other
+name raises `ValueError` (in a hybrid config it is skipped for the station
+download with a warning and served by the grid source alone).
 
+| Pipeline variable name | Open-Meteo parameter | Unit | Stamp |
+|---|---|---|---|
+| `2m_temperature` | `temperature_2m` | °C | instantaneous |
+| `relative_humidity_2m` | `relative_humidity_2m` | % | instantaneous |
+| `total_precipitation` | `precipitation` | mm | preceding-hour sum |
+| `surface_solar_radiation_downwards` | `shortwave_radiation` | W/m² (returned as PAR) | preceding-hour mean |
+
+The values are Open-Meteo model output (ERA5/IFS-based) at the station
+coordinates, not DWD observations; see `docs/development/known_issues.md`.
 `surface_solar_radiation_downwards` is returned as PAR (µmol(photons) m⁻² s⁻¹)
-for every source; HYRAS and DWD values (W/m²) are converted with
-`w_m2_to_par`, so ERA5 + station blending operates on a single unit.
+for every source.  Station values are converted to the gridded source's
+target unit (including `unit_conversions` overrides) before blending.
 
 ---
 
@@ -300,11 +310,17 @@ Key design decisions:
   the coarser `reanalysis-era5-single-levels` (0.25°).
 - **Bbox grid-snapping** — ERA5 bounding box edges are rounded outward to the
   0.1° ERA5-Land grid so every requested grid cell is fully included.
-- **buffer_days** — ERA5 requests include 1 extra day before `date_start` so
-  accumulative variables (precipitation, SSRD) that reset at UTC midnight have
-  the previous day's 23:00 stamp, which the first day's 00:00 hourly increment
-  needs (see `datavia.library.temporal`).  At query time accumulated variables
-  are read as day totals (daily mode) or per-hour increments (hourly mode).
+- **buffer_days** — when an accumulated variable (precipitation, SSRD) is
+  requested, two small extra CDS requests fetch the stamps just outside the
+  range: 23:00 of the day before `date_start` (for the first 00:00 hourly
+  increment) and 00:00-06:00 of the day after `date_end` (for the last day's
+  total and its 06-06 UTC precipitation window).  The trailing request is
+  skipped while that day is not yet published (about 5 days behind real
+  time); a failed buffer request only logs a warning.  `buffer_days=0`
+  disables both.  The DWD downloader likewise requests one extra day after
+  `date_end`.  At query time accumulated variables are read as day totals
+  (daily mode) or per-hour increments (hourly mode); see
+  `datavia.library.temporal`.
 - **Multi-variable NetCDF** — `SaverWeather.save()` inserts one
   `weather_layers` row per variable when a single NC file contains multiple
   variables, so per-variable path queries in `GetterWeather` work correctly.
@@ -476,17 +492,23 @@ WeatherPipeline(
 )
 ```
 
-- `"daily"` (default) — one value per requested timestamp, for the day that
-  contains it.  Precipitation days run 06:00-06:00 UTC (the HYRAS and DWD
-  convention); all other variables use the 00-24 UTC day.  Accumulated ERA5
-  variables (precipitation, radiation) return the day total, and DWD station
-  data are averaged (radiation) or summed (precipitation) over the day.
+- `"daily"` (default) — one value per requested timestamp for its **calendar
+  date** D; the time of day is ignored.  All sources give the same quantity:
+  - Temperature and humidity: the daily mean.  HYRAS stores it directly; for
+    ERA5 and DWD it is the mean of the 24 hourly values `00:00..23:00` UTC.
+  - Precipitation: the total of `06:00 D` to `06:00 D+1` UTC (the HYRAS and
+    DWD convention).
+  - Radiation: the mean flux of `00:00` to `24:00` UTC.
+  - A day with any missing hourly stamp is reported missing
+    (`MissingWeatherDataError`), never approximated.  HYRAS daily values are
+    matched by date, whatever hour the file stamps them at.
   Compatible with HYRAS, ERA5, and DWD station data.
-- `"hourly"` — one value per requested timestamp, at the nearest hour (for
-  accumulated ERA5 variables, that hour's de-accumulated increment).  Same
-  output shape as `"daily"`: `(N,)` for one timestamp, `(N, T)` for a list.
-  Supported by ERA5 and DWD stations; `HYRASDownloader` raises `ValueError`
-  at initialisation if hourly is requested (HYRAS is daily-only).
+- `"hourly"` — one value per requested timestamp at its hour: the stamp
+  within 30 minutes, or for accumulated ERA5 variables the de-accumulated
+  increment of the hour containing it.  Same output shape as `"daily"`:
+  `(N,)` for one timestamp, `(N, T)` for a list.  Supported by ERA5 and DWD
+  stations; `HYRASDownloader` raises `ValueError` at initialisation if hourly
+  is requested (HYRAS is daily-only).
 
 ## Planned enhancements
 

@@ -331,37 +331,110 @@ class TestERA5DownloaderDownloadMocked:
         assert client_mock.retrieve.call_count == 1
         assert len(result.splitlines()) == 1
 
-    def test_buffer_days_extends_first_chunk_into_prior_month(self, tmp_path) -> None:
-        """buffer_days=1 starting on 2024-02-01 stretches the first chunk into January.
-
-        The effective start becomes 2024-01-31, so the chunking produces two
-        jobs: one for January (single day) and one for February.
-
-        Parameters
-        ----------
-        tmp_path : pathlib.Path
-            pytest-provided temporary directory.
-        """
+    def _run(self, tmp_path, client_mock=None, **kwargs):
+        """Run ``download()`` with a mocked CDS client; return (requests, paths)."""
         from datavia.weather.era5_downloader import ERA5Downloader
 
-        downloader = ERA5Downloader(
+        client_mock = client_mock or self._make_mock_client(tmp_path)
+        downloader = ERA5Downloader(**kwargs)
+        with (
+            patch("datavia.weather.era5_downloader.cdsapi") as mock_cdsapi,
+            patch("datavia.weather.era5_downloader.time.sleep"),
+        ):
+            mock_cdsapi.Client.return_value = client_mock
+            result = downloader.download()
+        requests = [c.args[1] for c in client_mock.retrieve.call_args_list]
+        return requests, result.splitlines()
+
+    def test_buffer_requests_for_accumulated_variables(self, tmp_path) -> None:
+        """Accumulated variables add a 23:00 lead day and a 00-06 trailing day.
+
+        Each buffer is its own one-day request, so no chunk spans a month
+        boundary (the CDS year x month x day product would fetch whole months).
+        """
+        requests, paths = self._run(
+            tmp_path,
+            variables=["total_precipitation"],
+            date_start="2024-02-01",
+            date_end="2024-02-29",
+            buffer_days=1,
+        )
+        assert len(requests) == 3 and len(paths) == 3
+        lead, main, trail = requests
+        assert (lead["month"], lead["day"], lead["time"]) == (["01"], ["31"], ["23:00"])
+        assert (main["month"], len(main["day"]), len(main["time"])) == (["02"], 29, 24)
+        assert (trail["month"], trail["day"]) == (["03"], ["01"])
+        assert trail["time"] == [f"{h:02d}:00" for h in range(7)]
+
+    def test_no_buffers_without_accumulated_variables(self, tmp_path) -> None:
+        """Instantaneous variables never need stamps outside the range."""
+        requests, _ = self._run(
+            tmp_path,
             variables=["2m_temperature"],
             date_start="2024-02-01",
             date_end="2024-02-29",
             buffer_days=1,
         )
-        client_mock = self._make_mock_client(tmp_path)
+        assert len(requests) == 1
 
-        with patch("datavia.weather.era5_downloader.cdsapi") as mock_cdsapi:
-            mock_cdsapi.Client.return_value = client_mock
-            result = downloader.download()
-
-        # Effective start = 2024-01-31 → Jan chunk + Feb chunk = 2 jobs.
-        assert client_mock.retrieve.call_count == 2, (
-            f"Expected 2 jobs when buffer_days spans into previous month, "
-            f"got {client_mock.retrieve.call_count}"
+    def test_buffer_days_zero_disables_buffers(self, tmp_path) -> None:
+        requests, _ = self._run(
+            tmp_path,
+            variables=["total_precipitation"],
+            date_start="2024-02-01",
+            date_end="2024-02-29",
+            buffer_days=0,
         )
-        assert len(result.splitlines()) == 2
+        assert len(requests) == 1
+
+    def test_trailing_buffer_skipped_near_real_time(self, tmp_path) -> None:
+        """A trailing day inside the ERA5-Land publication delay is not requested."""
+        import datetime
+
+        today = datetime.datetime.now(datetime.UTC).date()
+        requests, _ = self._run(
+            tmp_path,
+            variables=["total_precipitation"],
+            date_start=str(today - datetime.timedelta(days=3)),
+            date_end=str(today - datetime.timedelta(days=2)),
+            buffer_days=1,
+            chunk_by="none",
+        )
+        assert requests[0]["time"] == ["23:00"]
+        assert len(requests) == 2  # lead buffer + main, no trailing buffer
+
+    def test_failed_buffer_request_does_not_abort(self, tmp_path) -> None:
+        """A buffer failure is logged; the main chunk is still returned."""
+        good = self._make_mock_client(tmp_path).retrieve.side_effect
+        client_mock = MagicMock()
+
+        def retrieve(dataset, request):
+            if request["time"] == ["23:00"]:
+                raise RuntimeError("buffer day unavailable")
+            return good(dataset, request)
+
+        client_mock.retrieve = MagicMock(side_effect=retrieve)
+        requests, paths = self._run(
+            tmp_path,
+            client_mock=client_mock,
+            variables=["total_precipitation"],
+            date_start="2024-02-01",
+            date_end="2024-02-29",
+        )
+        assert len(requests) == 3
+        assert len(paths) == 2
+
+    def test_failed_main_request_still_raises(self, tmp_path) -> None:
+        client_mock = MagicMock()
+        client_mock.retrieve = MagicMock(side_effect=RuntimeError("boom"))
+        with pytest.raises(RuntimeError, match="CDS retrieval failed"):
+            self._run(
+                tmp_path,
+                client_mock=client_mock,
+                variables=["2m_temperature"],
+                date_start="2024-02-01",
+                date_end="2024-02-29",
+            )
 
     def test_cds_queue_timeout_raises_timeout_error(self, tmp_path) -> None:
         """TimeoutError is raised when a queued job exceeds cds_queue_timeout.

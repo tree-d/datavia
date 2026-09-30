@@ -241,3 +241,18 @@ class TestCompositeDailyOnlyVariables:
                     **self._CFG,
                 }
             )
+
+    def test_hybrid_filters_grid_only_variables_from_dwd(self) -> None:
+        """An ERA5-only variable goes to the grid source only, without raising."""
+        from datavia.weather.composite_downloader import CompositeWeatherDownloader
+
+        composite = CompositeWeatherDownloader(
+            config={
+                "source": "ERA5_land",
+                "variables": ["10m_u_component_of_wind", "total_precipitation"],
+                **self._CFG,
+            }
+        )
+        assert composite._dwd is not None
+        assert composite._dwd.variables == ["total_precipitation"]
+        assert composite._grid is not None

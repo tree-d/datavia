@@ -650,7 +650,7 @@ class WeatherPipeline(Pipeline):
         lon : float
             Geographic longitude in degrees East.
         variable : str
-            Variable name, e.g. ``"temperature_2m"``.
+            Variable name, e.g. ``"2m_temperature"``.
         datetime_utc : datetime-like
             Target UTC timestamp.
         radius_km : float, optional

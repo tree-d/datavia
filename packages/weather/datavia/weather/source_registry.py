@@ -15,6 +15,11 @@ Public API
 - :func:`get_grid_downloader_class` — look up the downloader class for a source.
 - :func:`apply_conversion` — apply the correct unit conversion for a variable,
   with optional user-provided overrides.
+- :func:`convert_units` / :func:`get_target_unit` — unit conversion between
+  sources, used to bring station values to the gridded target unit.
+- :func:`is_accumulated`, :func:`get_day_start_hour` and
+  :func:`get_station_aggregation` — time-base settings per variable; see
+  :mod:`datavia.library.temporal` for the conventions.
 """
 
 from __future__ import annotations
@@ -38,7 +43,7 @@ try:
 except ImportError:
     _HYRASDownloader = None  # type: ignore[assignment,misc]
 
-from .era5_downloader import ERA5Downloader
+from .era5_downloader import ACCUMULATED_VARIABLES, ERA5Downloader
 
 if TYPE_CHECKING:
     from datavia.core.interfaces import Downloader
@@ -110,14 +115,9 @@ SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
             "total_precipitation": {"from": "m", "to": "mm"},
             "surface_solar_radiation_downwards": {"from": "J_m2", "to": "PAR"},
         },
-        # Variables stored as running totals since 00 UTC (reset after the
-        # 00:00 stamp).  They are de-accumulated / read as day totals at query
-        # time; see datavia.library.temporal.
-        "accumulated_variables": frozenset(
-            {"total_precipitation", "surface_solar_radiation_downwards"}
-        ),
-        # Precipitation "day" = 06:00-06:00 UTC, like HYRAS pr and DWD station
-        # daily totals.  Unlisted variables use the 00-24 UTC day.
+        # Running totals since 00 UTC; see datavia.library.temporal.
+        "accumulated_variables": ACCUMULATED_VARIABLES,
+        # Unlisted variables use the 00-24 UTC day.
         "day_start_hour": {"total_precipitation": _PRECIPITATION_DAY_START_HOUR},
         # Maps ECMWF short variable names (as stored in ERA5-Land NetCDF files)
         # to the pipeline variable names used throughout the datavia API.
@@ -154,10 +154,9 @@ SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
         "conversions": {
             "surface_solar_radiation_downwards": {"from": "W_m2", "to": "PAR"},
         },
-        # HYRAS pr covers 06:00 D to 06:00 D+1 UTC and is stamped at interval
-        # start; rsds is a 00-24 UTC mean stamped at 12:00 (verified in the
-        # DWD files).
-        "day_start_hour": {"total_precipitation": _PRECIPITATION_DAY_START_HOUR},
+        # One stamp per day, dated with the day it describes (tas 00:00,
+        # pr 06:00 for 06-06 UTC, rsds 12:00; verified in the DWD files).
+        # Daily mode selects by date, so no day_start_hour is needed here.
         # Maps NetCDF CF variable names (as they appear inside the .nc file)
         # to the pipeline variable names used throughout the datavia API.
         # Needed because HYRAS uses short CF names (e.g. "tas") while the rest
@@ -201,13 +200,26 @@ SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
         "conversions": {
             "surface_solar_radiation_downwards": {"from": "W_m2", "to": "PAR"},
         },
-        # Hourly, interval-end stamped.  In daily mode these are aggregated
-        # over the UTC day instead of picking the nearest hour, so that they
+        # Units of the station parquet columns, used to convert station values
+        # to the gridded source's target unit before blending.
+        "native_units": {
+            "2m_temperature": "degC",
+            "total_precipitation": "mm",
+            "surface_solar_radiation_downwards": "W_m2",
+            "relative_humidity_2m": "%",
+        },
+        # Hourly records.  Daily mode aggregates them over the day so they
         # represent the same quantity as the gridded daily values.
         "daily_aggregation": {
+            "2m_temperature": "mean",
+            "relative_humidity_2m": "mean",
             "surface_solar_radiation_downwards": "mean",
             "total_precipitation": "sum",
         },
+        # Fluxes stamped at interval end; the rest are instantaneous.
+        "interval_end_variables": frozenset(
+            {"total_precipitation", "surface_solar_radiation_downwards"}
+        ),
         "day_start_hour": {"total_precipitation": _PRECIPITATION_DAY_START_HOUR},
     },
 }
@@ -262,6 +274,70 @@ def get_day_start_hour(source_name: str, variable: str) -> int:
     return int(
         SOURCE_REGISTRY.get(source_name, {}).get("day_start_hour", {}).get(variable, 0)
     )
+
+
+def is_accumulated(source_name: str, variable: str) -> bool:
+    """Return whether *variable* is stored as a running total since 00 UTC."""
+    entry = SOURCE_REGISTRY.get(source_name, {})
+    return variable in entry.get("accumulated_variables", ())
+
+
+def get_station_aggregation(variable: str, temporal_resolution: str) -> dict[str, Any]:
+    """Return the daily-aggregation keyword arguments for DWD station data.
+
+    The result is passed to
+    :func:`~datavia.library.interpolation.interpolate_station_parquet`.  In
+    hourly mode, or for a variable without an aggregation rule, it selects
+    the nearest stamp (``daily_aggregation=None``).
+    """
+    entry = SOURCE_REGISTRY["DWD_stations"]
+    how = entry["daily_aggregation"].get(variable)
+    return {
+        "daily_aggregation": how if temporal_resolution == "daily" else None,
+        "day_start_hour": get_day_start_hour("DWD_stations", variable),
+        "interval_end": variable in entry["interval_end_variables"],
+    }
+
+
+def get_target_unit(
+    source_name: str,
+    variable: str,
+    user_overrides: dict[str, dict[str, str]] | None = None,
+) -> str | None:
+    """Return the unit :func:`apply_conversion` produces for *variable*.
+
+    ``None`` means no conversion applies, so the value stays in the source's
+    native unit.
+    """
+    spec = {
+        **SOURCE_REGISTRY.get(source_name, {}).get("conversions", {}),
+        **(user_overrides or {}),
+    }.get(variable)
+    return spec["to"] if spec else None
+
+
+def convert_units(
+    value: Any, from_unit: str, to_unit: str, period_s: float | None = None
+) -> Any:
+    """Convert *value* from *from_unit* to *to_unit*.
+
+    Equal units pass *value* through unchanged.  *period_s* is the length in
+    seconds of the period an energy total (``J_m2``) covers; ``None`` means
+    one day.
+
+    Raises
+    ------
+    ValueError
+        If no conversion between the two units is registered.
+    """
+    if from_unit == to_unit:
+        return value
+    conversion_fn = _FROM_TO_CONVERSION_MAP.get((from_unit, to_unit))
+    if conversion_fn is None:
+        raise ValueError(f"No conversion registered from {from_unit} to {to_unit}.")
+    if period_s is not None and from_unit == "J_m2":
+        return conversion_fn(value, period_s=period_s)
+    return conversion_fn(value)
 
 
 def get_nc_variable_name(source_name: str, pipeline_variable: str) -> str:
@@ -359,9 +435,9 @@ def apply_conversion(
 
     from_unit = conversion_spec["from"]
     to_unit = conversion_spec["to"]
-    conversion_fn = _FROM_TO_CONVERSION_MAP.get((from_unit, to_unit))
-
-    if conversion_fn is None:
+    try:
+        return convert_units(value, from_unit, to_unit, period_s=period_s)
+    except ValueError:
         # Spec exists but no matching function — return unchanged and log.
         logger.warning(
             "No conversion function found for (%s → %s) "
@@ -372,10 +448,6 @@ def apply_conversion(
             variable,
         )
         return value
-
-    if period_s is not None and from_unit == "J_m2":
-        return conversion_fn(value, period_s=period_s)
-    return conversion_fn(value)
 
 
 def get_valid_variables(source_name: str) -> frozenset[str] | None:

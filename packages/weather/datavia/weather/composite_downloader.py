@@ -25,7 +25,7 @@ from typing import Any
 
 from datavia.core.interfaces import CompositeDownloader, Downloader
 
-from .dwd_downloader import _DAILY_ONLY_VARIABLES, DWDStationDownloader
+from .dwd_downloader import DWDStationDownloader
 from .source_registry import get_grid_downloader_class
 
 logger = logging.getLogger(__name__)
@@ -120,14 +120,14 @@ class CompositeWeatherDownloader(CompositeDownloader):
         use_dwd = "dwd_stations" in cfg or source == "DWD_stations"
         self._dwd: DWDStationDownloader | None = None
         if use_dwd:
-            # DWD station download is hourly-only; daily aggregates are
-            # served by the grid downloader (e.g. HYRAS) instead.
-            dwd_variables = [v for v in variables if v not in _DAILY_ONLY_VARIABLES]
-            skipped = [v for v in variables if v in _DAILY_ONLY_VARIABLES]
+            # Variables the station source cannot fetch (daily-only aggregates,
+            # grid-only fields) are served by the grid downloader alone.
+            dwd_variables, skipped = DWDStationDownloader.split_supported(variables)
             if skipped:
                 logger.warning(
-                    "Skipping daily-only variables %s for DWD station download",
+                    "Skipping variables %s for DWD station download (supported: %s)",
                     skipped,
+                    sorted(DWDStationDownloader.SUPPORTED_VARIABLES),
                 )
             if dwd_variables:
                 self._dwd = DWDStationDownloader(

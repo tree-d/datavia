@@ -2,7 +2,8 @@
 Database initialization routine for Datavia.
 
 Creates any missing tables and indexes from the SQLAlchemy Core schema in
-``schema.py``.  Works with both SQLite and PostgreSQL.
+``schema.py``, including indexes added to tables that already exist.  Works
+with both SQLite and PostgreSQL.
 """
 
 import logging
@@ -16,10 +17,11 @@ logger = logging.getLogger(__name__)
 def initialize_database() -> None:
     """Create all schema tables and indexes that do not yet exist.
 
-    ``MetaData.create_all(checkfirst=True)`` skips objects that already exist,
-    so this function is idempotent and safe to call on every application
-    start.  Tables added in later versions (e.g. ``weather_layers``) are still
-    created in existing databases.
+    ``MetaData.create_all(checkfirst=True)`` skips tables that already exist,
+    together with their indexes, so each index is then created separately
+    with ``checkfirst=True``.  The function is idempotent and safe to call on
+    every application start; tables and indexes added in later versions are
+    still created in existing databases.
 
     Works transparently with both SQLite and PostgreSQL; SQLAlchemy renders the
     dialect-specific DDL (e.g. auto-generated integer primary keys).  Errors
@@ -29,6 +31,9 @@ def initialize_database() -> None:
     logger.debug("Creating missing schema objects (idempotent)...")
     try:
         metadata.create_all(engine, checkfirst=True)
+        for table in metadata.sorted_tables:
+            for index in table.indexes:
+                index.create(engine, checkfirst=True)
     except Exception:
         logger.exception("Failed to initialize database schema.")
         raise

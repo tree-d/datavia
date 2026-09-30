@@ -637,7 +637,7 @@ class TestTemporalResolution:
             ),
             patch(
                 "datavia.weather.getter_weather.apply_conversion",
-                side_effect=lambda s, v, val, u: val,
+                side_effect=lambda s, v, val, u, **kw: val,
             ),
         ):
             getter.get_data(
@@ -717,7 +717,7 @@ class TestTemporalResolution:
             ),
             patch(
                 "datavia.weather.getter_weather.apply_conversion",
-                side_effect=lambda s, v, val, u: val,
+                side_effect=lambda s, v, val, u, **kw: val,
             ),
         ):
             getter.get_data(
@@ -1041,7 +1041,7 @@ class TestGetterWeatherUnitOverrides:
             ),
             patch(
                 "datavia.weather.getter_weather.apply_conversion",
-                wraps=lambda s, v, val, u: val,
+                wraps=lambda s, v, val, u, **kw: val,
             ) as mock_convert,
         ):
             getter.get_data(
@@ -1061,3 +1061,105 @@ class TestGetterWeatherUnitOverrides:
         assert call_args.args[3] is overrides, (
             "unit_overrides must be forwarded by reference to apply_conversion."
         )
+
+
+class TestGetterWeatherStationUnitsAndPaths:
+    """Station unit handling under overrides, and file lookups for day totals."""
+
+    def _blend(self, source, variable, gridded, station, overrides=None):
+        from datavia.weather.getter_weather import GetterWeather
+
+        for fmt, uri in [("netcdf", "/data/g.nc"), ("parquet", "/data/s.parquet")]:
+            _insert_weather_layer(
+                source_name=source,
+                layer_name=f"{source}_{fmt}",
+                variable=variable,
+                file_format=fmt,
+                valid_from="2024-01-01T00:00:00",
+                valid_until="2024-01-31T23:00:00",
+                uri=uri,
+            )
+        getter = GetterWeather(source, unit_overrides=overrides)
+        with (
+            patch("datavia.weather.getter_weather._try_open_zarr", return_value=None),
+            patch(
+                "datavia.weather.getter_weather.interpolate_netcdf",
+                return_value=gridded,
+            ),
+            patch(
+                "datavia.weather.getter_weather.interpolate_station_parquet",
+                return_value=station,
+            ),
+        ):
+            return getter.get_data(
+                np.array([[13.4, 52.5]]),
+                variable=variable,
+                datetime_utc="2024-01-15",
+                station_weight=0.5,
+            )[0]
+
+    def test_station_value_converted_to_override_target(self, sqlite_db) -> None:
+        """A K -> degC override on the grid still blends with degC stations."""
+        overrides = {"2m_temperature": {"from": "K", "to": "degC"}}
+        got = self._blend("ERA5_land", "2m_temperature", 283.15, 12.0, overrides)
+        assert got == pytest.approx(0.5 * 10.0 + 0.5 * 12.0)
+
+    def test_unconvertible_station_value_is_dropped(self, sqlite_db, caplog) -> None:
+        """Keeping the grid in K cannot be matched by degC stations: grid only."""
+        overrides = {"2m_temperature": {"from": "K", "to": "K"}}
+        with caplog.at_level("WARNING"):
+            got = self._blend("ERA5_land", "2m_temperature", 283.15, 12.0, overrides)
+        assert got == pytest.approx(283.15)
+        assert "Cannot convert station" in caplog.text
+
+    def test_station_without_conversion_blends_in_native_unit(self, sqlite_db) -> None:
+        """HYRAS temperature (already degC) blends with degC stations unchanged."""
+        got = self._blend("HYRAS", "2m_temperature", 10.0, 12.0)
+        assert got == pytest.approx(11.0)
+
+    @pytest.mark.parametrize(
+        ("variable", "expected"),
+        [
+            (
+                "total_precipitation",
+                ("2024-01-14T00:00:00", "2024-01-16T00:00:00"),
+            ),
+            ("2m_temperature", ("2024-01-15T00:00:00", "2024-01-15T00:00:00")),
+        ],
+    )
+    def test_path_lookup_padded_for_accumulated(self, variable, expected) -> None:
+        """Day totals need the next day's stamps, so their lookup is padded."""
+        from datavia.weather.getter_weather import GetterWeather
+
+        with (
+            patch(
+                "datavia.weather.getter_weather.get_weather_paths", return_value=[]
+            ) as paths,
+            patch("datavia.weather.getter_weather._try_open_zarr", return_value=None),
+            pytest.raises(RuntimeError),
+        ):
+            GetterWeather("ERA5_land").get_data(
+                np.array([[13.4, 52.5]]), variable=variable, datetime_utc="2024-01-15"
+            )
+        assert paths.call_args.args[2:] == expected
+
+    def test_all_netcdf_files_are_passed(self) -> None:
+        """A day total at a month boundary needs both monthly files."""
+        from datavia.weather.getter_weather import GetterWeather
+
+        files = ["/data/jan.nc", "/data/feb.nc"]
+        with (
+            patch(
+                "datavia.weather.getter_weather.get_weather_paths", return_value=files
+            ),
+            patch("datavia.weather.getter_weather._try_open_zarr", return_value=None),
+            patch(
+                "datavia.weather.getter_weather.interpolate_netcdf", return_value=0.001
+            ) as sampler,
+        ):
+            GetterWeather("ERA5_land").get_data(
+                np.array([[13.4, 52.5]]),
+                variable="total_precipitation",
+                datetime_utc="2024-01-31",
+            )
+        assert sampler.call_args.args[0] == files

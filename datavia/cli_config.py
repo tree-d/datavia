@@ -51,16 +51,16 @@ WEATHER_EXAMPLE = """
     # get_weather_data() queries a single (lat, lon) point at a specific UTC time.
     # get_data() accepts a coords array but requires 'variable' and 'datetime_utc'
     # as keyword arguments.
+    # The date must lie inside the pipeline's downloaded date_start..date_end.
     try:
-        import datetime
-        now = datetime.datetime.now(datetime.timezone.utc)
+        query_date = "2024-06-15"
         temp = weather.get_weather_data(
             lat=52.5200,
             lon=13.4050,
             variable="2m_temperature",
-            datetime_utc="2024-06-15T12:00:00",
+            datetime_utc=query_date,
         )
-        print(f"Berlin temperature_2m: {temp:.1f} °C")
+        print(f"Berlin 2m_temperature on {query_date}: {temp:.1f} °C")
     except Exception as e:
         print(f"Weather example failed: {e}")
         print("Note: Make sure to run 'datavia update weather' first!")"""
@@ -134,8 +134,8 @@ def create_config_file(selected_pipelines: list[str], config_file: str) -> None:
     if "weather" in selected_pipelines:
         imports.append("from datavia.weather import WeatherPipeline")
         pipeline_instances.append(
-            """# WeatherPipeline downloads gridded reanalysis (HYRAS / ERA5) and
-# optionally DWD point-station observations (Open-Meteo, no key required).
+            """# WeatherPipeline downloads gridded data (HYRAS / ERA5) and optionally
+# Open-Meteo model data at DWD station coordinates (no key required).
 # Adjust source, variables, date_start/date_end, and era5_bbox to your area.
 weather = WeatherPipeline(
     config={
@@ -143,8 +143,8 @@ weather = WeatherPipeline(
         "variables": ["2m_temperature"],
         "date_start": "2024-01-01",
         "date_end":   "2024-12-31",
-        # Bounding box override for ERA5 (lon_min, lat_min, lon_max, lat_max):
-        # "era5_bbox": [5.0, 47.0, 15.5, 55.5],
+        # ERA5 bounding box override [north, west, south, east] in degrees:
+        # "era5_bbox": [55.5, 5.0, 47.0, 15.5],
     }
 )"""
         )
@@ -251,8 +251,8 @@ def main() -> None:
         print(f"\\n--- {{city}} ---")
         coord_array = np.array([coords])
 
-        # Use each available pipeline
-        import datetime
+        # Use each available pipeline.  The weather query date must lie inside
+        # the pipeline's downloaded date range.
         for pipeline in datavia.pipelines:
             try:
                 if hasattr(pipeline, "get_weather_data"):
@@ -261,10 +261,10 @@ def main() -> None:
                     temp = pipeline.get_weather_data(
                         lat=float(coord_array[0, 1]),
                         lon=float(coord_array[0, 0]),
-                        variable="temperature_2m",
-                        datetime_utc=datetime.datetime.now(datetime.timezone.utc),
+                        variable="2m_temperature",
+                        datetime_utc="2024-06-15",
                     )
-                    print(f"{{pipeline.name}}: temperature_2m = {{temp:.1f}} °C")
+                    print(f"{{pipeline.name}}: 2m_temperature = {{temp:.1f}} °C")
                     continue
 
                 data = pipeline.get_data(coords=coord_array, crs_coords="EPSG:4326")

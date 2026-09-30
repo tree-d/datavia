@@ -55,6 +55,8 @@ weather_layers = Table(
     Column("bbox", Text),
     Column("crs", Text),
     Column("metadata", Text),
+    # Never reuse ids of deleted rows on SQLite (matches the former init.sql).
+    sqlite_autoincrement=True,
 )
 
 # Regular indexes (no GIST / PostGIS indexes, since bbox is plain text).

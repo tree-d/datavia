@@ -272,7 +272,7 @@ class SaverWeather(Saver):
         Parameters
         ----------
         variable : str
-            Variable name to check, e.g. ``"temperature_2m"``.
+            Variable name to check, e.g. ``"2m_temperature"``.
         from_dt : str, optional
             Start of the time window (ISO-8601 datetime string).
         to_dt : str, optional
@@ -323,7 +323,7 @@ class SaverWeather(Saver):
         layer_name : str
             Unique layer identifier, e.g. ``"era5_temperature_2m_2024"``.
         variable : str
-            Variable name, e.g. ``"temperature_2m"``.
+            Variable name, e.g. ``"2m_temperature"``.
         file_format : str
             Either ``"netcdf"`` or ``"parquet"``.
         valid_from : str or None

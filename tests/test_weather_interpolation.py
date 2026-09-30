@@ -487,6 +487,66 @@ class TestInterpolateNetcdf:
         assert result_june == pytest.approx(20.0)
         assert result_july == pytest.approx(25.0)
 
+    @staticmethod
+    def _accumulated_nc(path, times, name="tp") -> str:
+        """Write an ERA5-Land style running total (1 per hour since 00 UTC)."""
+        import xarray as xr
+
+        times = pd.DatetimeIndex(times)
+        hours = np.where(times.hour == 0, 24, times.hour).astype(float)
+        da = xr.DataArray(
+            np.broadcast_to(hours[:, None, None], (len(times), 2, 2)).copy(),
+            dims=["valid_time", "latitude", "longitude"],
+            coords={
+                "valid_time": times,
+                "latitude": [49.0, 50.0],
+                "longitude": [10.0, 11.0],
+            },
+        )
+        xr.Dataset({name: da}).to_netcdf(path)
+        return str(path)
+
+    def test_multi_file_day_total_across_month_boundary(self, tmp_path) -> None:
+        """Jan 31's total sits at Feb 1 00:00, in the next monthly file (B4)."""
+        from datavia.library.interpolation import interpolate_netcdf
+
+        jan = self._accumulated_nc(
+            tmp_path / "jan.nc", pd.date_range("2024-01-31", periods=24, freq="1h")
+        )
+        feb = self._accumulated_nc(
+            tmp_path / "feb.nc", pd.date_range("2024-02-01", periods=24, freq="1h")
+        )
+        single = interpolate_netcdf(
+            jan, 49.5, 10.5, "tp", "2024-01-31", series_type="accumulated"
+        )
+        both = interpolate_netcdf(
+            [jan, feb], 49.5, 10.5, "tp", "2024-01-31", series_type="accumulated"
+        )
+        assert np.isnan(single)
+        assert both == pytest.approx(24.0)
+
+    def test_multi_file_overlapping_stamps_are_deduplicated(self, tmp_path) -> None:
+        """Buffer days of adjacent downloads overlap; duplicates must not break
+        time selection."""
+        from datavia.library.interpolation import interpolate_netcdf
+
+        first = self._accumulated_nc(
+            tmp_path / "a.nc", pd.date_range("2024-01-31", periods=31, freq="1h")
+        )
+        second = self._accumulated_nc(
+            tmp_path / "b.nc", pd.date_range("2024-01-31 23:00", periods=26, freq="1h")
+        )
+        got = interpolate_netcdf(
+            [second, first],
+            49.5,
+            10.5,
+            "tp",
+            "2024-02-01 03:00",
+            temporal_resolution="hourly",
+            series_type="accumulated",
+        )
+        assert got == pytest.approx(1.0)
+
     def test_list_of_timestamps_returns_array(self, tmp_path) -> None:
         """A list of daily timestamps returns an (N,) array of values.
 
@@ -763,7 +823,7 @@ class TestInterpolateNetcdfCRS:
             ),
             patch(
                 "datavia.weather.getter_weather.apply_conversion",
-                side_effect=lambda s, v, val, u: val,
+                side_effect=lambda s, v, val, u, **kw: val,
             ),
         ):
             getter.get_data(

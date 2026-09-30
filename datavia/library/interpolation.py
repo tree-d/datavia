@@ -286,7 +286,7 @@ def interpolate_netcdf(
     datetime_utc: Any,
     input_crs: str = "EPSG:4326",
     temporal_resolution: str = "daily",
-    accumulated: bool = False,
+    series_type: str | None = None,
     day_start_hour: int = 0,
 ) -> float | np.ndarray:
     r"""Sample a NetCDF variable at one or more geographic points.
@@ -310,12 +310,11 @@ def interpolate_netcdf(
     Parameters
     ----------
     nc_path : str or list[str]
-        Absolute path to a NetCDF file (``*.nc``), or a list of paths that
-        will each be opened with :func:`xarray.open_dataset` and concatenated
-        along the ``"time"`` dimension with :func:`xarray.concat`.  Use a
-        list when the query time range spans multiple monthly chunks.
-        A plain string is opened with :func:`xarray.open_dataset` (unchanged
-        single-file behaviour).
+        Absolute path to a NetCDF file (``*.nc``), or a list of paths opened
+        together with :func:`xarray.open_mfdataset` and combined along the
+        time dimension (duplicate stamps from overlapping files are dropped).
+        Use a list when the query needs stamps from several chunks, e.g. a
+        day total at a month boundary.
     lats : float or np.ndarray
         Latitude(s) of the query point(s) in *input_crs*.  A scalar float
         produces a scalar (or 1-D time-series) return value; an array of
@@ -333,25 +332,27 @@ def interpolate_netcdf(
         trailing ``Z`` notation) are accepted: they are converted to UTC and
         then stripped of timezone information before comparison with the
         timezone-naive time axis stored in ERA5/HYRAS NetCDF files.
-        Each timestamp is resolved to the nearest time step (hourly), or to the
-        day containing it (daily); see *temporal_resolution*.
+        Each timestamp is resolved to its hour (hourly) or to its calendar
+        date (daily); see *temporal_resolution*.
     input_crs : str, optional
         CRS of the input *lats*/*lons* coordinates, as an EPSG string
         (e.g. ``"EPSG:4326"`` or ``"EPSG:3035"``).  Defaults to
         ``"EPSG:4326"``.  Coordinates are reprojected to the file's native
         CRS automatically.
     temporal_resolution : str, optional
-        ``"daily"`` (default) — one value per requested timestamp, for the day
-        containing it (nearest stamp, or the day total for *accumulated*
-        data).  ``"hourly"`` — one value per requested timestamp, at the
-        nearest hour (for *accumulated* data, that hour's increment).  Both
-        give the same shape; only the time base of the value differs.
-    accumulated : bool, optional
-        Variable is a running total since 00 UTC (ERA5-Land ``tp``/``ssrd``);
-        see :func:`interpolate_dataset`.
+        ``"daily"`` (default) — one value per timestamp for its calendar date
+        D: the stamp dated D (daily data), the mean of D's 24 hourly stamps
+        (instantaneous data) or D's total (accumulated data).
+        ``"hourly"`` — one value per timestamp at its hour: the stamp within
+        30 min, or for accumulated data the increment of the hour containing
+        it.  Both give the same shape.  A missing stamp gives NaN.
+    series_type : {"daily", "instantaneous", "accumulated"} or None, optional
+        Kind of time series; see :mod:`datavia.library.temporal`.  ``None``
+        (default) infers ``"daily"`` or ``"instantaneous"`` from the time
+        step.  Pass ``"accumulated"`` for ERA5-Land ``tp``/``ssrd``.
     day_start_hour : int, optional
-        UTC hour at which a daily window starts; see
-        :func:`interpolate_dataset`.
+        UTC hour at which day D starts for accumulated data (0; 6 for
+        precipitation).  Daily mode only.
 
     Returns
     -------
@@ -371,7 +372,8 @@ def interpolate_netcdf(
     KeyError
         If *variable* does not exist in the NetCDF file.
     ValueError
-        If *temporal_resolution* is not ``"daily"`` or ``"hourly"``.
+        If *temporal_resolution* is not ``"daily"`` or ``"hourly"``, or
+        *series_type* is not a known series type.
 
     Notes
     -----
@@ -380,11 +382,9 @@ def interpolate_netcdf(
     compatibility with ERA5-Land files, which store the latitude dimension in
     descending order (North → South) as delivered by the CDS API.
 
-    When *nc_path* is a list, each file is opened individually with
-    :func:`xarray.open_dataset` and the results are concatenated in-memory
-    using :func:`xarray.concat` along the detected time dimension (``"time"``
-    or ``"valid_time"``).  This avoids any dependency on ``dask`` while still
-    supporting multi-file queries.
+    A list of paths is combined along the detected time dimension (``"time"``
+    or ``"valid_time"``), sorted, and de-duplicated, so overlapping buffer
+    days of adjacent downloads do not break time selection.
 
     ERA5-Land NetCDF files store their time axis as timezone-naive
     ``datetime64`` values.  A timezone-aware *datetime_utc* value (e.g. one
@@ -398,28 +398,24 @@ def interpolate_netcdf(
             "Install datavia-weather or run `pip install xarray netCDF4`."
         )
 
-    # Open one file or eagerly concatenate several files along the time
-    # dimension.  A plain string uses open_dataset (existing single-file path,
-    # unchanged).  A list with one entry is also opened directly to avoid a
-    # spurious outer dimension.  A list with 2+ entries opens each file
-    # individually and concatenates in memory with xr.concat — no dask
-    # required.  The time dimension name is detected from the first file so
-    # that ERA5 files (which use 'valid_time' from cdsapi >= 0.7) are handled
-    # correctly; using dim="time" blindly would create a new outer dimension
-    # instead of concatenating along the existing one.
-    if not is_scalar_like(nc_path) and len(nc_path) > 1:
-        opened_datasets = [xr.open_dataset(f) for f in nc_path]
-        time_dim_name = next(
-            (d for d in opened_datasets[0].dims if d in ("time", "valid_time")),
-            "time",
-        )
-        dataset = xr.concat(opened_datasets, dim=time_dim_name)
-        for _d in opened_datasets:
-            _d.close()
-    elif not is_scalar_like(nc_path):
-        dataset = xr.open_dataset(nc_path[0])
+    paths = [cast(str, nc_path)] if is_scalar_like(nc_path) else list(nc_path)
+    if len(paths) == 1:
+        dataset = xr.open_dataset(paths[0])
     else:
-        dataset = xr.open_dataset(cast(str, nc_path))
+        # Detect the time dimension from the first file: ERA5 files from
+        # cdsapi >= 0.7 use 'valid_time', and concatenating along a missing
+        # dimension would add a spurious outer axis.
+        with xr.open_dataset(paths[0]) as first:
+            time_dim = next(
+                (d for d in first.dims if d in ("time", "valid_time")), "time"
+            )
+        dataset = (
+            xr.open_mfdataset(
+                paths, combine="nested", concat_dim=time_dim, join="outer"
+            )
+            .sortby(time_dim)
+            .drop_duplicates(time_dim)
+        )
     with dataset as ds:
         return interpolate_dataset(
             ds,
@@ -429,7 +425,7 @@ def interpolate_netcdf(
             datetime_utc=datetime_utc,
             input_crs=input_crs,
             temporal_resolution=temporal_resolution,
-            accumulated=accumulated,
+            series_type=series_type,
             day_start_hour=day_start_hour,
         )
 
@@ -614,7 +610,7 @@ def interpolate_dataset(
     datetime_utc: Any,
     input_crs: str = "EPSG:4326",
     temporal_resolution: str = "daily",
-    accumulated: bool = False,
+    series_type: str | None = None,
     day_start_hour: int = 0,
 ) -> float | np.ndarray:
     r"""Sample a variable from an already-open xarray Dataset at one or more points.
@@ -650,19 +646,12 @@ def interpolate_dataset(
     temporal_resolution : str, optional
         ``"daily"`` (default) or ``"hourly"``.  See :func:`interpolate_netcdf`
         for full semantics.
-    accumulated : bool, optional
-        ``True`` for ERA5-Land style accumulations that run from 00 UTC.
-        ``"daily"`` then returns the total of the day containing each
-        timestamp; ``"hourly"`` returns the increment of the hour ending at
-        the nearest stamp (see
-        :func:`datavia.library.temporal.deaccumulate_since_midnight`).  NaN when
-        a needed stamp is absent.
+    series_type : {"daily", "instantaneous", "accumulated"} or None, optional
+        Kind of time series.  See :func:`interpolate_netcdf`.
     day_start_hour : int, optional
-        UTC hour at which a *daily* value's window starts (0 by default, 6 for
-        precipitation).  Only used by ``"daily"``: each timestamp is mapped to
-        the window containing it (for ``accumulated`` data the window total is
-        formed from the accumulation; for other data the stamp at the window
-        start is selected).
+        UTC hour at which day D starts for accumulated data (0; 6 for
+        precipitation).  Daily mode only.
+
     Returns
     -------
     float or np.ndarray
@@ -677,7 +666,8 @@ def interpolate_dataset(
     KeyError
         If *variable* does not exist in *ds*.
     ValueError
-        If *temporal_resolution* is not ``"daily"`` or ``"hourly"``.
+        If *temporal_resolution* is not ``"daily"`` or ``"hourly"``, or
+        *series_type* is not a known series type.
     """
     if not XARRAY_AVAILABLE:
         raise ImportError(
@@ -719,6 +709,11 @@ def interpolate_dataset(
             f"temporal_resolution must be 'daily' or 'hourly', "
             f"got '{temporal_resolution}'."
         )
+    if series_type not in (None, "daily", "instantaneous", "accumulated"):
+        raise ValueError(
+            "series_type must be 'daily', 'instantaneous', 'accumulated' or "
+            f"None, got '{series_type}'."
+        )
     time_dim = "time" if "time" in point.coords else "valid_time"
     if time_dim in point.coords:
         if not PANDAS_AVAILABLE:
@@ -726,34 +721,34 @@ def interpolate_dataset(
                 "pandas is required for temporal selection. "
                 "Install with `pip install pandas`."
             )
+        # Lazy: temporal.py needs xarray, which is an optional dependency.
+        from .temporal import (  # noqa: PLC0415
+            accumulated_day_total,
+            deaccumulate_since_midnight,
+            infer_series_type,
+            instantaneous_day_mean,
+            select_day,
+            select_nearest,
+        )
+
         scalar_time = is_scalar_like(datetime_utc)
         targets = [
             _to_naive_ts(t) for t in ([datetime_utc] if scalar_time else datetime_utc)
         ]
-        if accumulated:
-            # Lazy: temporal.py needs xarray, which is an optional dependency.
-            from .temporal import (  # noqa: PLC0415
-                accumulated_day_total,
-                deaccumulate_since_midnight,
-            )
-
-            # Missing stamps give NaN instead of falling back to a partial-day
-            # running total.
-            if temporal_resolution == "hourly":
-                point = deaccumulate_since_midnight(point, time_dim, at=targets)
-            else:
+        kind = series_type or infer_series_type(point[time_dim].values)
+        if temporal_resolution == "daily":
+            if kind == "accumulated":
                 point = accumulated_day_total(point, targets, day_start_hour, time_dim)
-            if scalar_time:
-                point = point.isel({time_dim: 0}, drop=True)
+            elif kind == "instantaneous":
+                point = instantaneous_day_mean(point, targets, time_dim)
+            else:
+                point = select_day(point, targets, time_dim)
+        elif kind == "accumulated":
+            point = deaccumulate_since_midnight(point, at=targets, time_dim=time_dim)
         else:
-            if temporal_resolution == "daily" and day_start_hour:
-                # Daily-native data stamped at interval start (HYRAS pr: 06:00):
-                # pick the stamp of the window that contains each target.
-                offset = pd.Timedelta(hours=day_start_hour)
-                targets = [(t - offset).normalize() + offset for t in targets]
-            point = point.sel(
-                {time_dim: targets[0] if scalar_time else targets}, method="nearest"
-            )
+            point = select_nearest(point, targets, time_dim)
+        if scalar_time:
+            point = point.isel({time_dim: 0}, drop=True)
 
     values = np.asarray(point.values, dtype=float)
 
@@ -777,11 +772,13 @@ def interpolate_station_parquet(
     radius_km: float = 50.0,
     daily_aggregation: Literal["mean", "sum"] | None = None,
     day_start_hour: int = 0,
+    interval_end: bool = True,
 ) -> float:
     """Estimate a weather variable at a point using nearby station observations.
 
     Loads station records within *radius_km* of the target coordinate from a
-    Parquet file, filters to the nearest time step, and computes an
+    Parquet file, takes each station's value at the nearest time step (or its
+    daily aggregate, see *daily_aggregation*), and computes an
     inverse-distance-weighted (IDW) average across all matched stations.
 
     Parameters
@@ -797,18 +794,21 @@ def interpolate_station_parquet(
     variable : str
         Name of the observation column to aggregate.
     datetime_utc : datetime-like
-        Target UTC timestamp; the nearest available timestamp is used.
+        Target UTC timestamp (timezone-aware values are converted to UTC).
     radius_km : float, optional
         Search radius in kilometers.  Defaults to 50 km.
     daily_aggregation : {"mean", "sum"} or None, optional
-        ``None`` (default) uses the single nearest hourly stamp.  ``"mean"`` or
-        ``"sum"`` instead aggregates each station's hourly values over the UTC
-        day of *datetime_utc*.  Stamps are interval-end, so day D is
-        ``D 01:00 .. D+1 00:00``.  Stations with fewer than 24 hourly values
+        ``None`` (default) uses the single nearest stamp.  ``"mean"`` or
+        ``"sum"`` instead aggregates each station's hourly values over the
+        calendar date of *datetime_utc*; stations with fewer than 24 values
         that day are dropped.
     day_start_hour : int, optional
-        UTC hour at which the aggregation day starts (6 for precipitation, so
-        day D is ``D 07:00 .. D+1 06:00``).  Only used with *daily_aggregation*.
+        UTC hour at which the aggregation day starts (0; 6 for
+        precipitation).  Only used with *daily_aggregation*.
+    interval_end : bool, optional
+        ``True`` (default) for interval-end fluxes, whose day D is
+        ``(D h0, D+1 h0]``; ``False`` for instantaneous values, whose day is
+        ``[D h0, D+1 h0)``.  Only used with *daily_aggregation*.
 
     Returns
     -------
@@ -845,12 +845,10 @@ def interpolate_station_parquet(
     dist_km: np.ndarray = _EARTH_RADIUS_KM * np.sqrt(
         dlat**2 + (np.cos(lat_rad) * dlon) ** 2
     )
-    # Reset the DataFrame index and rebuild dist_km together so that
-    # df.index and dist_km positions remain aligned for the later IDW step.
+    # Keep each row's distance as a column so it stays aligned through the
+    # time filtering and daily aggregation below.
     radius_mask = dist_km <= radius_km
-    df = df[radius_mask].copy()
-    dist_km = dist_km[radius_mask]
-    df.reset_index(drop=True, inplace=True)
+    df = df[radius_mask].assign(_dist_km=dist_km[radius_mask])
 
     if df.empty:
         logger.warning(
@@ -863,35 +861,27 @@ def interpolate_station_parquet(
         return float("nan")
 
     df["datetime"] = pd.to_datetime(df["datetime"])
-    target = pd.Timestamp(datetime_utc)
+    target = _to_naive_ts(datetime_utc)
     if daily_aggregation is None:
-        # Nearest time step selection.
         nearest_ts = df["datetime"].iloc[(df["datetime"] - target).abs().argmin()]
         df = df[df["datetime"] == nearest_ts]
-        values = df[variable].values.astype(float)
-        distances: np.ndarray = dist_km[df.index]
     else:
         from .temporal import to_daily  # noqa: PLC0415 (optional pandas/xarray)
 
-        station_dist = (
-            df.assign(_dist_km=dist_km)
-            .groupby(["latitude", "longitude"])["_dist_km"]
-            .first()
-        )
-        daily = to_daily(
+        # Distance is constant per station, so grouping by it keeps it aligned.
+        df = to_daily(
             df,
             variable,
             daily_aggregation,
             target,
-            group_cols=["latitude", "longitude"],
+            group_cols=["latitude", "longitude", "_dist_km"],
             day_start_hour=day_start_hour,
+            interval_end=interval_end,
         )
-        if daily.empty:
+        if df.empty:
             return float("nan")
-        values = daily[variable].values.astype(float)
-        distances = station_dist.loc[
-            list(zip(daily["latitude"], daily["longitude"], strict=True))
-        ].values.astype(float)
+    values = df[variable].values.astype(float)
+    distances: np.ndarray = df["_dist_km"].values.astype(float)
 
     # Avoid division by zero for coincident stations.
     distances = np.where(

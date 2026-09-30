@@ -46,7 +46,7 @@ import os
 import tempfile
 import time
 from datetime import date, timedelta
-from typing import Any
+from typing import Any, NamedTuple
 
 from datavia.core.downloader_api import APIDownloader
 
@@ -83,6 +83,37 @@ _QUARTER_MONTH_RANGES: list[tuple[int, int]] = [(1, 3), (4, 6), (7, 9), (10, 12)
 
 #: Seconds between successive CDS job status polls.
 _CDS_POLL_INTERVAL_S: int = 60
+
+#: ERA5-Land variables stored as running totals since 00 UTC.  Reading them
+#: needs stamps just outside the requested range (see
+#: :mod:`datavia.library.temporal`), which the buffer requests supply.
+ACCUMULATED_VARIABLES: frozenset[str] = frozenset(
+    {"total_precipitation", "surface_solar_radiation_downwards"}
+)
+
+#: All hours of a day, as accepted by the CDS ``time`` field.
+_ALL_TIMES: list[str] = [f"{h:02d}:00" for h in range(24)]
+
+#: Day before ``date_start``: 23:00 is the predecessor of the first 00:00
+#: stamp, needed to de-accumulate that hour.
+_LEADING_BUFFER_TIMES: list[str] = ["23:00"]
+
+#: Day after ``date_end``: 00:00 holds the last day's total, and 00:00-06:00
+#: closes its 06-06 UTC precipitation window.
+_TRAILING_BUFFER_TIMES: list[str] = [f"{h:02d}:00" for h in range(7)]
+
+#: Approximate ERA5-Land publication delay; later days are not yet available.
+_ERA5_LAND_LATENCY_DAYS: int = 5
+
+
+class _Request(NamedTuple):
+    """One CDS retrieval: a date range, the hours to fetch, and whether it is
+    an optional buffer request whose failure must not abort the download."""
+
+    start: str
+    end: str
+    times: list[str]
+    is_buffer: bool = False
 
 
 class ERA5Downloader(APIDownloader):
@@ -124,11 +155,14 @@ class ERA5Downloader(APIDownloader):
             to the Germany bounding box ``[55.1, 5.9, 47.3, 15.0]``.
             The edges are snapped to the 0.1\u00b0 ERA5-Land grid automatically.
         buffer_days : int, optional
-            Number of additional days prepended to *date_start* before
-            submitting the CDS request.  Accumulative variables (precipitation,
-            SSRD) reset at UTC midnight, so a buffer supplies the
-            previous day's 23:00 stamp needed to de-accumulate the first
-            hour of ``date_start``.  Defaults to ``1``.
+            ``0`` disables the buffer requests; any positive value (default
+            ``1``) enables them.  When an accumulated variable
+            (:data:`ACCUMULATED_VARIABLES`) is requested, two small extra
+            requests fetch the stamps just outside the range: 23:00 of the
+            day before *date_start* (for the first hourly increment) and
+            00:00-06:00 of the day after *date_end* (for the last day's
+            total).  The trailing request is skipped while that day is not
+            yet published, and a failed buffer request only logs a warning.
         cds_queue_timeout : int, optional
             Maximum number of seconds to wait while a single CDS job is
             queued.  When the limit is exceeded the job is cancelled and
@@ -407,6 +441,40 @@ class ERA5Downloader(APIDownloader):
             chunks.append((str(chunk_start), str(chunk_end)))
         return chunks
 
+    def _plan_requests(self) -> list[_Request]:
+        """Return the CDS requests: the main chunks plus optional buffers.
+
+        See *buffer_days* in :meth:`__init__`.  Buffers are separate one-day
+        requests because a CDS request is the product of its year, month and
+        day lists, so a chunk stretched across a month boundary would fetch
+        whole extra months.
+        """
+        main = [
+            _Request(s, e, _ALL_TIMES) for s, e in self._get_chunks(self.date_start)
+        ]
+        if self.buffer_days <= 0 or not ACCUMULATED_VARIABLES.intersection(
+            self.variables
+        ):
+            return main
+        before = str(date.fromisoformat(self.date_start) - timedelta(days=1))
+        after = date.fromisoformat(self.date_end) + timedelta(days=1)
+        requests = [_Request(before, before, _LEADING_BUFFER_TIMES, True), *main]
+        latest = datetime.datetime.now(datetime.UTC).date() - timedelta(
+            days=_ERA5_LAND_LATENCY_DAYS
+        )
+        if after > latest:
+            logger.warning(
+                "ERA5Downloader: %s is not yet published; skipping the trailing "
+                "buffer, so the day total of %s will be missing.",
+                after,
+                self.date_end,
+            )
+        else:
+            requests.append(
+                _Request(str(after), str(after), _TRAILING_BUFFER_TIMES, True)
+            )
+        return requests
+
     def _get_chunks(self, effective_start: str) -> list[tuple[str, str]]:
         """Return the list of date-range chunks for the configured ``chunk_by`` mode.
 
@@ -417,7 +485,8 @@ class ERA5Downloader(APIDownloader):
         Parameters
         ----------
         effective_start : str
-            Actual start date after applying ``buffer_days`` offset.
+            First day of the range (buffer days are separate requests; see
+            :meth:`_plan_requests`).
 
         Returns
         -------
@@ -516,16 +585,7 @@ class ERA5Downloader(APIDownloader):
                 "Install it with `pip install cdsapi` and set up ~/.cdsapirc."
             )
 
-        # Apply buffer_days to the start date for accumulative variables
-        # (precipitation, SSRD) so the first hour can be de-accumulated.
-        effective_start: str = self.date_start
-        if self.buffer_days > 0:
-            buffered = date.fromisoformat(self.date_start) - timedelta(
-                days=self.buffer_days
-            )
-            effective_start = str(buffered)
-
-        chunks = self._get_chunks(effective_start)
+        chunks = self._plan_requests()
         total_chunks = len(chunks)
         logger.info(
             "ERA5Downloader: %d chunk(s) [chunk_by=%s] for variables=%s, %s to %s",
@@ -547,7 +607,8 @@ class ERA5Downloader(APIDownloader):
         client = cdsapi.Client()
         output_paths: list[str] = []
 
-        for chunk_index, (chunk_start, chunk_end) in enumerate(chunk_iter, start=1):
+        for chunk_index, request in enumerate(chunk_iter, start=1):
+            chunk_start, chunk_end = request.start, request.end
             years, months, days = self._build_request_date_fields(
                 chunk_start, chunk_end
             )
@@ -574,7 +635,7 @@ class ERA5Downloader(APIDownloader):
                         "year": years,
                         "month": months,
                         "day": days,
-                        "time": [f"{h:02d}:00" for h in range(24)],
+                        "time": request.times,
                         "area": self.bbox,
                         "data_format": "netcdf",
                         "download_format": "unarchived",
@@ -600,13 +661,19 @@ class ERA5Downloader(APIDownloader):
                 with contextlib.suppress(OSError):
                     os.unlink(output_path)
                 raise
-            except TimeoutError:
-                with contextlib.suppress(OSError):
-                    os.unlink(output_path)
-                raise
             except Exception as exc:
                 with contextlib.suppress(OSError):
                     os.unlink(output_path)
+                if request.is_buffer:
+                    logger.warning(
+                        "ERA5Downloader: buffer request for %s failed (%s); "
+                        "day totals next to the range may be missing.",
+                        chunk_start,
+                        exc,
+                    )
+                    continue
+                if isinstance(exc, TimeoutError):
+                    raise
                 exc_msg = str(exc)
                 if "403" in exc_msg and (
                     "too large" in exc_msg.lower() or "cost limits" in exc_msg.lower()

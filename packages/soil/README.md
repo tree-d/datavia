@@ -56,18 +56,14 @@ print(f"pH:    {soil_data['ph_0-5cm_mean'] / 10:.2f}")  # pH×10 → pH
 print(f"SOC:   {soil_data['carbon_0-5cm_mean'] / 10:.1f} g/kg")  # dg/kg → g/kg
 
 # HiHydroSoil values are stored as integers × 10 000 → multiply by 0.0001
-print(
-    f"Field capacity:         {soil_data['field_capacity_0-5cm_mean'] * 0.0001:.4f} cm³/cm³"
-)
-print(
-    f"Wilting point:          {soil_data['wilting_point_0-5cm_mean'] * 0.0001:.4f} cm³/cm³"
-)
-print(
-    f"Porosity:               {soil_data['porosity_0-5cm_mean'] * 0.0001:.4f} cm³/cm³"
-)
-print(
-    f"Hydraulic conductivity: {soil_data['hydraulic_conductivity_0-5cm_mean'] * 0.0001:.4f} cm/day"
-)
+for label, prop, unit in [
+    ("Field capacity", "field_capacity", "cm³/cm³"),
+    ("Wilting point", "wilting_point", "cm³/cm³"),
+    ("Porosity", "porosity", "cm³/cm³"),
+    ("Hydraulic conductivity", "hydraulic_conductivity", "cm/day"),
+]:
+    value = soil_data[f"{prop}_0-5cm_mean"] * 0.0001
+    print(f"{label + ':':<24}{value:.4f} {unit}")
 ```
 
 ### Requesting specific properties and depths

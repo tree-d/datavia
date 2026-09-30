@@ -224,7 +224,7 @@ class Getter(ABC):
         - TIFF pipelines return ``layer_name`` values
           (e.g. ``"elevation_dgm200"``).
         - Weather pipelines return variable names
-          (e.g. ``"temperature_2m"``, ``"precipitation"``).
+          (e.g. ``"2m_temperature"``, ``"total_precipitation"``).
 
         This method is used by pipeline update logic to determine which data
         still needs to be downloaded.  It must **not** return file paths; use

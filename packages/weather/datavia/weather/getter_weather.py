@@ -11,9 +11,10 @@ For other sources, the ``weather_layers`` database table is queried and the
 result is read from a NetCDF file.
 
 Unit conversions are source-aware: each source has its own conversion rules
-in ``SOURCE_REGISTRY``.  HYRAS data is already in target units and passes
-through unchanged.  ERA5 raw values (Kelvin, metres, J m⁻²) are converted
-automatically.
+in ``SOURCE_REGISTRY``.  HYRAS data is already in target units except
+radiation (W m⁻² to PAR).  ERA5 raw values (Kelvin, metres, J m⁻²) are
+converted automatically.  Station values are converted to the same target
+unit before blending.
 
 When both gridded (Zarr) and station (Parquet / DWD) files cover the
 requested time window the results are blended via
@@ -44,8 +45,12 @@ from datavia.library.type_utils import is_scalar_like
 from .source_registry import (
     SOURCE_REGISTRY,
     apply_conversion,
+    convert_units,
     get_day_start_hour,
     get_nc_variable_name,
+    get_station_aggregation,
+    get_target_unit,
+    is_accumulated,
 )
 from .zarr_store_manager import ZarrStoreManager
 
@@ -147,9 +152,11 @@ class GetterWeather(Getter):
         temporal_resolution : str, optional
             ``"daily"`` (default) or ``"hourly"``.  Forwarded to
             :func:`~datavia.library.interpolation.interpolate_netcdf` for
-            each query.  Both return one value per requested timestamp: the
-            value for the day containing it (daily; precipitation days run
-            06-06 UTC) or at the nearest hour (hourly).
+            each query.  Both return one value per requested timestamp.
+            Daily mode gives the value of the timestamp's calendar date: the
+            daily mean for temperature and humidity, the day total or mean
+            for precipitation (06-06 UTC) and radiation.  Hourly mode gives
+            the value at its hour.  See :mod:`datavia.library.temporal`.
         """
         self.source_name: str = source_name
         self._unit_overrides: dict[str, dict[str, str]] | None = unit_overrides
@@ -226,11 +233,18 @@ class GetterWeather(Getter):
         """
         if np.isnan(results).any():
             n_missing = int(np.isnan(results).sum())
+            hint = (
+                " Daily values need every stamp of the day; totals of "
+                "accumulated variables also need the next day's first hours, "
+                "which the last day of a download may lack."
+                if self._temporal_resolution == "daily"
+                else ""
+            )
             raise MissingWeatherDataError(
                 f"{n_missing} of {results.size} requested point(s) have no "
                 f"downloaded data for source='{self.source_name}', "
                 f"variable='{variable}', time=[{from_dt}, {to_dt}]. "
-                "Run the pipeline update to download the missing coverage."
+                "Run the pipeline update to download the missing coverage." + hint
             )
 
     def get_data(
@@ -263,7 +277,7 @@ class GetterWeather(Getter):
         **kwargs : Any
             Required keyword arguments:
 
-            - ``variable`` (str): Variable name, e.g. ``"temperature_2m"``.
+            - ``variable`` (str): Variable name, e.g. ``"2m_temperature"``.
             - ``datetime_utc`` (datetime-like or list): Target UTC timestamp
               (single) or list of T timestamps for a batched time-series
               query.  Timezone-aware values (e.g. strings ending in ``"Z"``
@@ -355,7 +369,22 @@ class GetterWeather(Getter):
         # path is constructed directly from source_name / variable / year.
         has_zarr_grid = "zarr_grid" in SOURCE_REGISTRY.get(self.source_name, {})
 
-        nc_paths = get_weather_paths(self.source_name, variable, from_dt, to_dt)
+        # Accumulated variables are read as day totals (daily mode, needing
+        # the next day's stamps) or hourly increments (needing the previous
+        # hour), so their lookups reach one day beyond the query on each side.
+        accumulated = is_accumulated(self.source_name, variable)
+        series_type = "accumulated" if accumulated else None
+        period_s = (
+            3600.0 if accumulated and self._temporal_resolution == "hourly" else None
+        )
+        day_start_hour = get_day_start_hour(self.source_name, variable)
+        pad = pd.Timedelta(days=1 if accumulated else 0)
+        nc_paths = get_weather_paths(
+            self.source_name,
+            variable,
+            (pd.Timestamp(from_dt) - pad).isoformat(),
+            (pd.Timestamp(to_dt) + pad).isoformat(),
+        )
 
         # Separate by format. For Zarr sources nc_files will typically be
         # empty; the Zarr open is independent of the DB.
@@ -375,17 +404,6 @@ class GetterWeather(Getter):
             if is_multi_time
             else np.full(n_coords, np.nan)
         )
-
-        # Accumulated variables (ERA5-Land tp/ssrd) are read as day totals in
-        # daily mode and as per-hour increments in hourly mode.
-        accumulated = variable in SOURCE_REGISTRY.get(self.source_name, {}).get(
-            "accumulated_variables", ()
-        )
-        period_s = (
-            3600.0 if accumulated and self._temporal_resolution == "hourly" else None
-        )
-        day_start_hour = get_day_start_hour(self.source_name, variable)
-        conv_kwargs = {} if period_s is None else {"period_s": period_s}
 
         # --- Gridded path ---
         if nc_files or has_zarr_grid:
@@ -411,16 +429,12 @@ class GetterWeather(Getter):
                                 datetime_utc,
                                 input_crs=crs_coords,
                                 temporal_resolution=self._temporal_resolution,
-                                accumulated=accumulated,
+                                series_type=series_type,
                                 day_start_hour=day_start_hour,
                             )
                     elif nc_files:
-                        # Zarr store not yet written (e.g. first run not completed or
-                        # legacy .nc rows still registered).  Fall back to NetCDF so
-                        # that data already on disk is not silently unavailable.
-                        # Gaps in this raw, not-yet-migrated file are assumed to be
-                        # filled once it goes through the next update_data() run
-                        # and is migrated into the Zarr store.
+                        # No Zarr store yet: fall back to the raw NetCDF files on
+                        # disk (they are gap-filled when migrated into the store).
                         logger.debug(
                             "No Zarr store for %s/%s — falling back to NetCDF.",
                             self.source_name,
@@ -428,14 +442,14 @@ class GetterWeather(Getter):
                         )
                         nc_variable = get_nc_variable_name(self.source_name, variable)
                         raw_batch = interpolate_netcdf(
-                            nc_files[0],
+                            nc_files,
                             lats,
                             lons,
                             nc_variable,
                             datetime_utc,
                             input_crs=crs_coords,
                             temporal_resolution=self._temporal_resolution,
-                            accumulated=accumulated,
+                            series_type=series_type,
                             day_start_hour=day_start_hour,
                         )
                     elif not parquet_files:
@@ -450,14 +464,14 @@ class GetterWeather(Getter):
                     # fill happens at query time.
                     nc_variable = get_nc_variable_name(self.source_name, variable)
                     raw_batch = interpolate_netcdf(
-                        nc_files[0],
+                        nc_files,
                         lats,
                         lons,
                         nc_variable,
                         datetime_utc,
                         input_crs=crs_coords,
                         temporal_resolution=self._temporal_resolution,
-                        accumulated=accumulated,
+                        series_type=series_type,
                         day_start_hour=day_start_hour,
                     )
 
@@ -473,7 +487,7 @@ class GetterWeather(Getter):
                             variable,
                             raw_arr,
                             self._unit_overrides,
-                            **conv_kwargs,
+                            period_s=period_s,
                         )
                         results = np.asarray(converted, dtype=float)
                     else:
@@ -487,7 +501,7 @@ class GetterWeather(Getter):
                                         variable,
                                         raw_val,
                                         self._unit_overrides,
-                                        **conv_kwargs,
+                                        period_s=period_s,
                                     )
                                 )
             except RuntimeError:
@@ -510,10 +524,13 @@ class GetterWeather(Getter):
             self._raise_if_missing(results, variable, from_dt, to_dt)
             return results
 
-        station_aggregation = (
-            SOURCE_REGISTRY["DWD_stations"].get("daily_aggregation", {}).get(variable)
-            if self._temporal_resolution == "daily"
-            else None
+        station_kwargs = get_station_aggregation(variable, self._temporal_resolution)
+        # Station parquet files are always DWD: convert them to the unit the
+        # gridded path produces (honouring unit overrides) before blending.
+        station_unit = SOURCE_REGISTRY["DWD_stations"]["native_units"].get(variable)
+        target_unit = (
+            get_target_unit(self.source_name, variable, self._unit_overrides)
+            or station_unit
         )
 
         for i, coord in enumerate(coords_arr):
@@ -530,8 +547,7 @@ class GetterWeather(Getter):
                             variable,
                             datetime_utc,
                             radius_km,
-                            daily_aggregation=station_aggregation,
-                            day_start_hour=get_day_start_hour("DWD_stations", variable),
+                            **station_kwargs,
                         )
                     except Exception as exc:
                         logger.warning(
@@ -547,12 +563,24 @@ class GetterWeather(Getter):
                         break
                     station_val = candidate
 
-            # Station parquet files are always DWD: bring them to the same
-            # target unit as the gridded value before blending.
-            if station_val is not None and not np.isnan(station_val):
-                station_val = float(
-                    apply_conversion("DWD_stations", variable, station_val)
-                )
+            if (
+                station_val is not None
+                and not np.isnan(station_val)
+                and station_unit is not None
+            ):
+                try:
+                    station_val = float(
+                        convert_units(station_val, station_unit, target_unit)
+                    )
+                except ValueError:
+                    logger.warning(
+                        "Cannot convert station %s from %s to %s; using the "
+                        "gridded value only.",
+                        variable,
+                        station_unit,
+                        target_unit,
+                    )
+                    station_val = None
 
             gridded_val = results[i] if not np.isnan(results[i]) else None
 
@@ -588,7 +616,7 @@ class GetterWeather(Getter):
         lon : float
             Geographic longitude in degrees East.
         variable : str
-            Variable name, e.g. ``"temperature_2m"``.
+            Variable name, e.g. ``"2m_temperature"``.
         datetime_utc : datetime-like
             Target UTC timestamp.
         radius_km : float, optional

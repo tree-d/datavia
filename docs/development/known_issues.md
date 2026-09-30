@@ -161,28 +161,64 @@ observational gridding, no reanalysis background), or replace the fixed weight
 with a distance- or uncertainty-based scheme.  Track this as a scientific
 concern in the project backlog.
 
-**Time bases (radiation and precipitation):** timestamps are interval-end for
-ERA5-Land and Open-Meteo, and all sources are brought to one daily convention:
+**Time bases:** all sources are brought to one daily convention, implemented
+in `datavia.library.temporal`.  In daily mode a timestamp's **calendar date**
+D selects day D; its time of day is ignored.  A day with any missing stamp is
+reported missing (`MissingWeatherDataError`), never approximated.
 
-- **Radiation:** day = 00:00-24:00 UTC, as a mean flux.  HYRAS `rsds` is a
-  00-24 UTC daily mean (time stamp 12:00, bounds 00:00-00:00; verified in
-  `rsds_hyras_5_2020_v3-1_de.nc`).  DWD (Open-Meteo) `shortwave_radiation`
-  is the mean of the preceding hour and is averaged over the day, dropping
-  stations with fewer than 24 hourly values.
-- **Precipitation:** day = **06:00-06:00 UTC**, as a total.  This is HYRAS
-  `pr` (time stamp = interval start, verified in `pr_hyras_1_2020_v6-1_de.nc`)
-  and DWD's own daily convention.  ERA5 and DWD hourly data are summed over
-  that window; HYRAS daily stamps are chosen by window containment (a plain
-  nearest-stamp pick would return the next day for queries after 18:00 UTC).
-  The hour is set per variable by `day_start_hour` in the source registry.
+- **Temperature, humidity:** the daily mean.  HYRAS `tas`/`hurs` store it
+  directly (`tas` stamped 00:00, verified in the local 2025 store).  ERA5 and
+  DWD (Open-Meteo) hourly snapshots are averaged over the 24 stamps
+  `D 00:00 .. D 23:00`.  *Assumption, not verified:* HYRAS daily means use
+  the 00-24 UTC day.
+- **Radiation:** the mean flux of 00:00-24:00 UTC.  HYRAS `rsds` is a 00-24 UTC
+  daily mean (stamp 12:00, bounds 00:00-00:00; verified in
+  `rsds_hyras_5_2020_v3-1_de.nc`).  Open-Meteo `shortwave_radiation` is the
+  mean of the preceding hour and is averaged over `(D 00:00, D+1 00:00]`.
+- **Precipitation:** the total of **06:00 D to 06:00 D+1 UTC**.  This is HYRAS
+  `pr` (stamped 06:00 D, verified in `pr_hyras_1_2020_v6-1_de.nc`) and DWD's
+  own daily convention.  ERA5 and Open-Meteo hourly data are summed over that
+  window; the hour is set per variable by `day_start_hour` in the registry.
+- **HYRAS stamp hours differ per variable** (tas 00:00, pr 06:00, rsds
+  12:00), so HYRAS values are matched by date, not by nearest stamp.  The
+  former nearest-stamp pick returned the next day's `tas` for queries at or
+  after 12:00 UTC.
 - **ERA5-Land `ssrd`/`tp`** are stored raw (running total since 00 UTC; the
   00:00 stamp holds the previous day's total).  Daily mode forms the window
   total from the accumulation; hourly mode returns the de-accumulated
-  increment of the nearest hour (converted with `period_s=3600`).  A window
-  whose stamps are not in the store is reported missing, never approximated.
+  increment of the hour containing the timestamp (converted with
+  `period_s=3600`).  Small negative increments, which occur in real ERA5-Land
+  data, are clipped to 0.
+- **Download edges:** the last day's total needs stamps of the following day,
+  so ERA5 and DWD downloads request them (see `buffer_days` in the weather
+  README).  Data downloaded before this was added lacks those stamps: the
+  last day of such a download stays missing until the adjacent range is
+  downloaded or the range is re-downloaded.
 - `temporal_resolution="hourly"` returns the value at the requested hour, with
   the same shapes as daily mode (`(N,)` for one timestamp, `(N, T)` for a
   list).  Only the time base of the value differs.
+
+---
+
+### ⚠️ "DWD station" data is Open-Meteo model output, not observations
+
+**File:** `packages/weather/datavia/weather/dwd_downloader.py`
+
+`DWDStationDownloader` queries the Open-Meteo **archive** API at DWD station
+coordinates.  That API returns reanalysis/model output (ERA5, ERA5-Land and
+ECMWF IFS based), snapped to the IFS O1280 grid (~8 x 11 km in Germany), not
+the measurements of the DWD stations.  Consequences:
+
+- Nearby "stations" in the same O1280 cell return identical values.
+- Blending these values with ERA5-Land as "station" data (default
+  `station_weight=0.6`) largely double-counts reanalysis instead of adding
+  independent observations.
+- Documentation that calls them DWD daily totals refers to the DWD *day
+  convention* only (06-06 UTC for precipitation), not to DWD data.
+
+For real observations, fetch DWD CDC data (e.g. with
+[`wetterdienst`](https://github.com/earthobservations/wetterdienst)) and keep
+the same parquet layout.
 
 ---
 

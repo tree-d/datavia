@@ -285,7 +285,7 @@ def get_weather_paths(
     source_name : str
         Source identifier, e.g. ``"era5"`` or ``"dwd_stations"``.
     variable : str
-        Variable name, e.g. ``"temperature_2m"``.
+        Variable name, e.g. ``"2m_temperature"``.
     from_dt : str
         Start of the requested time window (ISO-8601 datetime string).
     to_dt : str
