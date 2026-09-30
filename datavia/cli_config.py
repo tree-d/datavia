@@ -54,11 +54,11 @@ WEATHER_EXAMPLE = """
     try:
         import datetime
         now = datetime.datetime.now(datetime.timezone.utc)
-        temp = datavia.weather.get_weather_data(
+        temp = weather.get_weather_data(
             lat=52.5200,
             lon=13.4050,
-            variable="temperature_2m",
-            datetime_utc=now,
+            variable="2m_temperature",
+            datetime_utc="2024-06-15T12:00:00",
         )
         print(f"Berlin temperature_2m: {temp:.1f} °C")
     except Exception as e:
