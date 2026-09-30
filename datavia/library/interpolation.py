@@ -286,6 +286,7 @@ def interpolate_netcdf(
     datetime_utc: Any,
     input_crs: str = "EPSG:4326",
     temporal_resolution: str = "daily",
+    accumulated: bool = False,
 ) -> float | np.ndarray:
     r"""Sample a NetCDF variable at one or more geographic points.
 
@@ -423,6 +424,7 @@ def interpolate_netcdf(
             datetime_utc=datetime_utc,
             input_crs=input_crs,
             temporal_resolution=temporal_resolution,
+            accumulated=accumulated,
         )
 
 
@@ -606,6 +608,7 @@ def interpolate_dataset(
     datetime_utc: Any,
     input_crs: str = "EPSG:4326",
     temporal_resolution: str = "daily",
+    accumulated: bool = False,
 ) -> float | np.ndarray:
     r"""Sample a variable from an already-open xarray Dataset at one or more points.
 
@@ -640,6 +643,11 @@ def interpolate_dataset(
     temporal_resolution : str, optional
         ``"daily"`` (default) or ``"hourly"``.  See :func:`interpolate_netcdf`
         for full semantics.
+    accumulated : bool, optional
+        ``True`` for ERA5-Land style accumulations that run from 00 UTC.
+        ``"daily"`` then returns the day's total (the next day's ``00:00``
+        stamp, NaN if absent); ``"hourly"`` returns per-hour increments
+        (see :func:`datavia.library.temporal.deaccumulate_since_midnight`).
 
     Returns
     -------
@@ -711,15 +719,45 @@ def interpolate_dataset(
                 day_start = day_start.tz_convert("UTC").tz_localize(None)
             day_start = day_start.normalize()
             day_end = day_start + pd.Timedelta(days=1) - pd.Timedelta(nanoseconds=1)
-            point = point.sel({time_dim: slice(day_start, day_end)})
-        else:
-            if not is_scalar_like(datetime_utc):
-                ts_list = [_to_naive_ts(t) for t in datetime_utc]
-                point = point.sel({time_dim: ts_list}, method="nearest")
-            else:
-                point = point.sel(
-                    {time_dim: _to_naive_ts(datetime_utc)}, method="nearest"
+            if accumulated:
+                # Lazy: temporal.py needs xarray, which is an optional dependency.
+                from .temporal import deaccumulate_since_midnight  # noqa: PLC0415
+
+                # Include 23:00 of the previous day: the 00:00 increment needs it.
+                window = point.sel(
+                    {time_dim: slice(day_start - pd.Timedelta(hours=1), day_end)}
                 )
+                point = deaccumulate_since_midnight(window, time_dim).sel(
+                    {time_dim: slice(day_start, day_end)}
+                )
+            else:
+                point = point.sel({time_dim: slice(day_start, day_end)})
+        else:
+            targets = (
+                [_to_naive_ts(t) for t in datetime_utc]
+                if not is_scalar_like(datetime_utc)
+                else _to_naive_ts(datetime_utc)
+            )
+            if accumulated:
+                # Day total = accumulation at the next day's 00:00 stamp.  A
+                # tolerance (reindex -> NaN) stops a missing stamp silently
+                # falling back to a partial-day running total.
+                def _day_total_stamp(t: Any) -> Any:
+                    return pd.Timestamp(t).normalize() + pd.Timedelta(days=1)
+
+                scalar_time = not isinstance(targets, list)
+                stamps = [
+                    _day_total_stamp(t) for t in ([targets] if scalar_time else targets)
+                ]
+                point = point.reindex(
+                    {time_dim: stamps},
+                    method="nearest",
+                    tolerance=pd.Timedelta(minutes=30),
+                )
+                if scalar_time:
+                    point = point.isel({time_dim: 0}, drop=True)
+            else:
+                point = point.sel({time_dim: targets}, method="nearest")
 
     values = np.asarray(point.values, dtype=float)
 
@@ -741,6 +779,7 @@ def interpolate_station_parquet(
     variable: str,
     datetime_utc: Any,
     radius_km: float = 50.0,
+    daily_aggregation: Literal["mean", "sum"] | None = None,
 ) -> float:
     """Estimate a weather variable at a point using nearby station observations.
 
@@ -764,6 +803,12 @@ def interpolate_station_parquet(
         Target UTC timestamp; the nearest available timestamp is used.
     radius_km : float, optional
         Search radius in kilometers.  Defaults to 50 km.
+    daily_aggregation : {"mean", "sum"} or None, optional
+        ``None`` (default) uses the single nearest hourly stamp.  ``"mean"`` or
+        ``"sum"`` instead aggregates each station's hourly values over the UTC
+        day of *datetime_utc*.  Stamps are interval-end, so day D is
+        ``D 01:00 .. D+1 00:00``.  Stations with fewer than 24 hourly values
+        that day are dropped.
 
     Returns
     -------
@@ -817,14 +862,35 @@ def interpolate_station_parquet(
         )
         return float("nan")
 
-    # Nearest time step selection.
     df["datetime"] = pd.to_datetime(df["datetime"])
     target = pd.Timestamp(datetime_utc)
-    nearest_ts = df["datetime"].iloc[(df["datetime"] - target).abs().argmin()]
-    df = df[df["datetime"] == nearest_ts]
+    if daily_aggregation is None:
+        # Nearest time step selection.
+        nearest_ts = df["datetime"].iloc[(df["datetime"] - target).abs().argmin()]
+        df = df[df["datetime"] == nearest_ts]
+        values = df[variable].values.astype(float)
+        distances: np.ndarray = dist_km[df.index]
+    else:
+        from .temporal import to_daily  # noqa: PLC0415 (optional pandas/xarray)
 
-    values = df[variable].values.astype(float)
-    distances: np.ndarray = dist_km[df.index]
+        station_dist = (
+            df.assign(_dist_km=dist_km)
+            .groupby(["latitude", "longitude"])["_dist_km"]
+            .first()
+        )
+        daily = to_daily(
+            df,
+            variable,
+            daily_aggregation,
+            target,
+            group_cols=["latitude", "longitude"],
+        )
+        if daily.empty:
+            return float("nan")
+        values = daily[variable].values.astype(float)
+        distances = station_dist.loc[
+            list(zip(daily["latitude"], daily["longitude"], strict=True))
+        ].values.astype(float)
 
     # Avoid division by zero for coincident stations.
     distances = np.where(

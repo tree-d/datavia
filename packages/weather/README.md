@@ -302,7 +302,9 @@ Key design decisions:
   0.1° ERA5-Land grid so every requested grid cell is fully included.
 - **buffer_days** — ERA5 requests include 1 extra day before `date_start` so
   accumulative variables (precipitation, SSRD) that reset at UTC midnight have
-  sufficient context to reconstruct the first local-day total.
+  the previous day's 23:00 stamp, which the first day's 00:00 hourly increment
+  needs (see `datavia.library.temporal`).  At query time accumulated variables
+  are read as day totals (daily mode) or per-hour increments (hourly mode).
 - **Multi-variable NetCDF** — `SaverWeather.save()` inserts one
   `weather_layers` row per variable when a single NC file contains multiple
   variables, so per-variable path queries in `GetterWeather` work correctly.

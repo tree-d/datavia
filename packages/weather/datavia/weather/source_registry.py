@@ -107,6 +107,12 @@ SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
             "total_precipitation": {"from": "m", "to": "mm"},
             "surface_solar_radiation_downwards": {"from": "J_m2", "to": "PAR"},
         },
+        # Variables stored as running totals since 00 UTC (reset after the
+        # 00:00 stamp).  They are de-accumulated / read as day totals at query
+        # time; see datavia.library.temporal.
+        "accumulated_variables": frozenset(
+            {"total_precipitation", "surface_solar_radiation_downwards"}
+        ),
         # Maps ECMWF short variable names (as stored in ERA5-Land NetCDF files)
         # to the pipeline variable names used throughout the datavia API.
         "nc_variable_map": {
@@ -184,6 +190,13 @@ SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
         # Open-Meteo shortwave_radiation is W/m²; convert to PAR.
         "conversions": {
             "surface_solar_radiation_downwards": {"from": "W_m2", "to": "PAR"},
+        },
+        # Hourly, interval-end stamped.  In daily mode these are aggregated
+        # over the UTC day instead of picking the nearest hour, so that they
+        # represent the same quantity as the gridded daily values.
+        "daily_aggregation": {
+            "surface_solar_radiation_downwards": "mean",
+            "total_precipitation": "sum",
         },
     },
 }
@@ -269,6 +282,7 @@ def apply_conversion(
     variable: str,
     value: Any,
     user_overrides: dict[str, dict[str, str]] | None = None,
+    period_s: float | None = None,
 ) -> Any:
     """Apply the appropriate unit conversion for *variable* from *source_name*.
 
@@ -289,6 +303,9 @@ def apply_conversion(
         ``{"2m_temperature": {"from": "K", "to": "degC"}}``.
         When provided, entries here take precedence over the registry defaults
         for the matched variable names.
+    period_s : float, optional
+        Length in seconds of the period an energy total (``J_m2``) covers.
+        ``None`` means one day; pass ``3600`` for de-accumulated hourly values.
 
     Returns
     -------
@@ -334,6 +351,8 @@ def apply_conversion(
         )
         return value
 
+    if period_s is not None and from_unit == "J_m2":
+        return conversion_fn(value, period_s=period_s)
     return conversion_fn(value)
 
 

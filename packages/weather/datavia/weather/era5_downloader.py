@@ -126,8 +126,9 @@ class ERA5Downloader(APIDownloader):
         buffer_days : int, optional
             Number of additional days prepended to *date_start* before
             submitting the CDS request.  Accumulative variables (precipitation,
-            SSRD) reset at UTC midnight, so a buffer ensures the first
-            local-day total can be reconstructed.  Defaults to ``1``.
+            SSRD) reset at UTC midnight, so a buffer supplies the
+            previous day's 23:00 stamp needed to de-accumulate the first
+            hour of ``date_start``.  Defaults to ``1``.
         cds_queue_timeout : int, optional
             Maximum number of seconds to wait while a single CDS job is
             queued.  When the limit is exceeded the job is cancelled and
@@ -516,7 +517,7 @@ class ERA5Downloader(APIDownloader):
             )
 
         # Apply buffer_days to the start date for accumulative variables
-        # (precipitation, SSRD) so the first local-day total can be reconstructed.
+        # (precipitation, SSRD) so the first hour can be de-accumulated.
         effective_start: str = self.date_start
         if self.buffer_days > 0:
             buffered = date.fromisoformat(self.date_start) - timedelta(

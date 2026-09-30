@@ -6,7 +6,8 @@ ERA5 delivers:
 - Precipitation as accumulated **metres** of water equivalent
   (``total_precipitation``).
 - Surface solar radiation downwards (SSRD) as accumulated
-  **J m⁻²** per time step (``surface_solar_radiation_downwards``).
+  **J m⁻²**, running since 00 UTC (``surface_solar_radiation_downwards``);
+  convert to a per-period total before :func:`ssrd_to_par`.
   PAR is estimated as 50 % of shortwave → µmol m⁻² s⁻¹.
 
 All conversion functions operate element-wise on numpy arrays (or scalars)
@@ -109,30 +110,34 @@ def w_m2_to_par(irradiance_w_m2: np.ndarray | float) -> np.ndarray | float:
     return result
 
 
-def ssrd_to_par(ssrd_daily_j_m2: np.ndarray | float) -> np.ndarray | float:
-    """Convert daily SSRD accumulation to mean PAR flux.
+def ssrd_to_par(
+    ssrd_j_m2: np.ndarray | float, period_s: float = _SECONDS_PER_DAY
+) -> np.ndarray | float:
+    """Convert an SSRD energy total over *period_s* seconds to mean PAR flux.
 
-    Converts surface solar radiation downwards (SSRD) expressed as a daily
-    accumulation in J m⁻² to photosynthetically active radiation (PAR) in
-    µmol(photons) m⁻² s⁻¹.
+    *ssrd_j_m2* must already be a total over exactly one period, not a running
+    accumulation: a daily total (``period_s=86400``, default) or a de-accumulated
+    hourly increment (``period_s=3600``).  See
+    :func:`datavia.library.temporal.deaccumulate_since_midnight`.
 
-    The conversion pipeline is:
-    1. J m⁻² day⁻¹  →  W m⁻² (divide by seconds per day).
-    2. W m⁻²        →  PAR µmol m⁻² s⁻¹ (see :func:`w_m2_to_par`).
+    1. J m⁻² per period  →  W m⁻² (divide by *period_s*).
+    2. W m⁻²             →  PAR µmol m⁻² s⁻¹ (see :func:`w_m2_to_par`).
 
     Parameters
     ----------
-    ssrd_daily_j_m2 : np.ndarray or float
-        Daily SSRD accumulation in J m⁻².
+    ssrd_j_m2 : np.ndarray or float
+        SSRD energy total in J m⁻² over one period.
+    period_s : float, optional
+        Length of the period in seconds.  Defaults to one day.
 
     Returns
     -------
     np.ndarray or float
         Mean PAR flux in µmol(photons) m⁻² s⁻¹.  Same type and shape as
-        *ssrd_daily_j_m2*.
+        *ssrd_j_m2*.
     """
-    arr = np.asarray(ssrd_daily_j_m2, dtype=float)
-    return w_m2_to_par(arr / _SECONDS_PER_DAY)
+    arr = np.asarray(ssrd_j_m2, dtype=float)
+    return w_m2_to_par(arr / period_s)
 
 
 __all__ = [

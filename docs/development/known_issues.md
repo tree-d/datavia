@@ -161,11 +161,33 @@ observational gridding, no reanalysis background), or replace the fixed weight
 with a distance- or uncertainty-based scheme.  Track this as a scientific
 concern in the project backlog.
 
-**Radiation time bases:** `surface_solar_radiation_downwards` is now PAR
-(µmol m⁻² s⁻¹) for every source, but time bases still differ: `ssrd_to_par`
-assumes a daily J m⁻² total while the ERA5 store is hourly accumulation since
-00 UTC (nothing de-accumulates it); HYRAS is a daily mean and DWD an hourly
-instantaneous value.
+**Time bases (radiation and precipitation):** all sources are compared as
+a mean flux (radiation) or total (precipitation) over one UTC day in daily
+mode.  Timestamps are interval-end for ERA5-Land and Open-Meteo, so day D is
+the stamps `D 01:00 .. D+1 00:00`.
+
+- ERA5-Land `ssrd`/`tp` are stored raw (running total since 00 UTC; the 00:00
+  stamp holds the previous day's total).  Daily mode reads the next day's
+  00:00 stamp; hourly mode de-accumulates
+  (`datavia.library.temporal.deaccumulate_since_midnight`) and converts with
+  `period_s=3600`.  A day whose next-00:00 stamp is not in the store is
+  reported missing rather than approximated.
+- DWD (Open-Meteo) `shortwave_radiation` is the **mean of the preceding
+  hour** (not instantaneous); in daily mode it is averaged (precipitation:
+  summed) over the UTC day, and stations with fewer than 24 hourly values are
+  dropped.
+- HYRAS `rsds` is a daily mean over **00:00-24:00 UTC** (time stamp at 12:00,
+  bounds 00:00-00:00; verified in `rsds_hyras_5_2020_v3-1_de.nc`), so it
+  matches the UTC day above.
+- HYRAS `pr` covers **06:00-06:00 UTC** (time stamp = interval start), so its
+  daily totals are offset by 6 h from ERA5/DWD precipitation totals.  This is
+  not corrected; it needs hourly data or a deliberate convention.
+- `temporal_resolution="hourly"` through `GetterWeather.get_data` with a
+  single timestamp fails (`TypeError: only 0-dimensional arrays can be
+  converted to Python scalars`) for every variable, because the single-time
+  branch expects one value per coordinate but hourly mode returns 24.  This
+  predates the de-accumulation work; `interpolate_dataset` itself returns the
+  hourly array correctly.
 
 ---
 

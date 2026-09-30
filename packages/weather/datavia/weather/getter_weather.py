@@ -369,6 +369,16 @@ class GetterWeather(Getter):
             else np.full(n_coords, np.nan)
         )
 
+        # Accumulated variables (ERA5-Land tp/ssrd) are read as day totals in
+        # daily mode and as per-hour increments in hourly mode.
+        accumulated = variable in SOURCE_REGISTRY.get(self.source_name, {}).get(
+            "accumulated_variables", ()
+        )
+        period_s = (
+            3600.0 if accumulated and self._temporal_resolution == "hourly" else None
+        )
+        conv_kwargs = {} if period_s is None else {"period_s": period_s}
+
         # --- Gridded path ---
         if nc_files or has_zarr_grid:
             try:
@@ -377,7 +387,9 @@ class GetterWeather(Getter):
                 raw_batch = None
 
                 if has_zarr_grid:
-                    zarr_ds = _try_open_zarr(self.source_name, variable, from_dt, to_dt)
+                    zarr_ds = _try_open_zarr(
+                        self.source_name, variable, from_dt, to_dt, pad_day=accumulated
+                    )
                     if zarr_ds is not None:
                         with zarr_ds:
                             # Data was already gap-filled once at ingestion by
@@ -391,6 +403,7 @@ class GetterWeather(Getter):
                                 datetime_utc,
                                 input_crs=crs_coords,
                                 temporal_resolution=self._temporal_resolution,
+                                accumulated=accumulated,
                             )
                     elif nc_files:
                         # Zarr store not yet written (e.g. first run not completed or
@@ -413,6 +426,7 @@ class GetterWeather(Getter):
                             datetime_utc,
                             input_crs=crs_coords,
                             temporal_resolution=self._temporal_resolution,
+                            accumulated=accumulated,
                         )
                     elif not parquet_files:
                         raise RuntimeError(
@@ -433,6 +447,7 @@ class GetterWeather(Getter):
                         datetime_utc,
                         input_crs=crs_coords,
                         temporal_resolution=self._temporal_resolution,
+                        accumulated=accumulated,
                     )
 
                 if raw_batch is not None:
@@ -443,7 +458,11 @@ class GetterWeather(Getter):
                         if raw_arr.ndim == 2 and raw_arr.shape == (n_times, n_coords):
                             raw_arr = raw_arr.T  # (T, N) → (N, T)
                         converted = apply_conversion(
-                            self.source_name, variable, raw_arr, self._unit_overrides
+                            self.source_name,
+                            variable,
+                            raw_arr,
+                            self._unit_overrides,
+                            **conv_kwargs,
                         )
                         results = np.asarray(converted, dtype=float)
                     else:
@@ -457,6 +476,7 @@ class GetterWeather(Getter):
                                         variable,
                                         raw_val,
                                         self._unit_overrides,
+                                        **conv_kwargs,
                                     )
                                 )
             except RuntimeError:
@@ -479,6 +499,12 @@ class GetterWeather(Getter):
             self._raise_if_missing(results, variable, from_dt, to_dt)
             return results
 
+        station_aggregation = (
+            SOURCE_REGISTRY["DWD_stations"].get("daily_aggregation", {}).get(variable)
+            if self._temporal_resolution == "daily"
+            else None
+        )
+
         for i, coord in enumerate(coords_arr):
             lon, lat = float(coord[0]), float(coord[1])
             station_val: float | None = None
@@ -493,6 +519,7 @@ class GetterWeather(Getter):
                             variable,
                             datetime_utc,
                             radius_km,
+                            daily_aggregation=station_aggregation,
                         )
                     except Exception as exc:
                         logger.warning(
@@ -585,6 +612,7 @@ def _try_open_zarr(
     variable: str,
     from_dt: str,
     to_dt: str,
+    pad_day: bool = False,
 ) -> xr.Dataset | None:
     """Attempt to open the Zarr stores covering *from_dt*-*to_dt* for *variable*.
 
@@ -603,6 +631,11 @@ def _try_open_zarr(
         Start of the requested period (ISO date string ``YYYY-MM-DD``).
     to_dt : str
         End of the requested period (ISO date string ``YYYY-MM-DD``).
+    pad_day : bool, optional
+        Also open the years containing the day before *from_dt* and the day
+        after *to_dt*.  Needed for accumulated variables, whose day total sits
+        at the next day's 00:00 stamp and whose 00:00 increment needs the
+        previous day's 23:00 stamp.
 
     Returns
     -------
@@ -619,8 +652,9 @@ def _try_open_zarr(
     try:
         cfg = get_config()
         mgr = ZarrStoreManager(str(cfg.data_directory), source_name)
-        start_year = pd.Timestamp(from_dt).year
-        end_year = pd.Timestamp(to_dt).year
+        pad = pd.Timedelta(days=1 if pad_day else 0)
+        start_year = (pd.Timestamp(from_dt) - pad).year
+        end_year = (pd.Timestamp(to_dt) + pad).year
         years = list(range(start_year, end_year + 1))
         return mgr.open_multi_year(variable, years)
     except FileNotFoundError:
