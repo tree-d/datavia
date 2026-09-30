@@ -255,7 +255,7 @@ def main() -> None:
         import datetime
         for pipeline in datavia.pipelines:
             try:
-                if pipeline.name == "weather":
+                if hasattr(pipeline, "get_weather_data"):
                     # WeatherPipeline.get_data() requires 'variable' and
                     # 'datetime_utc' kwargs; use get_weather_data() instead.
                     temp = pipeline.get_weather_data(
