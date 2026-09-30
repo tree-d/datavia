@@ -6,6 +6,7 @@ manages the lifecycle of registered pipelines.
 
 Example
 -------
+>>> import numpy as np
 >>> from datavia import Datavia
 >>> from datavia.elevation import ElevationPipeline
 >>>
@@ -28,8 +29,21 @@ from .interfaces import Pipeline
 class Datavia:
     """Main Datavia controller class.
 
-    This replaces the old UpdateManager and becomes the central controller
-    for managing data integration pipelines.
+    Groups several pipelines under one object.  After calling the instance
+    (``dv()``), each pipeline is available as an attribute named after its
+    :attr:`~datavia.core.interfaces.Pipeline.name`, which is the pipeline's
+    ``config["source"]``:
+
+    - ``ElevationPipeline()`` → ``dv.elevation``
+    - ``SoilPipeline()`` → ``dv.soil``;
+      ``SoilPipeline({"source": "mysoil"})`` → ``dv.mysoil``
+    - ``WeatherPipeline({"source": "ERA5_land", ...})`` → ``dv.ERA5_land``
+
+    The attributes do not exist until ``dv()`` has been called.  Two
+    pipelines with the same name overwrite each other.
+
+    Using ``Datavia`` is optional.  Each pipeline also works on its own, e.g.
+    ``ElevationPipeline().update_data()``.
 
     Parameters
     ----------
@@ -55,6 +69,9 @@ class Datavia:
     def __call__(self) -> "Datavia":
         """Initialise the database and register pipelines without starting them.
 
+        Creates the metadata database and data directory if they do not
+        exist yet (see :mod:`datavia.config`).  No network access happens.
+
         Each pipeline's downloader, saver, and getter are constructed lazily
         on the first call to ``update_data`` or ``get_data``, so importing or
         creating a :class:`Datavia` instance does not trigger any network I/O
@@ -73,5 +90,13 @@ class Datavia:
         return self
 
     def add_pipeline(self, pipeline: Pipeline) -> None:
-        """Add a pipeline to the Datavia controller."""
+        """Register *pipeline* as the attribute ``self.<pipeline.name>``.
+
+        Parameters
+        ----------
+        pipeline : Pipeline
+            Pipeline instance to expose.  It is not initialised here; its
+            components are built on its first ``update_data`` / ``get_data``
+            call.
+        """
         self.__setattr__(pipeline.name, pipeline)

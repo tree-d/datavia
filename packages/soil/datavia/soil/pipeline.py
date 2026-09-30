@@ -13,7 +13,8 @@ HiHydroSoil (HTTP GeoTIFF catalogue, vsicurl streaming):
 
 Both sources are managed through a single SoilPipeline instance backed by a
 CompositeDownloader that routes each coverage ID to the correct remote service.
-All data is registered as individual single-band GeoTIFF layers in PostGIS.
+Each coverage is stored as its own single-band GeoTIFF and registered in the
+metadata database (SQLite by default, PostgreSQL optional).
 Downloads are incremental: only missing coverages are fetched on each call.
 
 Planned extensions:
@@ -147,6 +148,82 @@ class SoilPipeline(Pipeline):
     Downloads are incremental: only coverage IDs not yet present in the data
     directory are fetched. Manual file deletions are reconciled automatically
     before each update.
+
+    When registered with :class:`~datavia.core.datavia.Datavia`, the
+    pipeline is reachable as ``dv.<source>`` (``dv.soil`` by default).
+
+    **Depths** (``depths`` applies to every requested property):
+
+    - SoilGrids: ``"0-5cm"``, ``"5-15cm"``, ``"15-30cm"``, ``"30-60cm"``,
+      ``"60-100cm"``, ``"100-200cm"``; ``"0-30cm"`` for ``ocs`` only.
+    - HiHydroSoil: ``"0-5cm"``, ``"5-15cm"``, ``"15-30cm"``, ``"30-60cm"``,
+      ``"60-100cm"``, ``"100-200cm"``.
+    - Pipeline default: ``["0-5cm", "5-15cm"]``.
+
+    **Statistic**: SoilGrids accepts ``"mean"``, ``"Q0.05"``, ``"Q0.5"``,
+    ``"Q0.95"``, and ``"uncertainty"``.  HiHydroSoil has ``"mean"`` only.
+    The config key is ``statistic``; the per-call argument in
+    :meth:`update_data`, :meth:`get_data`, and :meth:`reconfigure` is named
+    ``value``.
+
+    **Units**: values are returned exactly as stored upstream, with **no
+    rescaling**.  Divide by the factor to get conventional units:
+
+    .. list-table::
+       :header-rows: 1
+
+       * - Property
+         - Raw unit
+         - Divide by
+         - Conventional unit
+       * - ``clay``, ``sand``, ``silt``
+         - g/kg
+         - 10
+         - %
+       * - ``ph``
+         - pH x 10
+         - 10
+         - pH
+       * - ``carbon``
+         - dg/kg
+         - 10
+         - g/kg
+       * - ``bdod``
+         - cg/cm³
+         - 100
+         - kg/dm³
+       * - ``cec``
+         - mmol(c)/kg
+         - 10
+         - cmol(c)/kg
+       * - ``cfvo``
+         - cm³/dm³
+         - 10
+         - vol %
+       * - ``nitrogen``
+         - cg/kg
+         - 100
+         - g/kg
+       * - ``ocd``
+         - hg/m³
+         - 10
+         - kg/m³
+       * - ``ocs``
+         - t/ha
+         - 10
+         - kg/m²
+       * - ``wv0010``, ``wv0033``, ``wv1500``
+         - 10⁻³ cm³/cm³
+         - 10
+         - vol %
+       * - ``field_capacity``, ``wilting_point``, ``porosity``
+         - cm³/cm³ x 10⁴
+         - 10 000
+         - cm³/cm³
+       * - ``hydraulic_conductivity``
+         - cm/day x 10⁴
+         - 10 000
+         - cm/day
 
     Class-level alias tables are the single source of truth for translating
     between source API names (e.g. ``"soc"``, ``"WCpF2"``) and the canonical

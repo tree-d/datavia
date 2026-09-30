@@ -22,7 +22,7 @@ Available pipeline packages:
 * **Elevation Pipeline** (``datavia[elevation]``): German BKG DGM200 (200 m resolution)
 * **Soil Pipeline** (``datavia[soil]``): SoilGrids (WCS) + HiHydroSoil (HTTP GeoTIFF) — incremental download per coverage
 * **Weather Pipeline** (``datavia[weather]``): ERA5-Land (CDS API), HYRAS, and DWD station data —
-  temperature, precipitation, solar radiation, humidity, and wind speed.
+  temperature, precipitation, solar radiation, and relative humidity.
   Radiation (``surface_solar_radiation_downwards``) is available as a variable within this pipeline
   via ERA5 (``ssrd``) and HYRAS (``rsds``); no separate radiation pipeline is required.
 

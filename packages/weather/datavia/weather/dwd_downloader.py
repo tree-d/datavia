@@ -142,7 +142,7 @@ class DWDStationDownloader(APIDownloader):
         self.stations: list[dict[str, Any]] = stations or _DEFAULT_STATIONS
 
     def download(self) -> str:
-        """Fetch DWD station observations and return path to a Parquet file.
+        """Fetch Open-Meteo hourly data at the stations; return the Parquet path.
 
         Queries the Open-Meteo historical API for each configured station and
         combines all results into a single DataFrame, which is then written to

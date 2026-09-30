@@ -13,8 +13,9 @@ downloader auto-discovers the current version string (e.g. ``v6-1``) from
 the DWD HTML directory listing so that version bumps are handled without
 code changes.
 
-HYRAS data is already in target units (°C, mm/day, W/m²) and does not
-require unit conversion — see :data:`~datavia.weather.source_registry.SOURCE_REGISTRY`.
+HYRAS data is already in target units (°C, mm/day, %), except radiation,
+which is converted from W/m² to PAR at query time.  See
+:data:`~datavia.weather.source_registry.SOURCE_REGISTRY`.
 """
 
 import logging

@@ -59,8 +59,8 @@ class SaverWeather(Saver):
     Parameters
     ----------
     source_name : str
-        Unique identifier for the data source, e.g. ``"era5"`` or
-        ``"dwd_stations"``.
+        Unique identifier for the data source, e.g. ``"ERA5_land"`` or
+        ``"DWD_stations"``.
     """
 
     def __init__(self, source_name: str) -> None:

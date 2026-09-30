@@ -104,9 +104,7 @@ _ERA5_LAND_LON_MAX: float = 15.6
 #:     }
 #:
 #: ``grid_downloader`` is ``None`` for ``"DWD_stations"`` because that source
-#: has no gridded component, and also for ``"HYRAS"`` until
-#: :class:`~datavia.weather.hyras_downloader.HYRASDownloader` is implemented
-#: (Phase D).
+#: has no gridded component.
 SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
     "ERA5_land": {
         "grid_downloader": ERA5Downloader,
@@ -249,8 +247,7 @@ def get_grid_downloader_class(source_name: str) -> type[Downloader] | None:
     -------
     type[Downloader] or None
         The downloader class, or ``None`` when the source has no gridded
-        component (``"DWD_stations"``) or when the class has not yet been
-        implemented (``"HYRAS"`` before Phase D).
+        component (``"DWD_stations"``).
 
     Raises
     ------

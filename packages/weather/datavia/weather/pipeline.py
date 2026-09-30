@@ -17,8 +17,12 @@ pipelines with different sources (e.g. ``"ERA5_land"`` and ``"HYRAS"``) write
 to separate ``source_name`` entries in the database and never shadow each
 other.
 
+See :class:`WeatherPipeline` for the full list of sources, variables, config
+keys, and output units.
+
 Usage::
 
+    import numpy as np
     from datavia.weather import WeatherPipeline
 
     pipe = WeatherPipeline(config={
@@ -28,11 +32,20 @@ Usage::
         "date_end":   "2024-06-30",
     })
     pipe.update_data()
+
+    # One point, one day -> float (degC).
     value = pipe.get_weather_data(
         lat=52.5,
         lon=13.4,
         variable="2m_temperature",
-        datetime_utc="2024-06-15T12:00:00",
+        datetime_utc="2024-06-15",
+    )
+
+    # N points x T days -> array of shape (N, T) (mm per day).
+    coords = np.array([[13.4, 52.5], [11.58, 48.14]])  # [lon, lat]
+    days = ["2024-06-10", "2024-06-11", "2024-06-12"]
+    precip = pipe.get_data(
+        coords, variable="total_precipitation", datetime_utc=days
     )
 """
 
@@ -151,21 +164,156 @@ class WeatherPipeline(Pipeline):
 
     The pipeline name is taken from ``config["source"]`` and is used as the
     ``source_name`` for all database entries, allowing multiple pipelines with
-    different sources to coexist without collision.
+    different sources to coexist without collision.  When registered with
+    :class:`~datavia.core.datavia.Datavia`, the pipeline is reachable under
+    that name, e.g. ``dv.ERA5_land`` or ``dv.HYRAS``.
+
+    Construction only validates the config; no network access happens until
+    :meth:`update_data`.  :meth:`update_data` downloads only the parts of the
+    requested bbox and date range that are not already stored, so it is safe
+    to call repeatedly.  Querying (:meth:`get_data`, :meth:`get_weather_data`)
+    reads whatever has been downloaded and is not limited to the configured
+    dates.
+
+    **Sources**
+
+    .. list-table::
+       :header-rows: 1
+
+       * - ``source``
+         - Data
+         - Valid ``variables``
+         - Credentials
+       * - ``"ERA5_land"``
+         - Copernicus ERA5-Land hourly reanalysis, 0.1° grid (EPSG:4326).
+         - ``2m_temperature``, ``total_precipitation``,
+           ``surface_solar_radiation_downwards``
+         - ``~/.cdsapirc`` with a CDS API key
+           (https://cds.climate.copernicus.eu/how-to-api).
+       * - ``"HYRAS"``
+         - DWD HYRAS daily observational grids for Germany (EPSG:3035).
+           Daily only.
+         - ``2m_temperature``, ``temperature_2m_max``,
+           ``temperature_2m_min``, ``total_precipitation``,
+           ``surface_solar_radiation_downwards``, ``relative_humidity_2m``
+         - None (DWD OpenData).
+       * - ``"DWD_stations"``
+         - Hourly Open-Meteo **model output** at station coordinates (not
+           station observations; see
+           :mod:`~datavia.weather.dwd_downloader`).
+         - ``2m_temperature``, ``total_precipitation``,
+           ``surface_solar_radiation_downwards``, ``relative_humidity_2m``
+         - None.
+
+    Variables are checked at construction for ``"ERA5_land"`` and
+    ``"HYRAS"``.  For ``"DWD_stations"`` an unsupported variable raises
+    ``ValueError`` on the first :meth:`update_data` call instead.
+
+    **Output units** (after the automatic conversion; override with
+    ``unit_conversions``)
+
+    .. list-table::
+       :header-rows: 1
+
+       * - Variable
+         - Unit
+         - ``"daily"`` value
+       * - ``2m_temperature``, ``temperature_2m_max``, ``temperature_2m_min``
+         - °C
+         - Daily mean (max / min for the HYRAS extremes)
+       * - ``total_precipitation``
+         - mm
+         - Total over the 06-06 UTC precipitation day
+       * - ``surface_solar_radiation_downwards``
+         - PAR photon flux, µmol m⁻² s⁻¹ (50 % of shortwave, x 4.57)
+         - Mean flux over the day
+       * - ``relative_humidity_2m``
+         - %
+         - Daily mean
+
+    In ``"hourly"`` mode each value is the one at that hour; precipitation
+    is the amount (mm) that fell during the hour.
+
+    **Config keys**
+
+    .. list-table::
+       :header-rows: 1
+
+       * - Key
+         - Type / default
+         - Meaning
+       * - ``source``
+         - str, **required**
+         - One of the sources above.  Becomes the pipeline :attr:`name`;
+           cannot be changed with :meth:`reconfigure`.
+       * - ``variables``
+         - list[str], **required**
+         - Variables to download; see the sources table.
+       * - ``date_start``, ``date_end``
+         - str ``"YYYY-MM-DD"``, **required**
+         - First and last day to download (both inclusive, UTC).
+       * - ``temporal_resolution``
+         - ``"daily"`` (default) or ``"hourly"``
+         - How queries aggregate over time (see output units).
+           ``"HYRAS"`` supports ``"daily"`` only; ``"hourly"`` raises
+           ``ValueError`` on the first :meth:`update_data` call.
+       * - ``era5_bbox``
+         - list[float], ERA5 only.  Default: Germany,
+           ``[55.1, 5.9, 47.3, 15.0]``
+         - Download area as ``[north, west, south, east]`` in degrees
+           (CDS order, **not** west/south/east/north).  Edges snap to the
+           0.1° grid.  Must lie within lat 47.0-55.6 °N and
+           lon 5.4-15.5 °E (± 0.05°), otherwise ``ValueError`` at
+           construction.
+       * - ``dwd_stations``
+         - list[dict], optional
+         - Station locations as
+           ``[{"id": "Berlin", "latitude": 52.52, "longitude": 13.41}, ...]``.
+           ``id`` is any unique label.  For ``"ERA5_land"`` / ``"HYRAS"``,
+           including this key also downloads station data.  That data is
+           blended with the gridded value at query time (see
+           *station_weight* in :meth:`get_weather_data`), but **only for
+           single-timestamp queries**.  A list-valued ``datetime_utc``
+           returns gridded values only.  For ``"DWD_stations"`` the key
+           defaults to five stations: Berlin, Munich, Hamburg, Frankfurt,
+           and Cologne.
+       * - ``unit_conversions``
+         - dict, optional
+         - Per-variable override of the output conversion, e.g.
+           ``{"2m_temperature": {"from": "K", "to": "degC"}}``.  Supported
+           pairs: ``K→degC``, ``m→mm``, ``J_m2→PAR``, ``W_m2→PAR``.
+       * - ``buffer_days``
+         - int, default ``1``, ERA5 only
+         - ``0`` disables the small extra CDS requests just outside the date
+           range.  Without them, precipitation and radiation are missing for
+           the first hour and the last day of the range.
+       * - ``chunk_by``
+         - ``"monthly"`` (default), ``"quarterly"``, ``"yearly"``,
+           ``"none"``; ERA5 only
+         - How the date range is split into CDS jobs.  See
+           :class:`~datavia.weather.era5_downloader.ERA5Downloader`.
+       * - ``cds_queue_timeout``
+         - int seconds, default ``None`` (wait forever); ERA5 only
+         - Cancel a CDS job that stays queued longer than this.
+
+    Any other key raises ``ValueError`` at construction.  Downloaded files
+    are stored under ``get_config().data_directory`` (``~/.datavia/`` by
+    default; see :mod:`datavia.config`).
 
     Parameters
     ----------
     config : dict[str, Any]
-        Pipeline configuration.  Required keys: ``source``, ``variables``,
-        ``date_start``, ``date_end``.  Optional keys: ``era5_bbox``,
-        ``dwd_stations``, ``unit_conversions``, ``buffer_days``,
-        ``temporal_resolution``.
+        Pipeline configuration; see **Config keys** above.
     replace : bool, optional
-        When ``True`` the stored config is completely replaced by *config* on
-        construction.  When ``False`` (default) the config is merged with any
-        previously stored values — this matches the behaviour of
-        :meth:`reconfigure`.  For a freshly created instance both values are
-        equivalent because there is no prior config.
+        Currently has no effect.  A new instance has no stored config, so
+        *config* is used as given.  It exists so that the signature matches
+        :meth:`reconfigure`.  Defaults to ``False``.
+
+    Raises
+    ------
+    ValueError
+        If required keys are missing, unknown keys are present, a variable is
+        not valid for the source, or ``era5_bbox`` lies outside the ERA5 grid.
     """
 
     def __init__(self, config: dict[str, Any], replace: bool = False) -> None:
@@ -183,9 +331,7 @@ class WeatherPipeline(Pipeline):
             ``source`` (e.g. ``"ERA5_land"``, ``"HYRAS"``) becomes the
             pipeline's ``name`` and the ``source_name`` stored in the database.
         replace : bool, optional
-            Reserved for future use when upgrading an existing instance.
-            Currently unused during initial construction; included so that
-            :meth:`reconfigure` can pass the flag consistently.
+            Currently has no effect; see the class docstring.
             Defaults to ``False``.
 
         Raises
@@ -652,17 +798,32 @@ class WeatherPipeline(Pipeline):
         variable : str
             Variable name, e.g. ``"2m_temperature"``.
         datetime_utc : datetime-like
-            Target UTC timestamp.
+            Target UTC timestamp, e.g. ``"2024-06-15"`` or
+            ``"2024-06-15T12:00:00Z"``.  In ``"daily"`` mode only the date
+            matters; see the output-units table on :class:`WeatherPipeline`.
         radius_km : float, optional
-            Station search radius in km. Defaults to 50 km.
+            Search radius in km for station data (only used when
+            ``dwd_stations`` data has been downloaded). Defaults to 50 km.
         station_weight : float, optional
-            Blending weight for station data. Defaults to 0.6.
+            Weight of the station estimate in ``[0, 1]`` when blending with
+            the gridded value: ``w * station + (1 - w) * gridded``.
+            Defaults to 0.6.
 
         Returns
         -------
         float
-            Interpolated value at the given coordinate and time.
-            ``float("nan")`` when no data is available.
+            Value at the given coordinate and time, in the units listed on
+            :class:`WeatherPipeline`.
+
+        Raises
+        ------
+        ValueError
+            If *variable* or *datetime_utc* is empty.
+        RuntimeError
+            If nothing has been downloaded for *variable* yet.
+        ~datavia.weather.getter_weather.MissingWeatherDataError
+            If the point or time lies outside the downloaded coverage.
+            Subclass of ``RuntimeError``.
         """
         if not self.getter:
             self()
@@ -708,13 +869,31 @@ class WeatherPipeline(Pipeline):
         band : int, optional
             Accepted for interface compatibility; not used. Defaults to 1.
         **kwargs : Any
-            Forwarded to :meth:`GetterWeather.get_data`. Required:
-            ``variable`` and ``datetime_utc``.
+            Forwarded to
+            :meth:`~datavia.weather.getter_weather.GetterWeather.get_data`:
+
+            - ``variable`` (str, **required**): e.g. ``"2m_temperature"``.
+            - ``datetime_utc`` (**required**): one UTC timestamp, or a list
+              of T timestamps for a time series.
+            - ``radius_km``, ``station_weight`` (float, optional): as in
+              :meth:`get_weather_data`.  Only used for a single timestamp.
 
         Returns
         -------
         np.ndarray
-            Shape ``(N,)`` array of interpolated values.
+            Shape ``(N,)`` for a single timestamp, ``(N, T)`` for a list of
+            T timestamps (rows are coordinates).  Units as listed on
+            :class:`WeatherPipeline`.
+
+        Raises
+        ------
+        ValueError
+            If ``variable`` or ``datetime_utc`` is missing.
+        RuntimeError
+            If nothing has been downloaded for ``variable`` yet.
+        ~datavia.weather.getter_weather.MissingWeatherDataError
+            If any point or time lies outside the downloaded coverage.
+            Subclass of ``RuntimeError``.
         """
         if not self.getter:
             self()

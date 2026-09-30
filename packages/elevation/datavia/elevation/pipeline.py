@@ -42,6 +42,24 @@ class ElevationPipeline(Pipeline):
 
     Passing ``config=None`` (or calling with no arguments) is equivalent to
     ``config={"source": "elevation"}`` with all defaults applied.
+
+    When registered with :class:`~datavia.core.datavia.Datavia`, the
+    pipeline is reachable as ``dv.<source>`` (``dv.elevation`` by default).
+
+    The default dataset is the BKG DGM200: 200 m resolution, Germany only,
+    native CRS EPSG:25832.  :meth:`get_data` returns elevation in metres
+    above sea level, as a ``(N,)`` array.  Points outside the raster give
+    ``nan``.
+
+    Usage::
+
+        import numpy as np
+        from datavia.elevation import ElevationPipeline
+
+        pipe = ElevationPipeline()
+        pipe.update_data()
+        coords = np.array([[13.405, 52.52], [11.58, 48.14]])  # [lon, lat]
+        heights = pipe.get_data(coords, crs_coords="EPSG:4326")
     """
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:
@@ -85,6 +103,13 @@ class ElevationPipeline(Pipeline):
            and re-registers orphan disk files with no DB record.
         2. Ask the Getter which layers are already stored (DB read).
         3. Download and save only when no data exists yet.
+
+        Because of step 3, once any layer is stored for this source, later
+        calls do nothing, even if ``url`` has changed.  To force a fresh
+        download, delete the source's GeoTIFF from
+        ``get_config().data_directory``.  The next call removes the stale
+        database row and downloads again.  Alternatively, use a new
+        ``source`` name.
 
         Parameters
         ----------

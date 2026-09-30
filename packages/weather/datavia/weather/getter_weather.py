@@ -629,7 +629,13 @@ class GetterWeather(Getter):
         -------
         float
             Interpolated value at the given coordinate and time.
-            ``float("nan")`` when no data is available.
+
+        Raises
+        ------
+        RuntimeError
+            If no weather files are found for the requested variable / time.
+        MissingWeatherDataError
+            If the point or time lies outside the downloaded coverage.
         """
         coords = np.array([[lon, lat]])
         result = self.get_data(

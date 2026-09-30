@@ -283,7 +283,7 @@ def get_weather_paths(
     Parameters
     ----------
     source_name : str
-        Source identifier, e.g. ``"era5"`` or ``"dwd_stations"``.
+        Source identifier, e.g. ``"ERA5_land"`` or ``"DWD_stations"``.
     variable : str
         Variable name, e.g. ``"2m_temperature"``.
     from_dt : str

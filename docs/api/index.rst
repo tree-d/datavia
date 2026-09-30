@@ -81,6 +81,44 @@ Database Integration
 Weather Pipeline
 ----------------
 
+.. automodule:: datavia.weather.pipeline
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Weather Sources and Units
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. automodule:: datavia.weather.source_registry
+   :members:
+   :undoc-members:
+
+Weather Downloaders
+~~~~~~~~~~~~~~~~~~~
+
+.. automodule:: datavia.weather.composite_downloader
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: datavia.weather.era5_downloader
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: datavia.weather.hyras_downloader
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: datavia.weather.dwd_downloader
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Weather Storage and Retrieval
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 .. automodule:: datavia.weather.zarr_store_manager
    :members:
    :undoc-members:
