@@ -378,10 +378,13 @@ DATAVIA_E2E=1 pytest tests/test_weather_e2e.py::TestERA5E2E -v
 
 ## Zarr store backend
 
-Downloaded gridded data (HYRAS, ERA5-Land) can be persisted to
-[Zarr v3](https://zarr.readthedocs.io/en/stable/) stores in addition to the
-original NetCDF files.  The Zarr backend is managed by `ZarrStoreManager` and
-exposed through `SaverWeather.save_zarr()`.
+Gridded data (HYRAS, ERA5-Land) is stored in
+[Zarr v3](https://zarr.readthedocs.io/en/stable/) stores managed by
+`ZarrStoreManager`.  `update_data()` writes each downloaded NetCDF file
+straight into the store; no `.nc` copy is kept.  Leftover `<source>_*.nc`
+files in the data directory are migrated into the store (and deleted) on the
+next `update_data()`.  To ingest a file you downloaded yourself, see
+[Ingesting a NetCDF file manually](#ingesting-a-netcdf-file-manually).
 
 ### Store layout
 
@@ -396,8 +399,8 @@ Each *(source, variable, year)* triplet occupies one Zarr directory store:
 ```
 
 Stores use Blosc + zstd level-3 compression and chunks of
-`{time: 720, lat: 5, lon: 5}` (hourly sources) or
-`{time: 365, lat: 10, lon: 10}` (daily sources).
+`{time: 720, latitude: 5, longitude: 5}` (ERA5-Land, hourly, EPSG:4326) or
+`{time: 365, y: 10, x: 10}` (HYRAS, daily, EPSG:3035).
 
 ### Write safety
 
@@ -419,25 +422,33 @@ database rows from the actual on-disk data:
 ```python
 from datavia.weather.coverage_manager import CoverageManager
 
-mgr = CoverageManager(source_name="ERA5_land")
+mgr = CoverageManager(source_name="ERA5_land", variables=["2m_temperature"])
 rows_inserted = mgr.rebuild_from_store("2m_temperature")
 print(f"{rows_inserted} rows rebuilt")
 ```
 
-### Saving data to Zarr
+### Ingesting a NetCDF file manually
+
+`SaverWeather.save_nc_to_zarr()` writes every variable in the file into the
+store and leaves the file untouched.  It does not register coverage in the
+database, so rebuild it afterwards; otherwise the next `update_data()`
+downloads the same period again.
 
 ```python
 from datavia.weather.saver_weather import SaverWeather
+from datavia.weather.coverage_manager import CoverageManager
 
-saver = SaverWeather(source_name="ERA5_land", data_dir="/data/weather")
-saver.save_zarr(nc_path="/data/weather/era5_2024.nc", variable="2m_temperature")
+saver = SaverWeather("ERA5_land")
+ok = saver.save_nc_to_zarr("/path/to/era5_2024.nc")  # True on success
+
+CoverageManager("ERA5_land", ["2m_temperature"]).rebuild_from_store("2m_temperature")
 ```
 
 ### Zarr-first data access
 
-`GetterWeather.get_data()` automatically prefers Zarr stores over NetCDF files
-when available, falling back to NetCDF if no Zarr store covers the requested
-time window.  No API change is required — the routing is transparent.
+For Zarr-enabled sources, `GetterWeather.get_data()` reads from the Zarr
+stores.  It falls back to registered NetCDF files only when no store exists
+yet for the requested years.
 
 
 

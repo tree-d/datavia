@@ -297,8 +297,9 @@ class WeatherPipeline(Pipeline):
          - Cancel a CDS job that stays queued longer than this.
 
     Any other key raises ``ValueError`` at construction.  Downloaded files
-    are stored under ``get_config().data_directory`` (``~/.datavia/`` by
-    default; see :mod:`datavia.config`).
+    are stored under ``get_config().data_directory``.  By default that is
+    ``<cwd>/.datavia/data/``; with ``storage = global`` it is
+    ``~/.datavia/data/`` (see :mod:`datavia.config`).
 
     Parameters
     ----------
