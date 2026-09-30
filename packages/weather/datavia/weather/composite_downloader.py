@@ -87,7 +87,7 @@ class CompositeWeatherDownloader(CompositeDownloader):
         super().__init__()
         cfg = config or {}
         source: str = cfg.get("source", "ERA5_land")
-        variables: list[str] = cfg.get("variables", ["temperature_2m"])
+        variables: list[str] = cfg.get("variables", ["2m_temperature"])
         date_start: str | None = cfg.get("date_start")
         date_end: str | None = cfg.get("date_end")
 
