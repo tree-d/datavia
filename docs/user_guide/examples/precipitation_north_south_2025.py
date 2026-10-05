@@ -18,7 +18,8 @@ Researchers use this kind of transect to validate model output and to
 calibrate drought-index baselines.
 
 **Data note** — this script queries 365 days × 8 sites = 2 920 values from
-a single on-disk NetCDF file; no network access is required.
+the local Zarr store.  The initial ``update_data()`` call downloads HYRAS data
+when it is not already cached.
 
 Run::
 
