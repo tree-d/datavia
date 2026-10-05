@@ -210,9 +210,8 @@ class CompositeWeatherDownloader(CompositeDownloader):
                 paths.extend(p for p in grid_path.splitlines() if p and p != "failed")
             except (ImportError, RuntimeError) as exc:
                 logger.warning(
-                    "CompositeWeatherDownloader: grid download skipped (%s). "
-                    "Continuing with DWD station data only. "
-                    "To enable ERA5, install cdsapi and create ~/.cdsapirc.",
+                    "CompositeWeatherDownloader: grid download failed (%s). "
+                    "Hint: To enable ERA5, install cdsapi and create ~/.cdsapirc.",
                     exc,
                 )
 
