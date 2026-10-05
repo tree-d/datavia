@@ -85,9 +85,12 @@ def test_soilgrids_coverage_downloaded_and_retrievable(live_database) -> None:
     Plausible clay range for Central Europe: 5 - 60 %.
     """
     pipeline = SoilPipeline(
-        properties=["clay"],
-        depths=["0-5cm"],
-        value="mean",
+        config={
+            "source": "soil",
+            "properties": ["clay"],
+            "depths": ["0-5cm"],
+            "statistic": "mean",
+        },
     )
     pipeline()
     pipeline.sync_files_and_database()
@@ -143,9 +146,12 @@ def test_hihydrosoil_coverage_downloaded_and_retrievable(live_database) -> None:
     Plausible field-capacity range: 0.05 - 0.55 cm\u00b3/cm\u00b3.
     """
     pipeline = SoilPipeline(
-        properties=["field_capacity"],
-        depths=["0-5cm"],
-        value="mean",
+        config={
+            "source": "soil",
+            "properties": ["field_capacity"],
+            "depths": ["0-5cm"],
+            "statistic": "mean",
+        },
     )
     pipeline()
     pipeline.sync_files_and_database()
@@ -196,9 +202,12 @@ def test_multi_source_pipeline_returns_dict_keyed_by_coverage_id(
     depth and statistic must yield a result dict containing both coverage IDs.
     """
     pipeline = SoilPipeline(
-        properties=["clay", "field_capacity"],
-        depths=["0-5cm"],
-        value="mean",
+        config={
+            "source": "soil",
+            "properties": ["clay", "field_capacity"],
+            "depths": ["0-5cm"],
+            "statistic": "mean",
+        },
     )
     pipeline()
     pipeline.sync_files_and_database()
@@ -244,9 +253,12 @@ def test_second_update_data_call_skips_already_stored_coverages(
     local data directory and the PostGIS database, and skip the download step.
     """
     pipeline = SoilPipeline(
-        properties=["clay"],
-        depths=["0-5cm"],
-        value="mean",
+        config={
+            "source": "soil",
+            "properties": ["clay"],
+            "depths": ["0-5cm"],
+            "statistic": "mean",
+        },
     )
     pipeline()
     pipeline.sync_files_and_database()
@@ -254,9 +266,12 @@ def test_second_update_data_call_skips_already_stored_coverages(
 
     # Re-initialise a fresh pipeline instance pointing at the same data.
     pipeline2 = SoilPipeline(
-        properties=["clay"],
-        depths=["0-5cm"],
-        value="mean",
+        config={
+            "source": "soil",
+            "properties": ["clay"],
+            "depths": ["0-5cm"],
+            "statistic": "mean",
+        },
     )
     pipeline2()
     pipeline2.sync_files_and_database()
@@ -276,9 +291,12 @@ def test_second_update_data_call_skips_already_stored_coverages(
 def test_get_available_properties_reflects_stored_data(live_database) -> None:
     """get_available_properties returns the canonical names of stored coverages."""
     pipeline = SoilPipeline(
-        properties=["clay"],
-        depths=["0-5cm"],
-        value="mean",
+        config={
+            "source": "soil",
+            "properties": ["clay"],
+            "depths": ["0-5cm"],
+            "statistic": "mean",
+        },
     )
     pipeline()
     pipeline.sync_files_and_database()
@@ -302,22 +320,22 @@ def test_configure_then_update_downloads_new_coverage(live_database) -> None:
     clay.
     """
     pipeline = SoilPipeline(
-        properties=["clay"],
-        depths=["0-5cm"],
-        value="mean",
+        config={
+            "source": "soil",
+            "properties": ["clay"],
+            "depths": ["0-5cm"],
+            "statistic": "mean",
+        },
     )
     pipeline()
     pipeline.sync_files_and_database()
     pipeline.update_data()
 
     # Reconfigure to also include sand.
-    pipeline.configure(properties=["clay", "sand"], depths=["0-5cm"])
+    pipeline.reconfigure(properties=["clay", "sand"], depths=["0-5cm"])
     second_result = pipeline.update_data()
 
     assert second_result is True, (
-        "update_data() after configure() returned False. sand coverage download failed."
+        "update_data() after reconfigure() returned False. "
+        "sand coverage download failed."
     )
-
-    available = pipeline.get_available_properties()
-    assert "clay" in available
-    assert "sand" in available

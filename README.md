@@ -19,8 +19,8 @@ Datavia is designed for researchers who need efficient integration of multiple g
 ### Available Pipelines (Modular Installation)
 
 - **📈 Elevation Pipeline** (`datavia[elevation]`): BKG DGM200 (200m resolution German elevation model)
-- **🌱 Soil Pipeline** (`datavia[soil]`): Still under construction - SoilGrids API integration with selective download strategy
-- **🌤️ Weather Pipeline** (`datavia[weather]`): Planned - DWD weather data integration
+- **🌱 Soil Pipeline** (`datavia[soil]`): SoilGrids + HiHydroSoil integration with selective download strategy
+- **🌤️ Weather Pipeline** (`datavia[weather]`): Available — HYRAS daily gridded data (precipitation, temperature) + DWD station data + ERA5-Land hourly reanalysis; Zarr v3 storage backend with per-store write safety and automatic DB reconciliation
 - **☀️ Radiation Pipeline**: Planned - CAMS radiation data
 
 Each pipeline is a separate, optional package that extends the core system with specific data source capabilities.
@@ -40,6 +40,7 @@ pip install datavia
 # Install with specific pipelines (downloads additional packages)
 pip install datavia[elevation]     # Core + elevation pipeline code
 pip install datavia[soil]          # Core + soil pipeline code  
+pip install datavia[weather]       # Core + weather pipeline code
 pip install datavia[elevation,soil] # Core + multiple pipelines
 
 # or use this (as datavia is dependency of the pipeline packages)
@@ -77,6 +78,17 @@ pixi add --pypi datavia[soil]
 # Vector support (requires GDAL from conda-forge in your pixi.toml)
 pixi add gdal -c conda-forge
 pixi add --pypi datavia[vector]
+```
+
+#### Option 3: pixi (GitHub as source)
+```bash
+# Core system
+pixi add --git https://github.com/tree-d/datavia --branch main --pypi datavia
+
+# Pipelines
+pixi add --git https://github.com/tree-d/datavia --branch main --subdirectory packages/elevation --pypi datavia-elevation
+pixi add --git https://github.com/tree-d/datavia --branch main --subdirectory packages/soil --pypi datavia-soil
+pixi add --git https://github.com/tree-d/datavia --branch main --subdirectory packages/weather --pypi datavia-weather
 ```
 
 ### Basic Setup
@@ -131,9 +143,9 @@ pixi add --pypi datavia[vector]
    # 4. Query values at coordinates [longitude, latitude] in WGS84.
    #    Returns a numpy array of shape (N,) — one value per coordinate.
    #    Other CRS are supported via crs_coords, e.g. "EPSG:25832".
-   coords = np.array([[10.0, 50.0]])          # [lon, lat]
+   coords = np.array([[10.0, 50.0]])  # [lon, lat]
    elevation_data = dv.elevation.get_data(coords, crs_coords="EPSG:4326")
-   print(elevation_data)                      # e.g. [471.3]
+   print(elevation_data)  # e.g. [471.3]
    ```
 
 
@@ -165,9 +177,12 @@ datavia/                          # Repository root
 │   ├── elevation/               # datavia-elevation package
 │   │   ├── pyproject.toml
 │   │   └── datavia/elevation/   # Elevation pipeline code
-│   └── soil/                    # datavia-soil package
+│   ├── soil/                    # datavia-soil package
+│   │   ├── pyproject.toml
+│   │   └── datavia/soil/        # Soil pipeline code
+│   └── weather/                 # datavia-weather package
 │       ├── pyproject.toml
-│       └── datavia/soil/        # Soil pipeline code (WIP)
+│       └── datavia/weather/     # Weather pipeline code
 ├── tests/                       # Test suite
 ├── scripts/                     # Build and utility scripts
 └── docs/                        # Documentation
@@ -187,16 +202,20 @@ pipelines = []
 
 try:
     from datavia.elevation import ElevationPipeline
+
     elevation = ElevationPipeline()
     pipelines.append(elevation)
     print("✅ Elevation pipeline loaded")
 except ImportError:
-    print("❌ Elevation pipeline not installed. Install: pip install datavia[elevation]")
+    print(
+        "❌ Elevation pipeline not installed. Install: pip install datavia[elevation]"
+    )
     elevation = None
 
 try:
     from datavia.soil import SoilPipeline
-    soil = SoilPipeline() 
+
+    soil = SoilPipeline()
     pipelines.append(soil)
     print("✅ Soil pipeline loaded")
 except ImportError:
@@ -207,14 +226,12 @@ except ImportError:
 dv = Datavia(pipelines=pipelines)
 dv()
 
-#update data
+# update data
 dv.elevation.update_data()
 
 # Use available pipelines
 coordinates = np.array([[10.0, 50.0], [11.0, 51.0]])  # [longitude, latitude]
 elevations = dv.elevation.get_data(coords=coordinates, crs_coords="EPSG:4326")
-
-# Note: API is under active development - see tests/ for latest examples
 ```
 
 ### Command Line Interface
@@ -228,6 +245,10 @@ datavia config status                    # Show installation status
 # Data updates
 datavia update elevation                 # Download / refresh elevation data
 datavia update soil                      # Download / refresh soil data
+datavia update weather                   # Update all configured weather pipelines
+datavia update weather --source HYRAS   # Update only the HYRAS source
+datavia update weather --source ERA5_land      # Update only ERA5
+datavia update weather --source DWD_stations   # Update only DWD stations
 
 # Development/Testing
 python -m datavia.cli update elevation   # Alternative CLI access
@@ -326,7 +347,8 @@ See the [LICENSE](LICENSE) file for details.
 
 ## Roadmap
 
-- [ ] Weather data pipeline (DWD integration)
+- [x] Soil data pipeline (SoilGrids + HiHydroSoil integration)
+- [x] Weather data pipeline (HYRAS + DWD station integration)
 - [ ] Radiation data pipeline  
 - [ ] Vector data support (BÜK soil classification)
 - [ ] Multi-region support beyond Germany

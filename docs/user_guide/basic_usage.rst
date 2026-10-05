@@ -422,6 +422,78 @@ This approach demonstrates:
 * **Data reshaping**: Converting flat arrays back to 2D grids for visualization
 * **Heatmap visualization**: Using `pcolormesh()` for continuous spatial data
 
+Weather Pipeline and Zarr Storage
+-----------------------------------
+
+Gridded weather sources (ERA5-Land and HYRAS) are stored in compressed,
+chunked Zarr v3 stores.  You don't need to call anything extra for this:
+``update_data()`` writes each downloaded NetCDF file straight into the store,
+and no ``.nc`` copy is kept.  ``get_data()`` then reads from the store.  If
+any ``<source>_*.nc`` files are left in the data directory (for example from
+an older datavia version), the next ``update_data()`` migrates them into the
+store and deletes them.
+
+.. code-block:: python
+
+    from datavia.weather import WeatherPipeline
+    import numpy as np
+
+    pipeline = WeatherPipeline(config={
+        "source":     "ERA5_land",
+        "variables":  ["2m_temperature"],
+        "date_start": "2024-01-01",
+        "date_end":   "2024-12-31",
+    })
+    # Downloads only what is missing and writes it to
+    # <data_dir>/ERA5_land/2m_temperature/2024.zarr
+    pipeline.update_data()
+
+    coords = np.array([[13.4, 52.5], [10.0, 50.0]])  # [lon, lat]
+    values = pipeline.get_data(
+        coords=coords,
+        crs_coords="EPSG:4326",
+        variable="2m_temperature",
+        datetime_utc="2024-06-15",
+    )
+
+Ingesting a NetCDF file you downloaded yourself
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+To add a NetCDF file that you fetched outside datavia (for example an
+ERA5-Land file from the CDS web interface) to the store, use
+``SaverWeather.save_nc_to_zarr()``.  It reads the variables from the file and
+leaves the file itself untouched.  It does not register coverage in the
+database, so call ``CoverageManager.rebuild_from_store()`` afterwards.
+Otherwise the next ``update_data()`` downloads the same period again.
+
+.. code-block:: python
+
+    from datavia.weather.saver_weather import SaverWeather
+    from datavia.weather.coverage_manager import CoverageManager
+
+    saver = SaverWeather("ERA5_land")
+    ok = saver.save_nc_to_zarr("/path/to/era5_2024.nc")  # True on success
+
+    mgr = CoverageManager("ERA5_land", ["2m_temperature"])
+    rows = mgr.rebuild_from_store("2m_temperature")
+
+Zarr store layout and recovery
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Zarr stores are organised as ``<data_dir>/<source>/<variable>/<year>.zarr/``.
+Each write is guarded by a sentinel file and a cross-process lock to prevent
+corruption from concurrent writes.  If a write was interrupted, run
+``CoverageManager.rebuild_from_store(variable)`` to clear stale sentinels and
+restore the database coverage rows:
+
+.. code-block:: python
+
+    mgr = CoverageManager(
+        source_name="ERA5_land", variables=["2m_temperature"]
+    )
+    rows = mgr.rebuild_from_store("2m_temperature")
+    print(f"Rebuilt {rows} coverage rows from disk")
+
 Next Steps
 ----------
 

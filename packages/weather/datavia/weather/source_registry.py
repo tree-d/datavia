@@ -1,0 +1,487 @@
+"""
+Source registry for WeatherPipeline grid downloaders and unit conversions.
+
+Maps each named weather source (e.g. ``"ERA5_land"``, ``"HYRAS"``,
+``"DWD_stations"``) to:
+
+- The :class:`~datavia.core.interfaces.Downloader` subclass responsible for
+  fetching its gridded data.
+- A per-variable conversion table describing the ``from``/``to`` unit pair
+  that needs to be applied after interpolation.
+
+Public API
+----------
+- :data:`SOURCE_REGISTRY` — full registry dict.
+- :func:`get_grid_downloader_class` — look up the downloader class for a source.
+- :func:`apply_conversion` — apply the correct unit conversion for a variable,
+  with optional user-provided overrides.
+- :func:`convert_units` / :func:`get_target_unit` — unit conversion between
+  sources, used to bring station values to the gridded target unit.
+- :func:`is_accumulated`, :func:`get_day_start_hour` and
+  :func:`get_station_aggregation` — time-base settings per variable; see
+  :mod:`datavia.library.temporal` for the conventions.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
+
+from datavia.library.unit_conversions import (
+    kelvin_to_celsius,
+    precipitation_m_to_mm,
+    ssrd_to_par,
+    w_m2_to_par,
+)
+
+# HYRASDownloader is introduced in Phase D.  Import it lazily so that the
+# registry is fully usable before that file exists.
+try:
+    from .hyras_downloader import HYRASDownloader as _HYRASDownloader
+except ImportError:
+    _HYRASDownloader = None  # type: ignore[assignment,misc]
+
+from .era5_downloader import ACCUMULATED_VARIABLES, ERA5Downloader
+
+if TYPE_CHECKING:
+    from datavia.core.interfaces import Downloader
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Conversion dispatch map
+# ---------------------------------------------------------------------------
+
+#: Maps ``(from_unit, to_unit)`` string pairs to the conversion callable.
+#: Extend this table when new sources with different raw units are added.
+_FROM_TO_CONVERSION_MAP: dict[tuple[str, str], Any] = {
+    ("K", "degC"): kelvin_to_celsius,
+    ("m", "mm"): precipitation_m_to_mm,
+    ("J_m2", "PAR"): ssrd_to_par,
+    ("W_m2", "PAR"): w_m2_to_par,
+}
+
+#: UTC hour at which the precipitation day starts (HYRAS and DWD convention).
+_PRECIPITATION_DAY_START_HOUR: int = 6
+
+# ---------------------------------------------------------------------------
+# ERA5-Land grid boundary constants
+# ---------------------------------------------------------------------------
+
+#: Northern boundary of the ERA5-Land Zarr skeleton (degrees North).
+#: Extended by one cell beyond the typical Germany pipeline bbox.
+_ERA5_LAND_LAT_MAX: float = 55.6
+
+#: Southern boundary of the ERA5-Land Zarr skeleton (degrees North).
+_ERA5_LAND_LAT_MIN: float = 47.0
+
+#: Western boundary of the ERA5-Land Zarr skeleton (degrees East).
+_ERA5_LAND_LON_MIN: float = 5.4
+
+#: Eastern boundary of the ERA5-Land Zarr skeleton (degrees East).
+_ERA5_LAND_LON_MAX: float = 15.6
+
+# ---------------------------------------------------------------------------
+# Source registry
+# ---------------------------------------------------------------------------
+
+#: Registry mapping source names to their downloader class and per-variable
+#: unit conversion rules.
+#:
+#: Structure::
+#:
+#:     {
+#:         "<source_name>": {
+#:             "grid_downloader": <Downloader subclass> | None,
+#:             "conversions": {
+#:                 "<variable>": {"from": "<unit>", "to": "<unit>"},
+#:                 ...
+#:             },
+#:         },
+#:         ...
+#:     }
+#:
+#: ``grid_downloader`` is ``None`` for ``"DWD_stations"`` because that source
+#: has no gridded component.
+SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
+    "ERA5_land": {
+        "grid_downloader": ERA5Downloader,
+        "conversions": {
+            "2m_temperature": {"from": "K", "to": "degC"},
+            "total_precipitation": {"from": "m", "to": "mm"},
+            "surface_solar_radiation_downwards": {"from": "J_m2", "to": "PAR"},
+        },
+        # Running totals since 00 UTC; see datavia.library.temporal.
+        "accumulated_variables": ACCUMULATED_VARIABLES,
+        # Unlisted variables use the 00-24 UTC day.
+        "day_start_hour": {"total_precipitation": _PRECIPITATION_DAY_START_HOUR},
+        # Maps ECMWF short variable names (as stored in ERA5-Land NetCDF files)
+        # to the pipeline variable names used throughout the datavia API.
+        "nc_variable_map": {
+            "t2m": "2m_temperature",
+            "tp": "total_precipitation",
+            "ssrd": "surface_solar_radiation_downwards",
+        },
+        # Fixed Germany-extent grid for ZarrStoreManager.  Bounds are extended
+        # by one cell beyond the pipeline bbox so bilinear interpolation does
+        # not degrade at the exact boundary.  Lat runs north-to-south to match
+        # ERA5's native array layout and avoid a flip on write.
+        "zarr_grid": {
+            "crs": "EPSG:4326",
+            "latitude": np.arange(_ERA5_LAND_LAT_MAX, _ERA5_LAND_LAT_MIN, -0.1).round(
+                1
+            ),
+            "longitude": np.arange(_ERA5_LAND_LON_MIN, _ERA5_LAND_LON_MAX, 0.1).round(
+                1
+            ),
+            "time_freq": "1h",
+            "dtype": "float32",
+            "fill_value": float("nan"),
+            # Point-query optimised: 720 h = 1 month; 5x5 cells ~= 0.5 x 0.5 deg.
+            "chunks": {"time": 720, "latitude": 5, "longitude": 5},
+            "codec": {"cname": "zstd", "clevel": 3, "shuffle": "shuffle"},
+        },
+    },
+    "HYRAS": {
+        # Populated with HYRASDownloader once Phase D is implemented.
+        "grid_downloader": _HYRASDownloader,
+        # HYRAS files are already in target units (°C, mm/day) except radiation:
+        # rsds is W/m², converted to PAR to match every other source.
+        "conversions": {
+            "surface_solar_radiation_downwards": {"from": "W_m2", "to": "PAR"},
+        },
+        # One stamp per day, dated with the day it describes (tas 00:00,
+        # pr 06:00 for 06-06 UTC, rsds 12:00; verified in the DWD files).
+        # Daily mode selects by date, so no day_start_hour is needed here.
+        # Maps NetCDF CF variable names (as they appear inside the .nc file)
+        # to the pipeline variable names used throughout the datavia API.
+        # Needed because HYRAS uses short CF names (e.g. "tas") while the rest
+        # of the pipeline uses descriptive names (e.g. "2m_temperature").
+        "nc_variable_map": {
+            "tas": "2m_temperature",
+            "tasmax": "temperature_2m_max",
+            "tasmin": "temperature_2m_min",
+            "pr": "total_precipitation",
+            "rsds": "surface_solar_radiation_downwards",
+            "hurs": "relative_humidity_2m",
+        },
+        # Fixed WGS84 envelope of the national EPSG:3035 grid.  HYRAS does
+        # not support bbox-subset downloads, so coverage checks must use this
+        # same envelope for both requests and rebuilt store registrations.
+        "coverage_bbox": (
+            5.307613684411584,
+            47.07781030622338,
+            15.707082890486497,
+            55.08908843154143,
+        ),
+        # HYRAS stores are kept in their native ETRS89-LAEA (EPSG:3035)
+        # projection.  The x/y coordinate arrays are derived from the
+        # downloaded .nc files at write time — no pre-defined grid is required.
+        # Coordinate reprojection happens at query time inside
+        # interpolate_dataset / _build_spatial_interp_coords.
+        "zarr_grid": {
+            "crs": "EPSG:3035",
+            "time_freq": "1D",
+            "dtype": "float32",
+            "fill_value": float("nan"),
+            # Chunk keys use x/y (projected) instead of longitude/latitude.
+            "chunks": {"time": 365, "y": 10, "x": 10},
+            "codec": {"cname": "zstd", "clevel": 3, "shuffle": "shuffle"},
+        },
+    },
+    "DWD_stations": {
+        # Station-only source — no gridded downloader.
+        "grid_downloader": None,
+        # Open-Meteo shortwave_radiation is W/m²; convert to PAR.
+        "conversions": {
+            "surface_solar_radiation_downwards": {"from": "W_m2", "to": "PAR"},
+        },
+        # Units of the station parquet columns, used to convert station values
+        # to the gridded source's target unit before blending.
+        "native_units": {
+            "2m_temperature": "degC",
+            "total_precipitation": "mm",
+            "surface_solar_radiation_downwards": "W_m2",
+            "relative_humidity_2m": "%",
+        },
+        # Hourly records.  Daily mode aggregates them over the day so they
+        # represent the same quantity as the gridded daily values.
+        "daily_aggregation": {
+            "2m_temperature": "mean",
+            "relative_humidity_2m": "mean",
+            "surface_solar_radiation_downwards": "mean",
+            "total_precipitation": "sum",
+        },
+        # Fluxes stamped at interval end; the rest are instantaneous.
+        "interval_end_variables": frozenset(
+            {"total_precipitation", "surface_solar_radiation_downwards"}
+        ),
+        "day_start_hour": {"total_precipitation": _PRECIPITATION_DAY_START_HOUR},
+    },
+}
+
+#: Pre-computed reverse maps: ``pipeline_variable`` → NetCDF name, per source.
+#: Built once at module load from :data:`SOURCE_REGISTRY` to avoid rebuilding
+#: the reverse mapping on every call to :func:`get_nc_variable_name`.
+_PIPELINE_TO_NC_VARIABLE: dict[str, dict[str, str]] = {
+    source: {v: k for k, v in entry.get("nc_variable_map", {}).items()}
+    for source, entry in SOURCE_REGISTRY.items()
+}
+
+# ---------------------------------------------------------------------------
+# Public helpers
+# ---------------------------------------------------------------------------
+
+
+def get_grid_downloader_class(source_name: str) -> type[Downloader] | None:
+    """Return the grid downloader class registered for *source_name*.
+
+    Parameters
+    ----------
+    source_name : str
+        A key in :data:`SOURCE_REGISTRY`, e.g. ``"ERA5_land"``.
+
+    Returns
+    -------
+    type[Downloader] or None
+        The downloader class, or ``None`` when the source has no gridded
+        component (``"DWD_stations"``).
+
+    Raises
+    ------
+    KeyError
+        If *source_name* is not present in :data:`SOURCE_REGISTRY`.
+    """
+    if source_name not in SOURCE_REGISTRY:
+        raise KeyError(
+            f"Unknown weather source '{source_name}'. "
+            f"Valid sources: {sorted(SOURCE_REGISTRY)}"
+        )
+    return SOURCE_REGISTRY[source_name]["grid_downloader"]
+
+
+def get_day_start_hour(source_name: str, variable: str) -> int:
+    """Return the UTC hour at which *variable*'s daily window starts.
+
+    0 (the 00-24 UTC day) unless the source registry lists the variable under
+    ``"day_start_hour"`` (precipitation: 6).
+    """
+    return int(
+        SOURCE_REGISTRY.get(source_name, {}).get("day_start_hour", {}).get(variable, 0)
+    )
+
+
+def is_accumulated(source_name: str, variable: str) -> bool:
+    """Return whether *variable* is stored as a running total since 00 UTC."""
+    entry = SOURCE_REGISTRY.get(source_name, {})
+    return variable in entry.get("accumulated_variables", ())
+
+
+def get_station_aggregation(variable: str, temporal_resolution: str) -> dict[str, Any]:
+    """Return the daily-aggregation keyword arguments for DWD station data.
+
+    The result is passed to
+    :func:`~datavia.library.interpolation.interpolate_station_parquet`.  In
+    hourly mode, or for a variable without an aggregation rule, it selects
+    the nearest stamp (``daily_aggregation=None``).
+    """
+    entry = SOURCE_REGISTRY["DWD_stations"]
+    how = entry["daily_aggregation"].get(variable)
+    return {
+        "daily_aggregation": how if temporal_resolution == "daily" else None,
+        "day_start_hour": get_day_start_hour("DWD_stations", variable),
+        "interval_end": variable in entry["interval_end_variables"],
+    }
+
+
+def get_target_unit(
+    source_name: str,
+    variable: str,
+    user_overrides: dict[str, dict[str, str]] | None = None,
+) -> str | None:
+    """Return the unit :func:`apply_conversion` produces for *variable*.
+
+    ``None`` means no conversion applies, so the value stays in the source's
+    native unit.
+    """
+    spec = {
+        **SOURCE_REGISTRY.get(source_name, {}).get("conversions", {}),
+        **(user_overrides or {}),
+    }.get(variable)
+    return spec["to"] if spec else None
+
+
+def convert_units(
+    value: Any, from_unit: str, to_unit: str, period_s: float | None = None
+) -> Any:
+    """Convert *value* from *from_unit* to *to_unit*.
+
+    Equal units pass *value* through unchanged.  *period_s* is the length in
+    seconds of the period an energy total (``J_m2``) covers; ``None`` means
+    one day.
+
+    Raises
+    ------
+    ValueError
+        If no conversion between the two units is registered.
+    """
+    if from_unit == to_unit:
+        return value
+    conversion_fn = _FROM_TO_CONVERSION_MAP.get((from_unit, to_unit))
+    if conversion_fn is None:
+        raise ValueError(f"No conversion registered from {from_unit} to {to_unit}.")
+    if period_s is not None and from_unit == "J_m2":
+        return conversion_fn(value, period_s=period_s)
+    return conversion_fn(value)
+
+
+def get_nc_variable_name(source_name: str, pipeline_variable: str) -> str:
+    """Return the NetCDF variable name for a given pipeline variable and source.
+
+    For sources whose NetCDF files use short CF variable names (e.g. HYRAS
+    stores temperature as ``"tas"`` rather than ``"2m_temperature"``), this
+    function translates the pipeline-level variable name to the name actually
+    present inside the file, as required by :func:`interpolate_netcdf`.
+
+    Falls back to *pipeline_variable* unchanged when the source has no
+    ``nc_variable_map`` or when the variable is not listed there.
+
+    Parameters
+    ----------
+    source_name : str
+        A key in :data:`SOURCE_REGISTRY`, e.g. ``"HYRAS"``.
+    pipeline_variable : str
+        Pipeline-level variable name, e.g. ``"2m_temperature"``.
+
+    Returns
+    -------
+    str
+        NetCDF variable name, e.g. ``"tas"`` for HYRAS temperature, or
+        *pipeline_variable* itself when no mapping is needed.
+    """
+    nc_var_map: dict[str, str] = SOURCE_REGISTRY.get(source_name, {}).get(
+        "nc_variable_map", {}
+    )
+    if nc_var_map:
+        # Use the pre-computed pipeline_variable → NC name reverse map.
+        return _PIPELINE_TO_NC_VARIABLE.get(source_name, {}).get(
+            pipeline_variable, pipeline_variable
+        )
+    return pipeline_variable
+
+
+def apply_conversion(
+    source_name: str,
+    variable: str,
+    value: Any,
+    user_overrides: dict[str, dict[str, str]] | None = None,
+    period_s: float | None = None,
+) -> Any:
+    """Apply the appropriate unit conversion for *variable* from *source_name*.
+
+    Merges *user_overrides* (keyed by variable name) over the registry
+    defaults, then applies the resolved conversion function.  If no conversion
+    is needed the original *value* is returned unchanged.
+
+    Parameters
+    ----------
+    source_name : str
+        A key in :data:`SOURCE_REGISTRY`, e.g. ``"ERA5_land"``.
+    variable : str
+        Variable name, e.g. ``"2m_temperature"``.
+    value : np.ndarray or float
+        Raw value(s) as returned by the interpolation layer.
+    user_overrides : dict[str, dict[str, str]], optional
+        Per-variable override map of the form
+        ``{"2m_temperature": {"from": "K", "to": "degC"}}``.
+        When provided, entries here take precedence over the registry defaults
+        for the matched variable names.
+    period_s : float, optional
+        Length in seconds of the period an energy total (``J_m2``) covers.
+        ``None`` means one day; pass ``3600`` for de-accumulated hourly values.
+
+    Returns
+    -------
+    np.ndarray or float
+        Value(s) in the target unit, or *value* unchanged when no conversion
+        applies.  Same type and shape as *value*.
+
+    Raises
+    ------
+    KeyError
+        If *source_name* is not present in :data:`SOURCE_REGISTRY`.
+    """
+    if source_name not in SOURCE_REGISTRY:
+        raise KeyError(
+            f"Unknown weather source '{source_name}'. "
+            f"Valid sources: {sorted(SOURCE_REGISTRY)}"
+        )
+
+    # Merge registry defaults with user-provided overrides.
+    registry_conversions: dict[str, dict[str, str]] = SOURCE_REGISTRY[source_name][
+        "conversions"
+    ]
+    effective_conversions = {**registry_conversions, **(user_overrides or {})}
+
+    conversion_spec = effective_conversions.get(variable)
+    if conversion_spec is None:
+        # No conversion defined for this variable — return as-is.
+        return value
+
+    from_unit = conversion_spec["from"]
+    to_unit = conversion_spec["to"]
+    try:
+        return convert_units(value, from_unit, to_unit, period_s=period_s)
+    except ValueError:
+        # Spec exists but no matching function — return unchanged and log.
+        logger.warning(
+            "No conversion function found for (%s → %s) "
+            "(source=%s, variable=%s). Returning raw value.",
+            from_unit,
+            to_unit,
+            source_name,
+            variable,
+        )
+        return value
+
+
+def get_valid_variables(source_name: str) -> frozenset[str] | None:
+    """Return the set of pipeline variable names supported by *source_name*.
+
+    Reads the ``nc_variable_map`` values from :data:`SOURCE_REGISTRY`.  These
+    are the human-readable pipeline variable names (e.g. ``"2m_temperature"``,
+    ``"total_precipitation"``) that callers may pass to
+    :class:`~datavia.weather.pipeline.WeatherPipeline`.
+
+    Returns ``None`` for sources that have no ``nc_variable_map`` (currently
+    ``"DWD_stations"``), indicating that no compile-time variable validation is
+    possible for that source.
+
+    Parameters
+    ----------
+    source_name : str
+        A key in :data:`SOURCE_REGISTRY`, e.g. ``"ERA5_land"`` or
+        ``"DWD_stations"``.
+
+    Returns
+    -------
+    frozenset[str] or None
+        Frozenset of valid pipeline variable names when the source has a known
+        variable map, or ``None`` when validation is not applicable.
+
+    Raises
+    ------
+    KeyError
+        If *source_name* is not present in :data:`SOURCE_REGISTRY`.
+    """
+    if source_name not in SOURCE_REGISTRY:
+        raise KeyError(
+            f"Unknown weather source '{source_name}'. "
+            f"Valid sources: {sorted(SOURCE_REGISTRY)}"
+        )
+    nc_var_map: dict[str, str] = SOURCE_REGISTRY[source_name].get("nc_variable_map", {})
+    if not nc_var_map:
+        return None
+    return frozenset(nc_var_map.values())

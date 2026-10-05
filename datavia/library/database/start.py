@@ -1,48 +1,40 @@
 """
 Database initialization routine for Datavia.
 
-Checks whether the schema already exists (cross-backend) and runs init.sql
-if the tables are absent.  Works with both SQLite and PostgreSQL.
+Creates any missing tables and indexes from the SQLAlchemy Core schema in
+``schema.py``, including indexes added to tables that already exist.  Works
+with both SQLite and PostgreSQL.
 """
 
 import logging
-from pathlib import Path
-
-from sqlalchemy import inspect, text
 
 from .connection import get_engine
+from .schema import metadata
 
 logger = logging.getLogger(__name__)
 
 
 def initialize_database() -> None:
-    """Run init.sql to create schema tables when they do not yet exist.
+    """Create all schema tables and indexes that do not yet exist.
 
-    Uses :func:`sqlalchemy.inspect` for a cross-backend table presence check
-    so the function works transparently with both SQLite and PostgreSQL without
-    relying on any PostGIS- or PostgreSQL-specific SQL.
+    ``MetaData.create_all(checkfirst=True)`` skips tables that already exist,
+    together with their indexes, so each index is then created separately
+    with ``checkfirst=True``.  The function is idempotent and safe to call on
+    every application start; tables and indexes added in later versions are
+    still created in existing databases.
+
+    Works transparently with both SQLite and PostgreSQL; SQLAlchemy renders the
+    dialect-specific DDL (e.g. auto-generated integer primary keys).  Errors
+    are logged and re-raised so a broken schema fails at startup.
     """
-    init_sql_path = Path(__file__).parent / "init.sql"
-    if not init_sql_path.exists():
-        logger.error("init.sql not found in database directory.")
-        return
-
     engine = get_engine()
-    if inspect(engine).has_table("raster_layers"):
-        logger.info("Database already initialized.")
-        return
-
-    logger.info("Initializing database schema from init.sql...")
-    with open(init_sql_path) as f:
-        sql = f.read()
-
-    with engine.connect() as conn:
-        for statement in sql.split(";"):
-            stmt = statement.strip()
-            if stmt:
-                try:
-                    conn.execute(text(stmt))
-                except Exception as e:
-                    logger.error("Error executing statement: %s\n%s", stmt, e)
-        conn.commit()
-    logger.info("Database initialized.")
+    logger.debug("Creating missing schema objects (idempotent)...")
+    try:
+        metadata.create_all(engine, checkfirst=True)
+        for table in metadata.sorted_tables:
+            for index in table.indexes:
+                index.create(engine, checkfirst=True)
+    except Exception:
+        logger.exception("Failed to initialize database schema.")
+        raise
+    logger.info("Database schema up to date.")

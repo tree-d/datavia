@@ -19,7 +19,10 @@ Example usage:
         from datavia.elevation import ElevationPipeline
         elevation = ElevationPipeline()
     except ImportError:
-        print("Elevation pipeline not installed. Install with: pip install datavia[elevation]")
+        print(
+            "Elevation pipeline not installed. "
+            "Install with: pip install datavia[elevation]"
+        )
         elevation = None
 
     try:
@@ -35,10 +38,14 @@ Example usage:
     dv()
 """
 
+from importlib.metadata import PackageNotFoundError, version
+
 from .core.datavia import Datavia
 
 __path__ = __import__("pkgutil").extend_path(__path__, __name__)
-# Make commonly used classes available at top level
 __all__ = ["Datavia"]
 
-__version__ = "1.0.0-dev"
+try:
+    __version__ = version("datavia")
+except PackageNotFoundError:  # running from a source tree without installing
+    __version__ = "0.0.0+unknown"

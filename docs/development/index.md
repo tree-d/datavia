@@ -4,18 +4,15 @@ This section contains documentation for developers and contributors to the Datav
 
 ## Setup & Environment
 
-- [Local Development Setup](local-setup.md) - How to set up your development environment
-- [CI/CD Pipeline](ci-cd-pipeline.md) - Understanding our automated workflows
+- [Local Development Setup](local-setup.md) — How to set up your development environment, run tasks, and understand the CI/CD pipelines
 
 ## Standards & Guidelines
 
-- [Coding Standards](coding-standards.md) - Code quality and style guidelines
+- [Coding Standards](coding-standards.md) — Code quality and style guidelines
 
-## Architecture
+## Weather Pipeline
 
-- Project structure and design decisions
-- Multi-package namespace architecture
-- Extension development guidelines
+- [Known Issues](known_issues.md) — Confirmed bugs, design limitations, deferred features, and future architecture notes
 
 ---
 

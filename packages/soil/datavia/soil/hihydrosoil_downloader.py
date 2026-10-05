@@ -204,7 +204,14 @@ class HiHydroSoilDownloader(Downloader):
         results: list[tuple[str, str]] = []
         total = len(coverage_ids)
 
-        for i, coverage_id in enumerate(coverage_ids, 1):
+        try:
+            from tqdm import tqdm  # type: ignore[import]
+
+            coverage_iter: Any = tqdm(coverage_ids, desc="HiHydroSoil", unit="coverage")
+        except ImportError:
+            coverage_iter = iter(coverage_ids)
+
+        for i, coverage_id in enumerate(coverage_iter, 1):
             path = self._download_single_coverage(coverage_id, output_dir)
             if path != "failed":
                 results.append((path, coverage_id))
@@ -220,7 +227,7 @@ class HiHydroSoilDownloader(Downloader):
         return results
 
     def get_remote_available_properties(self) -> dict[str, list[str]]:
-        """Discover all properties and depth layers available in the HiHydroSoil catalogue.
+        """Discover all properties/depths in the HiHydroSoil catalogue.
 
         Fetches the HTTP directory listing at :attr:`_BASE_URL` and parses the
         HTML ``href`` links to extract every ``*_250m.tif`` filename. Each
@@ -240,8 +247,8 @@ class HiHydroSoilDownloader(Downloader):
             strings, e.g.
             ``{"field_capacity": ["0-5cm", "5-15cm", ...], ...}``.
         """
-        import re  # noqa: PLC0415 — deferred: avoid cost at module import
-        import urllib.request  # noqa: PLC0415 — deferred: avoid cost at module import
+        import re
+        import urllib.request
 
         prefix_to_canonical = {v: k for k, v in self._CANONICAL_TO_PREFIX.items()}
         catalogue: dict[str, set[str]] = {}
@@ -276,7 +283,8 @@ class HiHydroSoilDownloader(Downloader):
             canonical = prefix_to_canonical.get(file_prefix)
             if canonical is None:
                 logger.debug(
-                    "HiHydroSoil: unknown file prefix '%s' in '%s' — not in _CANONICAL_TO_PREFIX",
+                    "HiHydroSoil: unknown file prefix '%s' in '%s' "
+                    "- not in _CANONICAL_TO_PREFIX",
                     file_prefix,
                     basename,
                 )

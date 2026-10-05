@@ -193,6 +193,7 @@ jobs:
           sed -i "s/version = \".*\"/version = \"$VERSION\"/g" pyproject.toml
           sed -i "s/version = \".*\"/version = \"$VERSION\"/g" packages/elevation/pyproject.toml
           sed -i "s/version = \".*\"/version = \"$VERSION\"/g" packages/soil/pyproject.toml
+          sed -i "s/version = \".*\"/version = \"$VERSION\"/g" packages/weather/pyproject.toml
 
       - name: Clean previous builds
         run: |
@@ -204,11 +205,15 @@ jobs:
 
       - name: Build elevation package
         working-directory: packages/elevation
-        run: pixi run -e dev --manifest-path ../../pixi.toml python -m build
+        run: pixi run -e dev --manifest-path ../../pyproject.toml python -m build
 
       - name: Build soil package
         working-directory: packages/soil
-        run: pixi run -e dev --manifest-path ../../pixi.toml python -m build
+        run: pixi run -e dev --manifest-path ../../pyproject.toml python -m build
+
+      - name: Build weather package
+        working-directory: packages/weather
+        run: pixi run -e dev --manifest-path ../../pyproject.toml python -m build
 
       - name: Collect all dist artifacts
         run: |
@@ -395,10 +400,12 @@ jobs:
           sed -i "s/version = \".*\"/version = \"$NEXT_DEV\"/g" pyproject.toml
           sed -i "s/version = \".*\"/version = \"$NEXT_DEV\"/g" packages/elevation/pyproject.toml
           sed -i "s/version = \".*\"/version = \"$NEXT_DEV\"/g" packages/soil/pyproject.toml
+          sed -i "s/version = \".*\"/version = \"$NEXT_DEV\"/g" packages/weather/pyproject.toml
 
           git add pyproject.toml \
                   packages/elevation/pyproject.toml \
-                  packages/soil/pyproject.toml
+                  packages/soil/pyproject.toml \
+                  packages/weather/pyproject.toml
           git commit -m "chore: bump version to ${NEXT_DEV} [skip ci]"
           git push origin HEAD:${{ github.ref_name }}
           echo "Bumped to next development version: $NEXT_DEV"

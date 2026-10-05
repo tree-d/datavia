@@ -5,8 +5,6 @@ Downloader is implemented. It provides a documented stub so API docs
 and imports do not fail.
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 from .interfaces import Downloader
@@ -21,11 +19,11 @@ class APIDownloader(Downloader):
         Parameters
         ----------
         url : str
-                Base URL for the API endpoint.
+            Base URL for the API endpoint.
         **kwargs : Any
-                Additional configuration for future API implementations.
+            Additional configuration for future API implementations.
         """
-        super().__init__(url)
+        self.url = url
         self.options = kwargs
 
     def download(self) -> str:
