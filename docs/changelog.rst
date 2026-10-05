@@ -24,7 +24,8 @@ Added
   temperature, humidity, radiation).
 - ``Era5Downloader`` for ECMWF ERA5 reanalysis data with chunked download
   support to handle large time ranges efficiently.
-- ``DwdDownloader`` for DWD station and gridded observational data.
+- ``DWDStationDownloader`` for hourly Open-Meteo model output at configured
+  coordinates (not DWD observations).
 - ``CompositeDownloader`` for transparent multi-source queries with fallback.
 - ``CoverageManager`` for tracking spatial and temporal coverage of
   already-downloaded data to avoid redundant downloads.
