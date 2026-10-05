@@ -18,8 +18,14 @@ when the CDS queue is fast.  Supported values:
   Q3 Jul-Sep, Q4 Oct-Dec).  Reduces the job count by 3x vs monthly.
 - ``"yearly"`` — one job per calendar year.  Best when the CDS queue is
   fast and the date range is short.
-- ``"none"`` — a single job for the entire date range.  Matches the
-  pre-Step-9 behaviour and is useful for short ranges (e.g. one week).
+- ``"none"`` — no splitting beyond what the CDS request format requires.
+  Useful for short ranges (e.g. one week).
+
+A CDS request is the Cartesian product of its year, month and day lists, so
+each chunk is further split into calendar-safe requests: a partial month at
+either edge becomes its own job, and the full months of each calendar year
+are sent together.  A chunk that starts or ends mid-month may therefore be
+submitted as several CDS jobs.
 
 :meth:`ERA5Downloader.download` returns a newline-joined string of all
 produced paths so that the caller can save them individually.
@@ -40,6 +46,7 @@ transfer bar is provided by the ``cdsapi`` client itself (unchanged).
 import calendar
 import contextlib
 import datetime
+import itertools
 import logging
 import math
 import os
@@ -174,7 +181,11 @@ class ERA5Downloader(APIDownloader):
             - ``"monthly"`` (default) — one job per calendar month.
             - ``"quarterly"`` — one job per calendar quarter.
             - ``"yearly"`` — one job per calendar year.
-            - ``"none"`` — a single job for the entire date range.
+            - ``"none"`` — no splitting beyond what CDS requires.
+
+            Each chunk is further split into calendar-safe CDS jobs (see
+            :meth:`_split_calendar_safe`), so a chunk starting or ending
+            mid-month is sent as several jobs.
         **kwargs : Any
             Additional keyword arguments forwarded to
             :class:`datavia.core.downloader_api.APIDownloader`.
@@ -260,6 +271,10 @@ class ERA5Downloader(APIDownloader):
         appear.  The resulting lists are sorted and zero-padded to two digits
         for months and days, matching the format expected by the CDS API.
 
+        CDS retrieves the product of the three lists, so the range must be
+        calendar-safe (see :meth:`_split_calendar_safe`): a single, possibly
+        partial, month, or full months of one year.
+
         Parameters
         ----------
         date_start : str
@@ -278,7 +293,8 @@ class ERA5Downloader(APIDownloader):
         Raises
         ------
         ValueError
-            If ``date_end`` is earlier than ``date_start``.
+            If ``date_end`` is earlier than ``date_start``, or the year x month
+            x day product would include dates outside the range.
         """
         start = date.fromisoformat(date_start)
         end = date.fromisoformat(date_end)
@@ -292,7 +308,63 @@ class ERA5Downloader(APIDownloader):
         years = sorted({d.strftime("%Y") for d in all_dates})
         months = sorted({d.strftime("%m") for d in all_dates})
         days = sorted({d.strftime("%d") for d in all_dates})
+        # CDS fetches the product of the three lists, so it must hold exactly
+        # the requested dates (impossible ones such as 02-30 are skipped).
+        n_product = 0
+        for y, m, d in itertools.product(years, months, days):
+            with contextlib.suppress(ValueError):
+                date(int(y), int(m), int(d))
+                n_product += 1
+        if n_product != n_days:
+            raise ValueError(
+                f"Range {date_start} to {date_end} is not calendar-safe: its "
+                f"year x month x day product covers {n_product} dates, not "
+                f"{n_days}.  Split it with _split_calendar_safe() first."
+            )
         return years, months, days
+
+    @staticmethod
+    def _split_calendar_safe(
+        date_start: str,
+        date_end: str,
+    ) -> list[tuple[str, str]]:
+        """Split a range into pieces whose year x month x day product is exact.
+
+        A partial month (one that does not start on day 1 or end on its last
+        day) becomes its own piece; consecutive full months of the same
+        calendar year are merged into one piece.  Each piece can be passed to
+        :meth:`_build_request_date_fields` without fetching extra dates.
+
+        Parameters
+        ----------
+        date_start : str
+            ISO-8601 date string of the first day.
+        date_end : str
+            ISO-8601 date string of the last day (inclusive).
+
+        Returns
+        -------
+        list[tuple[str, str]]
+            Sorted list of ``(piece_start, piece_end)`` ISO date string pairs.
+
+        Raises
+        ------
+        ValueError
+            If ``date_end`` is earlier than ``date_start``.
+        """
+        pieces: list[tuple[date, date]] = []
+        prev_full = False
+        for s, e in ERA5Downloader._iter_monthly_chunks(date_start, date_end):
+            start = date.fromisoformat(s)
+            end = date.fromisoformat(e)
+            _, last_day = calendar.monthrange(end.year, end.month)
+            full = start.day == 1 and end.day == last_day
+            if full and prev_full and pieces[-1][0].year == start.year:
+                pieces[-1] = (pieces[-1][0], end)
+            else:
+                pieces.append((start, end))
+            prev_full = full
+        return [(str(s), str(e)) for s, e in pieces]
 
     @staticmethod
     def _iter_monthly_chunks(
@@ -444,13 +516,16 @@ class ERA5Downloader(APIDownloader):
     def _plan_requests(self) -> list[_Request]:
         """Return the CDS requests: the main chunks plus optional buffers.
 
-        See *buffer_days* in :meth:`__init__`.  Buffers are separate one-day
-        requests because a CDS request is the product of its year, month and
-        day lists, so a chunk stretched across a month boundary would fetch
-        whole extra months.
+        See *buffer_days* in :meth:`__init__`.  A CDS request is the product
+        of its year, month and day lists, so a range crossing a month boundary
+        would fetch dates outside it.  Each chunk is therefore split with
+        :meth:`_split_calendar_safe`, and buffers are separate one-day
+        requests.
         """
         main = [
-            _Request(s, e, _ALL_TIMES) for s, e in self._get_chunks(self.date_start)
+            _Request(s, e, _ALL_TIMES)
+            for chunk_start, chunk_end in self._get_chunks(self.date_start)
+            for s, e in self._split_calendar_safe(chunk_start, chunk_end)
         ]
         if self.buffer_days <= 0 or not ACCUMULATED_VARIABLES.intersection(
             self.variables
@@ -567,7 +642,7 @@ class ERA5Downloader(APIDownloader):
         -------
         str
             Newline-joined absolute paths of the downloaded ``.nc`` files
-            (one per calendar month chunk).
+            (one per successful CDS request).
 
         Raises
         ------

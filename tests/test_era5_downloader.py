@@ -1,7 +1,8 @@
 """Unit tests for :class:`~datavia.weather.era5_downloader.ERA5Downloader`.
 
-Covers _build_request_date_fields(), _snap_bbox(), monthly/quarterly/yearly
-chunking, chunk_by dispatch, and download() with a mocked CDS client.
+Covers _build_request_date_fields(), _split_calendar_safe(), _snap_bbox(),
+monthly/quarterly/yearly chunking, chunk_by dispatch, and download() with a
+mocked CDS client.
 """
 
 from unittest.mock import MagicMock, patch
@@ -40,29 +41,31 @@ class TestERA5DownloaderDateFields:
         assert months == ["03"]
         assert days == ["10", "11", "12"]
 
-    def test_multi_month_same_year(self) -> None:
-        """A range spanning two months collects the correct months and days."""
+    def test_full_months_same_year(self) -> None:
+        """Full months of one year produce an exact month x day product."""
         from datavia.weather.era5_downloader import ERA5Downloader
 
         years, months, days = ERA5Downloader._build_request_date_fields(
-            "2024-01-30", "2024-02-02"
+            "2024-02-01", "2024-04-30"
         )
         assert years == ["2024"]
-        assert months == ["01", "02"]
-        # Days 30, 31 from January and 01, 02 from February.
-        assert days == ["01", "02", "30", "31"]
+        assert months == ["02", "03", "04"]
+        assert days == [f"{d:02d}" for d in range(1, 32)]
 
-    def test_multi_year_range(self) -> None:
-        """A range crossing a year boundary yields both years."""
+    def test_partial_multi_month_range_raises(self) -> None:
+        """A partial range across a month boundary would over-fetch, so it raises."""
         from datavia.weather.era5_downloader import ERA5Downloader
 
-        years, months, days = ERA5Downloader._build_request_date_fields(
-            "2023-12-30", "2024-01-02"
-        )
-        assert years == ["2023", "2024"]
-        assert months == ["01", "12"]
-        # Days: 30, 31 from Dec-2023 and 01, 02 from Jan-2024.
-        assert days == ["01", "02", "30", "31"]
+        # The product would include 2024-01-01/02 and 2024-02-30/31.
+        with pytest.raises(ValueError, match="calendar-safe"):
+            ERA5Downloader._build_request_date_fields("2024-01-30", "2024-02-02")
+
+    def test_multi_year_range_raises(self) -> None:
+        """A range crossing a year boundary would over-fetch, so it raises."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        with pytest.raises(ValueError, match="calendar-safe"):
+            ERA5Downloader._build_request_date_fields("2023-12-30", "2024-01-02")
 
     def test_end_before_start_raises(self) -> None:
         """ValueError is raised when date_end precedes date_start."""
@@ -76,7 +79,7 @@ class TestERA5DownloaderDateFields:
         from datavia.weather.era5_downloader import ERA5Downloader
 
         years, months, days = ERA5Downloader._build_request_date_fields(
-            "2023-11-28", "2024-02-03"
+            "2024-01-01", "2024-12-31"
         )
         assert years == sorted(years)
         assert months == sorted(months)
@@ -807,6 +810,143 @@ class TestERA5DownloaderChunkBy:
             "Expected 8 CDS jobs for 2 years quarterly, "
             f"got {mock_client.retrieve.call_count}"
         )
+
+    @patch("datavia.weather.era5_downloader.cdsapi")
+    def test_chunk_by_none_across_month_requests_only_requested_days(
+        self, mock_cdsapi: MagicMock
+    ) -> None:
+        """chunk_by='none' across a month boundary sends one exact job per month."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        mock_client = MagicMock()
+        mock_cdsapi.Client.return_value = mock_client
+        mock_job = MagicMock()
+        mock_job.reply = {"status": "completed", "request_id": "test-none"}
+        mock_client.retrieve.return_value = mock_job
+
+        dl = ERA5Downloader(
+            variables=["2m_temperature"],
+            date_start="2024-01-30",
+            date_end="2024-02-02",
+            chunk_by="none",
+            buffer_days=0,
+        )
+        dl.download()
+
+        payloads = [c.args[1] for c in mock_client.retrieve.call_args_list]
+        assert [(p["year"], p["month"], p["day"]) for p in payloads] == [
+            (["2024"], ["01"], ["30", "31"]),
+            (["2024"], ["02"], ["01", "02"]),
+        ]
+
+
+# ---------------------------------------------------------------------------
+# ERA5Downloader._split_calendar_safe
+# ---------------------------------------------------------------------------
+
+
+def _product_dates(date_start: str, date_end: str) -> list:
+    """Return the real dates CDS would fetch for one request range."""
+    import contextlib
+    import datetime as dt
+    import itertools
+
+    from datavia.weather.era5_downloader import ERA5Downloader
+
+    years, months, days = ERA5Downloader._build_request_date_fields(
+        date_start, date_end
+    )
+    out = []
+    for y, m, d in itertools.product(years, months, days):
+        with contextlib.suppress(ValueError):
+            out.append(dt.date(int(y), int(m), int(d)))
+    return out
+
+
+class TestERA5SplitCalendarSafe:
+    """Tests for :meth:`ERA5Downloader._split_calendar_safe`."""
+
+    @pytest.mark.parametrize(
+        "date_start,date_end,expected",
+        [
+            ("2024-03-10", "2024-03-10", [("2024-03-10", "2024-03-10")]),
+            ("2024-03-05", "2024-03-20", [("2024-03-05", "2024-03-20")]),
+            (
+                "2024-01-30",
+                "2024-02-02",
+                [("2024-01-30", "2024-01-31"), ("2024-02-01", "2024-02-02")],
+            ),
+            (
+                "2023-12-30",
+                "2024-01-02",
+                [("2023-12-30", "2023-12-31"), ("2024-01-01", "2024-01-02")],
+            ),
+            ("2024-01-01", "2024-12-31", [("2024-01-01", "2024-12-31")]),
+            (
+                "2024-01-15",
+                "2024-12-20",
+                [
+                    ("2024-01-15", "2024-01-31"),
+                    ("2024-02-01", "2024-11-30"),
+                    ("2024-12-01", "2024-12-20"),
+                ],
+            ),
+            (
+                "2023-11-01",
+                "2024-02-29",
+                [("2023-11-01", "2023-12-31"), ("2024-01-01", "2024-02-29")],
+            ),
+            # 2024-02-28 is not the end of a leap February.
+            (
+                "2024-01-01",
+                "2024-02-28",
+                [("2024-01-01", "2024-01-31"), ("2024-02-01", "2024-02-28")],
+            ),
+        ],
+    )
+    def test_pieces(
+        self, date_start: str, date_end: str, expected: list[tuple[str, str]]
+    ) -> None:
+        """Partial months are isolated; full months of one year are merged."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        assert ERA5Downloader._split_calendar_safe(date_start, date_end) == expected
+
+    @pytest.mark.parametrize(
+        "date_start,date_end",
+        [
+            ("2024-01-30", "2024-02-02"),
+            ("2023-12-30", "2024-01-02"),
+            ("2023-11-28", "2024-02-03"),
+            ("2022-02-15", "2024-03-01"),
+            ("2024-01-15", "2024-03-10"),
+            ("2023-01-01", "2024-12-31"),
+        ],
+    )
+    def test_pieces_fetch_exactly_the_requested_dates(
+        self, date_start: str, date_end: str
+    ) -> None:
+        """The union of the CDS products equals the range, without duplicates."""
+        import datetime as dt
+
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        fetched = [
+            d
+            for s, e in ERA5Downloader._split_calendar_safe(date_start, date_end)
+            for d in _product_dates(s, e)
+        ]
+        start = dt.date.fromisoformat(date_start)
+        end = dt.date.fromisoformat(date_end)
+        expected = [start + dt.timedelta(days=n) for n in range((end - start).days + 1)]
+        assert sorted(fetched) == expected
+
+    def test_end_before_start_raises(self) -> None:
+        """ValueError is raised when date_end precedes date_start."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        with pytest.raises(ValueError, match="date_end"):
+            ERA5Downloader._split_calendar_safe("2024-03-01", "2024-02-01")
 
 
 # ---------------------------------------------------------------------------

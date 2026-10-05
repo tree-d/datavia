@@ -36,6 +36,9 @@ Added
 Fixed
 ~~~~~
 - Valid-time alignment bug in ERA5 data retrieval.
+- ERA5 CDS requests no longer fetch days outside the requested range when a
+  chunk spans a month boundary (``chunk_by="none"``, partial quarters and
+  years); such chunks are split into calendar-safe requests.
 - Edge NaN values when filling spatial coverage gaps.
 - File naming collisions for concurrent downloads.
 
