@@ -1,8 +1,8 @@
 """Datavia weather namespace package.
 
 Provides end-to-end weather data integration for Germany using ERA5 gridded
-reanalysis (NetCDF), HYRAS daily grids (NetCDF), and DWD station observations
-(Parquet).
+reanalysis (NetCDF), HYRAS daily grids (NetCDF), and Open-Meteo model output
+at DWD station coordinates (Parquet).
 """
 
 import pkgutil
