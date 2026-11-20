@@ -18,7 +18,9 @@ Public API
 - :func:`convert_units` / :func:`get_target_unit` — unit conversion between
   sources, used to bring station values to the gridded target unit.
 - :func:`is_accumulated`, :func:`get_day_start_hour` and
-  :func:`get_station_aggregation` — time-base settings per variable; see
+  :func:`get_station_aggregation` — time-base settings per variable
+  (:func:`station_data_supports` tells whether station data can be blended
+  at a temporal resolution); see
   :mod:`datavia.library.temporal` for the conventions.
 """
 
@@ -43,6 +45,7 @@ try:
 except ImportError:
     _HYRASDownloader = None  # type: ignore[assignment,misc]
 
+from .dwd_kriging_downloader import NC_VARIABLES, DWDKrigingDownloader
 from .era5_downloader import ACCUMULATED_VARIABLES, ERA5Downloader
 
 if TYPE_CHECKING:
@@ -83,6 +86,15 @@ _ERA5_LAND_LON_MIN: float = 5.4
 #: Eastern boundary of the ERA5-Land Zarr skeleton (degrees East).
 _ERA5_LAND_LON_MAX: float = 15.6
 
+#: Fixed WGS84 envelope (west, south, east, north) of the national HYRAS
+#: EPSG:3035 1 km grid, shared by "HYRAS" and the kriged "DWD_stations".
+_HYRAS_COVERAGE_BBOX: tuple[float, float, float, float] = (
+    5.307613684411584,
+    47.07781030622338,
+    15.707082890486497,
+    55.08908843154143,
+)
+
 # ---------------------------------------------------------------------------
 # Source registry
 # ---------------------------------------------------------------------------
@@ -103,8 +115,9 @@ _ERA5_LAND_LON_MAX: float = 15.6
 #:         ...
 #:     }
 #:
-#: ``grid_downloader`` is ``None`` for ``"DWD_stations"`` because that source
-#: has no gridded component.
+#: ``"DWD_stations"`` is gridded too (kriged station data); its entry also
+#: holds the settings of the station Parquet supplement (``native_units``,
+#: ``daily_aggregation``, ...), which any gridded source can blend in.
 SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
     "ERA5_land": {
         "grid_downloader": ERA5Downloader,
@@ -170,12 +183,7 @@ SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
         # Fixed WGS84 envelope of the national EPSG:3035 grid.  HYRAS does
         # not support bbox-subset downloads, so coverage checks must use this
         # same envelope for both requests and rebuilt store registrations.
-        "coverage_bbox": (
-            5.307613684411584,
-            47.07781030622338,
-            15.707082890486497,
-            55.08908843154143,
-        ),
+        "coverage_bbox": _HYRAS_COVERAGE_BBOX,
         # HYRAS stores are kept in their native ETRS89-LAEA (EPSG:3035)
         # projection.  The x/y coordinate arrays are derived from the
         # downloaded .nc files at write time — no pre-defined grid is required.
@@ -192,32 +200,51 @@ SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
         },
     },
     "DWD_stations": {
-        # Station-only source — no gridded downloader.
-        "grid_downloader": None,
-        # Open-Meteo shortwave_radiation is W/m²; convert to PAR.
-        "conversions": {
-            "surface_solar_radiation_downwards": {"from": "W_m2", "to": "PAR"},
+        # Daily DWD station observations (Climate Data Center), interpolated
+        # by external drift kriging onto the HYRAS 1 km grid; see
+        # datavia.weather.dwd_kriging_downloader.  Values are in target units.
+        "grid_downloader": DWDKrigingDownloader,
+        "conversions": {},
+        # Kriged grids are stored under HYRAS's short names, with HYRAS's
+        # time stamps (D 00:00; precipitation D 06:00).
+        "nc_variable_map": {
+            NC_VARIABLES[variable]["name"]: variable for variable in NC_VARIABLES
         },
+        # The grid is the HYRAS grid, so the coverage envelope is HYRAS's.
+        "coverage_bbox": _HYRAS_COVERAGE_BBOX,
+        "zarr_grid": {
+            "crs": "EPSG:3035",
+            "time_freq": "1D",
+            "dtype": "float32",
+            "fill_value": float("nan"),
+            "chunks": {"time": 365, "y": 10, "x": 10},
+            "codec": {"cname": "zstd", "clevel": 3, "shuffle": "shuffle"},
+        },
+        # --- Station supplement (Parquet, see DWDStationDownloader) ---
         # Units of the station parquet columns, used to convert station values
         # to the gridded source's target unit before blending.
         "native_units": {
             "2m_temperature": "degC",
+            "temperature_2m_max": "degC",
+            "temperature_2m_min": "degC",
             "total_precipitation": "mm",
-            "surface_solar_radiation_downwards": "W_m2",
             "relative_humidity_2m": "%",
         },
-        # Hourly records.  Daily mode aggregates them over the day so they
-        # represent the same quantity as the gridded daily values.
+        # One record per station and day: the daily selection takes that
+        # single value ("hours_required": 1), so mean and sum are the same.
         "daily_aggregation": {
             "2m_temperature": "mean",
+            "temperature_2m_max": "mean",
+            "temperature_2m_min": "mean",
             "relative_humidity_2m": "mean",
-            "surface_solar_radiation_downwards": "mean",
             "total_precipitation": "sum",
         },
-        # Fluxes stamped at interval end; the rest are instantaneous.
-        "interval_end_variables": frozenset(
-            {"total_precipitation", "surface_solar_radiation_downwards"}
-        ),
+        "station_records_per_day": 1,
+        # The station values are daily: hourly queries do not blend them.
+        "station_temporal_resolution": "daily",
+        # Precipitation (06-06 UTC) is stamped at its window end, D+1 06:00;
+        # the other variables at their window start, D 00:00.
+        "interval_end_variables": frozenset({"total_precipitation"}),
         "day_start_hour": {"total_precipitation": _PRECIPITATION_DAY_START_HOUR},
     },
 }
@@ -247,7 +274,7 @@ def get_grid_downloader_class(source_name: str) -> type[Downloader] | None:
     -------
     type[Downloader] or None
         The downloader class, or ``None`` when the source has no gridded
-        component (``"DWD_stations"``).
+        component.
 
     Raises
     ------
@@ -280,12 +307,29 @@ def is_accumulated(source_name: str, variable: str) -> bool:
 
 
 def get_station_aggregation(variable: str, temporal_resolution: str) -> dict[str, Any]:
-    """Return the daily-aggregation keyword arguments for DWD station data.
+    """Return the daily-selection keyword arguments for DWD station data.
 
     The result is passed to
-    :func:`~datavia.library.interpolation.interpolate_station_parquet`.  In
-    hourly mode, or for a variable without an aggregation rule, it selects
-    the nearest stamp (``daily_aggregation=None``).
+    :func:`~datavia.library.interpolation.interpolate_station_parquet`.  The
+    station Parquet holds one record per station and day, stamped so that
+    the day window of :func:`~datavia.library.temporal.day_window` contains
+    exactly it.
+
+    Parameters
+    ----------
+    variable : str
+        Pipeline variable name.
+    temporal_resolution : str
+        ``"daily"`` or ``"hourly"``.  Station data are daily, so callers skip
+        the station blend in hourly mode (see :func:`station_data_supports`);
+        here ``"hourly"`` selects the nearest stamp
+        (``daily_aggregation=None``).
+
+    Returns
+    -------
+    dict[str, Any]
+        ``daily_aggregation``, ``day_start_hour``, ``interval_end`` and
+        ``hours_required`` (records needed per day).
     """
     entry = SOURCE_REGISTRY["DWD_stations"]
     how = entry["daily_aggregation"].get(variable)
@@ -293,7 +337,28 @@ def get_station_aggregation(variable: str, temporal_resolution: str) -> dict[str
         "daily_aggregation": how if temporal_resolution == "daily" else None,
         "day_start_hour": get_day_start_hour("DWD_stations", variable),
         "interval_end": variable in entry["interval_end_variables"],
+        "hours_required": entry["station_records_per_day"],
     }
+
+
+def station_data_supports(temporal_resolution: str) -> bool:
+    """Return whether DWD station data can be blended at *temporal_resolution*.
+
+    Parameters
+    ----------
+    temporal_resolution : str
+        ``"daily"`` or ``"hourly"``.
+
+    Returns
+    -------
+    bool
+        ``True`` when the station records have this resolution (the station
+        Parquet is daily, so only ``"daily"``).
+    """
+    return (
+        SOURCE_REGISTRY["DWD_stations"]["station_temporal_resolution"]
+        == temporal_resolution
+    )
 
 
 def get_target_unit(
@@ -455,9 +520,8 @@ def get_valid_variables(source_name: str) -> frozenset[str] | None:
     ``"total_precipitation"``) that callers may pass to
     :class:`~datavia.weather.pipeline.WeatherPipeline`.
 
-    Returns ``None`` for sources that have no ``nc_variable_map`` (currently
-    ``"DWD_stations"``), indicating that no compile-time variable validation is
-    possible for that source.
+    Returns ``None`` for sources that have no ``nc_variable_map``, indicating
+    that no compile-time variable validation is possible for that source.
 
     Parameters
     ----------

@@ -116,6 +116,30 @@ Weather Downloaders
    :undoc-members:
    :show-inheritance:
 
+DWD Station Data and Kriging
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The ``DWD_stations`` source in two steps: the station observations from the
+DWD Climate Data Center, then their interpolation onto the HYRAS 1 km grid
+(see :doc:`../user_guide/kriging`).
+
+.. automodule:: datavia.weather.dwd_cdc
+   :members:
+   :undoc-members:
+
+.. automodule:: datavia.weather.dwd_kriging_downloader
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: datavia.weather.dwd_grid
+   :members:
+   :undoc-members:
+
+.. automodule:: datavia.weather.variogram_cache
+   :members:
+   :undoc-members:
+
 Weather Storage and Retrieval
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -134,6 +158,16 @@ Weather Storage and Retrieval
 .. automodule:: datavia.weather.getter_weather
    :members:
    :undoc-members:
+
+Kriging
+-------
+
+External drift and ordinary kriging of station data, computed in Mojo
+(package ``datavia-kriging``, ``packages/kriging``).
+
+.. automodule:: datavia.kriging
+   :members:
+   :imported-members:
 
 Pipeline Packages
 -----------------

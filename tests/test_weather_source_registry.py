@@ -77,13 +77,19 @@ class TestUnitConversions:
         overrides = {"2m_temperature": {"from": "bogus", "to": "other"}}
         assert apply_conversion("ERA5_land", "2m_temperature", 5.0, overrides) == 5.0
 
-    @pytest.mark.parametrize("source", ["HYRAS", "DWD_stations"])
-    def test_radiation_w_m2_converted_to_par(self, source: str) -> None:
-        """HYRAS and DWD W m⁻² radiation is converted to PAR."""
+    def test_radiation_w_m2_converted_to_par(self) -> None:
+        """HYRAS W m⁻² radiation is converted to PAR."""
         from datavia.weather.source_registry import apply_conversion
 
-        result = apply_conversion(source, "surface_solar_radiation_downwards", 100.0)
+        result = apply_conversion("HYRAS", "surface_solar_radiation_downwards", 100.0)
         assert result == pytest.approx(100.0 * 0.5 * 4.57)
+
+    def test_dwd_stations_values_pass_through(self) -> None:
+        """Kriged DWD values are already in target units: no conversion."""
+        from datavia.weather.source_registry import apply_conversion
+
+        assert apply_conversion("DWD_stations", "2m_temperature", 12.5) == 12.5
+        assert apply_conversion("DWD_stations", "total_precipitation", 3.0) == 3.0
 
     def test_radiation_era5_still_ssrd_to_par(self) -> None:
         """ERA5 J m⁻² radiation still converts to the same PAR unit."""
@@ -97,3 +103,38 @@ class TestUnitConversions:
 
 # ---------------------------------------------------------------------------
 # interpolate_station_parquet — index alignment fix (issue #4)
+
+
+class TestDWDStationsEntry:
+    """The kriged DWD_stations source is a gridded source like HYRAS."""
+
+    def test_grid_downloader_is_kriging(self) -> None:
+        from datavia.weather.dwd_kriging_downloader import DWDKrigingDownloader
+        from datavia.weather.source_registry import get_grid_downloader_class
+
+        assert get_grid_downloader_class("DWD_stations") is DWDKrigingDownloader
+
+    def test_valid_variables(self) -> None:
+        from datavia.weather.source_registry import get_valid_variables
+
+        assert get_valid_variables("DWD_stations") == {
+            "2m_temperature",
+            "temperature_2m_max",
+            "temperature_2m_min",
+            "total_precipitation",
+            "relative_humidity_2m",
+        }
+
+    def test_same_grid_envelope_and_store_layout_as_hyras(self) -> None:
+        from datavia.weather.source_registry import SOURCE_REGISTRY
+
+        dwd, hyras = SOURCE_REGISTRY["DWD_stations"], SOURCE_REGISTRY["HYRAS"]
+        assert dwd["coverage_bbox"] == hyras["coverage_bbox"]
+        assert dwd["zarr_grid"]["crs"] == hyras["zarr_grid"]["crs"] == "EPSG:3035"
+        assert dwd["zarr_grid"]["time_freq"] == "1D"
+
+    def test_station_data_is_daily_only(self) -> None:
+        from datavia.weather.source_registry import station_data_supports
+
+        assert station_data_supports("daily")
+        assert not station_data_supports("hourly")

@@ -275,6 +275,7 @@ lint-core = {cmd = "ruff check datavia/ tests/", default-environment = "dev"}
 test-unit = {cmd = "pytest tests/test_config.py tests/test_coordinate_transforms.py tests/test_spatial_ops.py -v", default-environment = "dev"}
 # CI variant of unit tests: adds coverage reporting; pass --junitxml=... via `pixi run test-unit-ci -- --junitxml=<file>`
 test-unit-ci = {cmd = "pytest tests/test_config.py tests/test_coordinate_transforms.py tests/test_spatial_ops.py -v --cov=datavia --cov-report=xml --cov-report=html", default-environment = "dev"}
+test-kriging = {cmd = "pytest packages/kriging/tests -v --no-cov", default-environment = "dev"}
 test-light = {cmd = "pytest tests/ -v -k 'not test_elevation_pipeline and not test_elevation_pipeline_inside_datavia'", default-environment = "dev"}
 
 # Heavy integration tests (with running backend containers and network access)
@@ -298,10 +299,29 @@ types-requests = ">=2.32.4,<3"
 types-shapely = ">=2.1.0,<3"
 scipy-stubs = ">=1.16.0,<2"
 
+# Kriging (datavia.kriging, packages/kriging) runs in Mojo.  Mojo and MAX come
+# from the Modular conda channel; strict channel priority keeps every other
+# package on conda-forge.
+[tool.pixi.feature.kriging]
+channels = ["conda-forge", "https://conda.modular.com/max"]
+
+[tool.pixi.feature.kriging.dependencies]
+mojo = ">=1.2,<2"
+max = ">=26.6,<27"
+
+[tool.pixi.feature.kriging.pypi-dependencies]
+datavia-kriging = { path = "./packages/kriging/", editable = true }
+
+[tool.pixi.feature.kriging.tasks]
+test-kriging-mojo-kriging = "mojo run -I packages/kriging/datavia/kriging packages/kriging/tests/mojo/test_kriging.mojo"
+test-kriging-mojo-variogram = "mojo run -I packages/kriging/datavia/kriging packages/kriging/tests/mojo/test_variogram.mojo"
+test-kriging-mojo-empirical-variogram = "mojo run -I packages/kriging/datavia/kriging packages/kriging/tests/mojo/test_empirical_variogram.mojo"
+test-kriging-mojo = { depends-on = ["test-kriging-mojo-kriging", "test-kriging-mojo-variogram", "test-kriging-mojo-empirical-variogram"] }
+
 # Environments
 [tool.pixi.environments]
-default = { solve-group = "default" }
-dev = { features = ["dev"], solve-group = "default" }
+default = { features = ["kriging"], solve-group = "default" }
+dev = { features = ["dev", "kriging"], solve-group = "default" }
 vector = { features = ["vector"], solve-group = "default" }
 
 # Runtime dependencies are intentionally sourced from PyPI (via [project.dependencies])

@@ -51,6 +51,7 @@ from .source_registry import (
     get_station_aggregation,
     get_target_unit,
     is_accumulated,
+    station_data_supports,
 )
 from .zarr_store_manager import ZarrStoreManager
 
@@ -523,6 +524,16 @@ class GetterWeather(Getter):
         if is_multi_time:
             self._raise_if_missing(results, variable, from_dt, to_dt)
             return results
+
+        # DWD station records are daily values: an hourly query cannot use them.
+        if parquet_files and not station_data_supports(self._temporal_resolution):
+            logger.info(
+                "Skipping the DWD station blend for %s: station data are daily, "
+                "the query is %s.",
+                variable,
+                self._temporal_resolution,
+            )
+            parquet_files = []
 
         station_kwargs = get_station_aggregation(variable, self._temporal_resolution)
         # Station parquet files are always DWD: convert them to the unit the

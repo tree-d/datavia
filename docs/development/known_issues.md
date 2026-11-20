@@ -167,18 +167,20 @@ D selects day D; its time of day is ignored.  A day with any missing stamp is
 reported missing (`MissingWeatherDataError`), never approximated.
 
 - **Temperature, humidity:** the daily mean.  HYRAS `tas`/`hurs` store it
-  directly (`tas` stamped 00:00, verified in the local 2025 store).  ERA5 and
-  DWD (Open-Meteo) hourly snapshots are averaged over the 24 stamps
-  `D 00:00 .. D 23:00`.  *Assumption, not verified:* HYRAS daily means use
+  directly (`tas` stamped 00:00, verified in the local 2025 store), and so do
+  the DWD stations (CDC `TMK`/`UPM`, 00-24 UTC since 2007; earlier station
+  days followed the local climate-day definition).  ERA5 hourly snapshots are
+  averaged over the 24 stamps `D 00:00 .. D 23:00`.  *Assumption, not verified:* HYRAS daily means use
   the 00-24 UTC day.
 - **Radiation:** the mean flux of 00:00-24:00 UTC.  HYRAS `rsds` is a 00-24 UTC
   daily mean (stamp 12:00, bounds 00:00-00:00; verified in
-  `rsds_hyras_5_2020_v3-1_de.nc`).  Open-Meteo `shortwave_radiation` is the
-  mean of the preceding hour and is averaged over `(D 00:00, D+1 00:00]`.
+  `rsds_hyras_5_2020_v3-1_de.nc`).  The DWD stations provide no radiation.
 - **Precipitation:** the total of **06:00 D to 06:00 D+1 UTC**.  This is HYRAS
   `pr` (stamped 06:00 D, verified in `pr_hyras_1_2020_v6-1_de.nc`) and DWD's
-  own daily convention.  ERA5 and Open-Meteo hourly data are summed over that
-  window; the hour is set per variable by `day_start_hour` in the registry.
+  own daily convention (CDC `RS`: 05:51 UTC on D to 05:50 UTC on D+1,
+  verified in the CDC parameter metadata).  ERA5 hourly data are summed over
+  that window; the hour is set per variable by `day_start_hour` in the
+  registry.
 - **HYRAS stamp hours differ per variable** (tas 00:00, pr 06:00, rsds
   12:00), so HYRAS values are matched by date, not by nearest stamp.  The
   former nearest-stamp pick returned the next day's `tas` for queries at or
@@ -190,7 +192,7 @@ reported missing (`MissingWeatherDataError`), never approximated.
   `period_s=3600`).  Small negative increments, which occur in real ERA5-Land
   data, are clipped to 0.
 - **Download edges:** the last day's total needs stamps of the following day,
-  so ERA5 and DWD downloads request them (see `buffer_days` in the weather
+  so ERA5 downloads request them (see `buffer_days` in the weather
   README).  Data downloaded before this was added lacks those stamps: the
   last day of such a download stays missing until the adjacent range is
   downloaded or the range is re-downloaded.
@@ -200,41 +202,43 @@ reported missing (`MissingWeatherDataError`), never approximated.
 
 ---
 
-### ⚠️ "DWD station" data is Open-Meteo model output, not observations
+### ⚠️ Kriged DWD stores are built per whole year
 
-**File:** `packages/weather/datavia/weather/dwd_downloader.py`
+**File:** `packages/weather/datavia/weather/dwd_kriging_downloader.py`
 
-`DWDStationDownloader` queries the Open-Meteo **archive** API at DWD station
-coordinates.  That API returns reanalysis/model output (ERA5, ERA5-Land and
-ECMWF IFS based), snapped to the IFS O1280 grid (~8 x 11 km in Germany), not
-the measurements of the DWD stations.  Consequences:
+Projected Zarr stores are written per whole year, so the first update of a
+year kriges every month of it, even when only a few days were requested;
+afterwards only months not yet complete in the store are kriged again (the
+running month on every update).  Precipitation is by far the most expensive
+variable: the rain gauge network is about four times denser than the climate
+network and its reporting stations change almost daily, so the kriging
+weights are rarely reused.
 
-- Nearby "stations" in the same O1280 cell return identical values.
-- Blending these values with ERA5-Land as "station" data (default
-  `station_weight=0.6`) largely double-counts reanalysis instead of adding
-  independent observations.
-- Documentation that calls them DWD daily totals refers to the DWD *day
-  convention* only (06-06 UTC for precipitation), not to DWD data.
+**Mitigation:** the Mojo kernels use all CPU cores, so the first build of a
+year benefits from a machine with many.  A smaller `max_dist` for
+precipitation would cut the cost roughly with the cube of the stations in
+range, but changes the operational settings.
 
-For real observations, fetch DWD CDC data (e.g. with
-[`wetterdienst`](https://github.com/earthobservations/wetterdienst)) and keep
-the same parquet layout.
+### ⚠️ No station within `max_dist` gives 0, not missing
 
----
+**File:** `packages/kriging/datavia/kriging/kernels/ordinary_kriging.mojo`
 
-### ⚠️ Open-Meteo licensing for `DWDStationDownloader`
+A target with no reporting station within `max_dist` gets the estimate 0.
+That is the operational rule for precipitation, but would be wrong for
+temperature or humidity.  The `DWD_stations` settings (150 km for those
+variables) leave no land cell of Germany without stations in range, and days
+that few stations have reported yet are not kriged; other users of
+`datavia.kriging` must choose `max_dist` accordingly.
 
-**File:** `packages/weather/datavia/weather/dwd_downloader.py`
+### ⚠️ Station positions are the current ones for the whole period
 
-The Open-Meteo free-tier API used by `DWDStationDownloader` restricts use to
-**non-commercial** purposes.  UFZ / Helmholtz grant-funded research is a legal
-grey area.  Options:
+**File:** `packages/weather/datavia/weather/dwd_cdc.py`
 
-1. Subscribe to the Open-Meteo commercial tier.
-2. Replace with [`wetterdienst`](https://github.com/earthobservations/wetterdienst)
-   (pulls from DWD CDC directly; CC BY 4.0).
-3. Drop station blending for ERA5 sources (see scientific concern above) and
-   limit `DWDStationDownloader` to HYRAS-only workflows.
+A station's position and elevation are taken from the last row of its
+geography metadata and used for its whole series, as in the operational
+chain.  Stations that moved get their old values at the new position.  For
+recent years the effect is small (moves are rare and usually short);
+historical analyses over decades could use the position valid on each day.
 
 ---
 

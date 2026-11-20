@@ -56,3 +56,5 @@ datavia_config.py
 
 #env files
 .env
+# Mojo build cache (mojo.importer compiles .mojo sources on first import)
+__mojocache__/

@@ -43,6 +43,13 @@ dependencies = [
 era5 = [
     "cdsapi>=0.7",
 ]
+# Kriged DWD station fields (source "DWD_stations"): the kriging itself, and
+# DGM200 elevation as the external drift.  datavia-kriging also needs Mojo and
+# MAX, see packages/kriging/README.md.
+kriging = [
+    "datavia-kriging>=0.1,<1",
+    "datavia-elevation>=1.0.0.dev0,<2.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/tree-d/datavia"

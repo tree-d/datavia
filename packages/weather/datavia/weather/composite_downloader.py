@@ -56,8 +56,12 @@ class CompositeWeatherDownloader(CompositeDownloader):
          - yes
          - HYRAS + DWD
        * - ``"DWD_stations"``
-         - (implied)
-         - DWD only
+         - no
+         - :class:`~datavia.weather.dwd_kriging_downloader.DWDKrigingDownloader`
+           (DWD station observations kriged onto the HYRAS 1 km grid)
+       * - ``"DWD_stations"``
+         - yes
+         - kriged grids + DWD station Parquet
 
     Keys used from *config*:
 
@@ -69,9 +73,12 @@ class CompositeWeatherDownloader(CompositeDownloader):
     - ``era5_bbox`` (list[float], optional): Override for the ERA5 bounding box.
     - ``buffer_days`` (int, optional): Extra days prepended for ERA5
       accumulative variables.
-    - ``dwd_stations`` (list[dict], optional): Override for the DWD station
-      list.  When present, a DWD downloader is always added alongside the
-      grid downloader.
+    - ``dwd_stations`` (``True`` or list[str], optional): When present (and
+      not ``False``), the daily DWD station observations are downloaded as a
+      Parquet file alongside the grid, for blending at query time.  ``True``
+      means every station; a list restricts it to those DWD station ids.
+    - ``temporal_resolution`` (str, optional): ``"daily"`` (default) or
+      ``"hourly"``; HYRAS and DWD_stations support ``"daily"`` only.
     """
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:
@@ -91,7 +98,7 @@ class CompositeWeatherDownloader(CompositeDownloader):
         date_start: str | None = cfg.get("date_start")
         date_end: str | None = cfg.get("date_end")
 
-        # --- Grid downloader (ERA5, HYRAS, or None for DWD-only) ---
+        # --- Grid downloader (ERA5, HYRAS or kriged DWD stations) ---
         grid_class = get_grid_downloader_class(source)
         if grid_class is not None:
             grid_kwargs: dict[str, Any] = {
@@ -108,7 +115,7 @@ class CompositeWeatherDownloader(CompositeDownloader):
                     grid_kwargs["cds_queue_timeout"] = cfg["cds_queue_timeout"]
                 if "chunk_by" in cfg:
                     grid_kwargs["chunk_by"] = cfg["chunk_by"]
-            elif source == "HYRAS":
+            elif source in ("HYRAS", "DWD_stations"):
                 grid_kwargs["temporal_resolution"] = cfg.get(
                     "temporal_resolution", "daily"
                 )
@@ -116,12 +123,12 @@ class CompositeWeatherDownloader(CompositeDownloader):
         else:
             self._grid = None
 
-        # --- DWD station downloader (when explicitly configured or DWD-only) ---
-        use_dwd = "dwd_stations" in cfg or source == "DWD_stations"
+        # --- DWD station Parquet (the optional station supplement) ---
+        use_dwd = "dwd_stations" in cfg and cfg["dwd_stations"] is not False
         self._dwd: DWDStationDownloader | None = None
         if use_dwd:
-            # Variables the station source cannot fetch (daily-only aggregates,
-            # grid-only fields) are served by the grid downloader alone.
+            # Variables the station network does not observe (e.g. radiation)
+            # are served by the grid downloader alone.
             dwd_variables, skipped = DWDStationDownloader.split_supported(variables)
             if skipped:
                 logger.warning(
@@ -135,10 +142,6 @@ class CompositeWeatherDownloader(CompositeDownloader):
                     date_start=date_start,
                     date_end=date_end,
                     stations=cfg.get("dwd_stations"),
-                )
-            elif source == "DWD_stations":
-                raise ValueError(
-                    f"DWD station download does not support variables {skipped}"
                 )
 
         logger.info(

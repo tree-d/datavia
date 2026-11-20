@@ -773,6 +773,7 @@ def interpolate_station_parquet(
     daily_aggregation: Literal["mean", "sum"] | None = None,
     day_start_hour: int = 0,
     interval_end: bool = True,
+    hours_required: int = 24,
 ) -> float:
     """Estimate a weather variable at a point using nearby station observations.
 
@@ -799,9 +800,9 @@ def interpolate_station_parquet(
         Search radius in kilometers.  Defaults to 50 km.
     daily_aggregation : {"mean", "sum"} or None, optional
         ``None`` (default) uses the single nearest stamp.  ``"mean"`` or
-        ``"sum"`` instead aggregates each station's hourly values over the
-        calendar date of *datetime_utc*; stations with fewer than 24 values
-        that day are dropped.
+        ``"sum"`` instead aggregates each station's values over the
+        calendar date of *datetime_utc*; stations with fewer than
+        *hours_required* values that day are dropped.
     day_start_hour : int, optional
         UTC hour at which the aggregation day starts (0; 6 for
         precipitation).  Only used with *daily_aggregation*.
@@ -809,6 +810,10 @@ def interpolate_station_parquet(
         ``True`` (default) for interval-end fluxes, whose day D is
         ``(D h0, D+1 h0]``; ``False`` for instantaneous values, whose day is
         ``[D h0, D+1 h0)``.  Only used with *daily_aggregation*.
+    hours_required : int, optional
+        Records a station needs within the day to be used (24 for hourly
+        records, the default; 1 for daily records).  Only used with
+        *daily_aggregation*.
 
     Returns
     -------
@@ -875,6 +880,7 @@ def interpolate_station_parquet(
             daily_aggregation,
             target,
             group_cols=["latitude", "longitude", "_dist_km"],
+            hours_required=hours_required,
             day_start_hour=day_start_hour,
             interval_end=interval_end,
         )

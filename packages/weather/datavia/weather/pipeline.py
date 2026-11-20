@@ -1,8 +1,9 @@
 """
 WeatherPipeline — end-to-end weather data integration pipeline.
 
-Integrates gridded reanalysis data (ERA5-Land or HYRAS) and optionally DWD
-station observations (Parquet) from Germany into a single pipeline.  Downloads
+Integrates gridded weather data for Germany (ERA5-Land reanalysis, HYRAS
+grids, or DWD station observations kriged onto the HYRAS grid) and optionally
+daily DWD station observations (Parquet) into a single pipeline.  Downloads
 are orchestrated by
 :class:`~datavia.weather.composite_downloader.CompositeWeatherDownloader`,
 which delegates to the appropriate grid downloader and optionally to
@@ -198,16 +199,16 @@ class WeatherPipeline(Pipeline):
            ``surface_solar_radiation_downwards``, ``relative_humidity_2m``
          - None (DWD OpenData).
        * - ``"DWD_stations"``
-         - Hourly Open-Meteo **model output** at station coordinates (not
-           station observations; see
-           :mod:`~datavia.weather.dwd_downloader`).
-         - ``2m_temperature``, ``total_precipitation``,
-           ``surface_solar_radiation_downwards``, ``relative_humidity_2m``
-         - None.
+         - Daily DWD station observations (Climate Data Center), interpolated
+           by external drift kriging onto the HYRAS 1 km grid (EPSG:3035).
+           Daily only.  Needs ``datavia-weather[kriging]`` (Mojo); see
+           :mod:`~datavia.weather.dwd_kriging_downloader`.
+         - ``2m_temperature``, ``temperature_2m_max``,
+           ``temperature_2m_min``, ``total_precipitation``,
+           ``relative_humidity_2m``
+         - None (DWD OpenData).
 
-    Variables are checked at construction for ``"ERA5_land"`` and
-    ``"HYRAS"``.  For ``"DWD_stations"`` an unsupported variable raises
-    ``ValueError`` on the first :meth:`update_data` call instead.
+    Variables are checked at construction.
 
     **Output units** (after the automatic conversion; override with
     ``unit_conversions``)
@@ -255,7 +256,8 @@ class WeatherPipeline(Pipeline):
        * - ``temporal_resolution``
          - ``"daily"`` (default) or ``"hourly"``
          - How queries aggregate over time (see output units).
-           ``"HYRAS"`` supports ``"daily"`` only; ``"hourly"`` raises
+           ``"HYRAS"`` and ``"DWD_stations"`` support ``"daily"`` only;
+           ``"hourly"`` raises
            ``ValueError`` on the first :meth:`update_data` call.
        * - ``era5_bbox``
          - list[float], ERA5 only.  Default: Germany,
@@ -266,17 +268,14 @@ class WeatherPipeline(Pipeline):
            lon 5.4-15.5 °E (± 0.05°), otherwise ``ValueError`` at
            construction.
        * - ``dwd_stations``
-         - list[dict], optional
-         - Station locations as
-           ``[{"id": "Berlin", "latitude": 52.52, "longitude": 13.41}, ...]``.
-           ``id`` is any unique label.  For ``"ERA5_land"`` / ``"HYRAS"``,
-           including this key also downloads station data.  That data is
-           blended with the gridded value at query time (see
-           *station_weight* in :meth:`get_weather_data`), but **only for
-           single-timestamp queries**.  A list-valued ``datetime_utc``
-           returns gridded values only.  For ``"DWD_stations"`` the key
-           defaults to five stations: Berlin, Munich, Hamburg, Frankfurt,
-           and Cologne.
+         - ``True`` or list[str], optional
+         - Also download the daily DWD station observations (Parquet):
+           ``True`` for every station, or a list of DWD station ids such as
+           ``["00044", "01048"]``.  The station values are blended with the
+           gridded value at query time (see *station_weight* in
+           :meth:`get_weather_data`), but **only for daily, single-timestamp
+           queries**.  A list-valued ``datetime_utc`` or an hourly query
+           returns gridded values only.
        * - ``unit_conversions``
          - dict, optional
          - Per-variable override of the output conversion, e.g.
@@ -540,29 +539,6 @@ class WeatherPipeline(Pipeline):
         # Reconcile disk with DB before checking what to download.
         self.sync_files_and_database()
 
-        # Pure DWD station sources have no grid bbox: CoverageManager falls back
-        # to the Germany default and would report "all covered" after any prior
-        # DWD download, regardless of which stations were requested.  Use a
-        # direct station-aware DB check instead and, when data is missing,
-        # issue a single download cell for the full configured date range.
-        # Hybrid ERA5+DWD pipelines are excluded: they still need CoverageManager
-        # to compute the ERA5 grid delta, and CompositeWeatherDownloader handles
-        # the DWD parquet download alongside the ERA5 NetCDF in the same cell.
-        if self._is_dwd_source():
-            station_ids = self._get_dwd_station_ids()
-            variable = self._config["variables"][0]
-            if self.saver.check_data_exists(
-                variable=variable,
-                from_dt=self._config["date_start"],
-                to_dt=self._config["date_end"],
-                station_ids=station_ids,
-            ):
-                logger.info(
-                    "WeatherPipeline '%s': all requested data already registered. "
-                    "Nothing to download.",
-                    self.name,
-                )
-                return True
         # Migrate any legacy .nc files to Zarr before the coverage check so
         # that already-downloaded data is not re-fetched from the network.
         self._migrate_legacy_nc_files()
@@ -745,39 +721,6 @@ class WeatherPipeline(Pipeline):
             # Convert back to CDS API convention: [north, west, south, east].
             cell_config["era5_bbox"] = [n, w, s, e]
         return cell_config
-
-    def _is_dwd_source(self) -> bool:
-        """Return ``True`` when this pipeline targets DWD station data only.
-
-        Only the pure DWD-only mode (``config["source"] == "DWD_stations"``) is
-        considered a DWD source here.  Hybrid ERA5+DWD pipelines
-        (``"dwd_stations"`` in config but ``source != "DWD_stations"``) must
-        still run :class:`CoverageManager` for the ERA5 grid, so they are
-        deliberately excluded.
-
-        Returns
-        -------
-        bool
-            ``True`` only for pure DWD station pipelines, ``False`` otherwise.
-        """
-        return self._config.get("source") == "DWD_stations"
-
-    def _get_dwd_station_ids(self) -> list[str] | None:
-        """Return sorted station IDs from the configured DWD station list.
-
-        Reads ``config["dwd_stations"]``, which is a list of dicts each
-        containing an ``"id"`` key (station identifier).
-
-        Returns
-        -------
-        list[str] or None
-            Sorted string station IDs, or ``None`` when the station list is
-            absent or empty.
-        """
-        stations: list[dict] = self._config.get("dwd_stations", [])
-        if not stations:
-            return None
-        return sorted(str(station["id"]) for station in stations)
 
     def get_weather_data(
         self,

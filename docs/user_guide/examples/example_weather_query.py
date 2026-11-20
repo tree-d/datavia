@@ -55,12 +55,12 @@ MONITORING_SITES: list[dict[str, object]] = [
 ]
 
 #: DWD station list used when ``USE_DWD_STATIONS=1``.
-DWD_REFERENCE_STATIONS: list[dict[str, object]] = [
-    {"id": "Muenster", "latitude": 51.96, "longitude": 7.63},
-    {"id": "Magdeburg", "latitude": 52.12, "longitude": 11.63},
-    {"id": "Wuerzburg", "latitude": 49.80, "longitude": 9.93},
-    {"id": "Rostock", "latitude": 54.09, "longitude": 12.11},
-    {"id": "Freiburg", "latitude": 48.00, "longitude": 7.85},
+DWD_REFERENCE_STATIONS: list[str] = [
+    "01766",  # Muenster/Osnabrueck
+    "03126",  # Magdeburg
+    "05705",  # Wuerzburg
+    "04271",  # Rostock-Warnemuende
+    "01443",  # Freiburg
 ]
 
 # ---------------------------------------------------------------------------
@@ -82,8 +82,8 @@ def build_hyras_pipeline(
     date_end : str
         ISO-8601 end date, e.g. ``"2023-07-07"``.
     include_dwd_stations : bool, optional
-        When ``True``, adds DWD point-station observations (via the
-        Open-Meteo archive API) alongside the HYRAS grid so that
+        When ``True``, adds the daily observations of a few DWD stations
+        (from the DWD Climate Data Center) alongside the HYRAS grid so that
         :meth:`~datavia.weather.getter_weather.GetterWeather.get_weather_data`
         can blend both sources. Defaults to ``False``.
 

@@ -494,25 +494,57 @@ class TestStationDaily:
         assert out["x"].item() == 24.0
 
 
+def _daily_station_parquet(tmp_path, column, stamps, values):
+    """Daily station parquet: one station, one record per stamp."""
+    path = tmp_path / "daily.parquet"
+    pd.DataFrame(
+        {
+            "station_id": "00044",
+            "latitude": 50.0,
+            "longitude": 10.0,
+            "datetime": pd.to_datetime(stamps),
+            column: values,
+        }
+    ).to_parquet(path)
+    return str(path)
+
+
 def test_station_daily_precipitation_sum(tmp_path):
-    """DWD precipitation in daily mode is the 24 h sum, per the registry."""
+    """DWD precipitation of day D is the single record stamped D+1 06:00."""
     kwargs = get_station_aggregation("total_precipitation", "daily")
     assert kwargs == {
         "daily_aggregation": "sum",
         "day_start_hour": 6,
         "interval_end": True,
+        "hours_required": 1,
     }
-    path = _station_parquet(
+    # Records of June 1, 2 and 3, each stamped at the end of its 06-06 window.
+    path = _daily_station_parquet(
         tmp_path,
-        [("A", 50.0, 10.0)],
         "total_precipitation",
-        start="2025-06-02 07:00",
-        value=0.5,
+        ["2025-06-02 06:00", "2025-06-03 06:00", "2025-06-04 06:00"],
+        [1.0, 12.0, 3.0],
     )
     got = interpolate_station_parquet(
         path, 50.0, 10.0, "total_precipitation", pd.Timestamp("2025-06-02"), **kwargs
     )
     assert got == pytest.approx(12.0)
+
+
+def test_station_daily_temperature_selects_its_day(tmp_path):
+    """A daily mean temperature stamped D 00:00 is the value of day D."""
+    kwargs = get_station_aggregation("2m_temperature", "daily")
+    assert kwargs["interval_end"] is False
+    path = _daily_station_parquet(
+        tmp_path,
+        "2m_temperature",
+        ["2025-06-01", "2025-06-02", "2025-06-03"],
+        [10.0, 20.0, 30.0],
+    )
+    got = interpolate_station_parquet(
+        path, 50.0, 10.0, "2m_temperature", pd.Timestamp("2025-06-02 15:00"), **kwargs
+    )
+    assert got == pytest.approx(20.0)
 
 
 def test_station_aggregation_hourly_mode_selects_nearest():

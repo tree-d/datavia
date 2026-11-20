@@ -15,9 +15,10 @@ Conventions
   - ``"accumulated"`` — ERA5-Land running totals since 00 UTC (``tp``,
     ``ssrd``); see :func:`deaccumulate_since_midnight`.
 
-* ERA5 and Open-Meteo stamp fluxes at **interval end**: the value at
-  ``01:00`` covers ``00:00-01:00``, so flux day D holds the stamps in
-  ``(D h0, D+1 h0]``.
+* ERA5 stamps fluxes at **interval end**: the value at ``01:00`` covers
+  ``00:00-01:00``, so flux day D holds the stamps in ``(D h0, D+1 h0]``.  The
+  daily DWD station Parquet stamps precipitation of day D at its window end,
+  ``D+1 06:00``, so the same window holds exactly that one record.
 * Every helper returns NaN when a needed stamp is missing, so a partial day
   never passes for a daily value.
 """

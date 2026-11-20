@@ -24,8 +24,20 @@ Added
   temperature, humidity, radiation).
 - ``Era5Downloader`` for ECMWF ERA5 reanalysis data with chunked download
   support to handle large time ranges efficiently.
-- ``DWDStationDownloader`` for hourly Open-Meteo model output at configured
-  coordinates (not DWD observations).
+- ``DWD_stations`` weather source: daily DWD station observations from the
+  Climate Data Center (``datavia.weather.dwd_cdc``), interpolated by external
+  drift kriging onto the HYRAS 1 km grid (``DWDKrigingDownloader``) and stored
+  as Zarr like HYRAS.  Variables: daily mean, maximum and minimum
+  temperature, precipitation and relative humidity.
+- ``datavia-kriging`` package (``packages/kriging``, ``datavia.kriging``):
+  external drift and ordinary kriging with empirical variogram and variogram
+  fit, computed in Mojo; self-contained so it can move to its own repository.
+- ``VariogramCache``: one fitted variogram per variable and calendar month,
+  cached as JSON in ``<data_dir>/DWD_stations/_variograms``.
+- ``DWDStationDownloader`` writes the daily CDC station observations as
+  Parquet for the optional station blend (``dwd_stations``), which now takes
+  ``True`` or a list of DWD station ids.  It replaces the former Open-Meteo
+  model output at station coordinates.
 - ``CompositeDownloader`` for transparent multi-source queries with fallback.
 - ``CoverageManager`` for tracking spatial and temporal coverage of
   already-downloaded data to avoid redundant downloads.

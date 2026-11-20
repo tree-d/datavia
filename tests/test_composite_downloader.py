@@ -69,17 +69,50 @@ class TestCompositeWeatherDownloader:
         assert isinstance(composite.downloaders[0], HYRASDownloader)
         assert isinstance(composite.downloaders[1], DWDStationDownloader)
 
-    def test_dwd_only_mode(self) -> None:
-        """DWD_stations source yields one DWD downloader and no grid downloader."""
+    def test_dwd_stations_mode_kriges(self) -> None:
+        """DWD_stations source yields the kriging grid downloader only."""
         from datavia.weather.composite_downloader import CompositeWeatherDownloader
-        from datavia.weather.dwd_downloader import DWDStationDownloader
+        from datavia.weather.dwd_kriging_downloader import DWDKrigingDownloader
 
         composite = CompositeWeatherDownloader(
             config={"source": "DWD_stations", **self._BASE_CFG}
         )
         assert len(composite.downloaders) == 1
-        assert isinstance(composite.downloaders[0], DWDStationDownloader)
-        assert composite._grid is None
+        assert isinstance(composite.downloaders[0], DWDKrigingDownloader)
+        assert composite._dwd is None
+
+    def test_dwd_stations_with_station_parquet(self) -> None:
+        """DWD_stations plus dwd_stations: kriged grids and the station Parquet."""
+        from datavia.weather.composite_downloader import CompositeWeatherDownloader
+        from datavia.weather.dwd_downloader import DWDStationDownloader
+        from datavia.weather.dwd_kriging_downloader import DWDKrigingDownloader
+
+        composite = CompositeWeatherDownloader(
+            config={"source": "DWD_stations", "dwd_stations": True, **self._BASE_CFG}
+        )
+        assert isinstance(composite.downloaders[0], DWDKrigingDownloader)
+        assert isinstance(composite.downloaders[1], DWDStationDownloader)
+
+    def test_dwd_stations_false_disables_station_parquet(self) -> None:
+        from datavia.weather.composite_downloader import CompositeWeatherDownloader
+
+        composite = CompositeWeatherDownloader(
+            config={"source": "HYRAS", "dwd_stations": False, **self._BASE_CFG}
+        )
+        assert composite._dwd is None
+
+    def test_dwd_stations_hourly_raises(self) -> None:
+        import pytest
+        from datavia.weather.composite_downloader import CompositeWeatherDownloader
+
+        with pytest.raises(ValueError, match="daily values only"):
+            CompositeWeatherDownloader(
+                config={
+                    "source": "DWD_stations",
+                    "temporal_resolution": "hourly",
+                    **self._BASE_CFG,
+                }
+            )
 
     def test_download_combines_paths(self) -> None:
         """download() joins grid and DWD paths with a newline."""
@@ -196,8 +229,8 @@ class TestCompositeDownloaderChunkByForwarding:
 # WeatherPipeline — chunk_by config key acceptance
 
 
-class TestCompositeDailyOnlyVariables:
-    """Daily-only variables are served by the grid source, never by DWD."""
+class TestCompositeStationVariables:
+    """Variables the station network does not observe go to the grid only."""
 
     _CFG: ClassVar[dict] = {
         "date_start": "2024-01-01",
@@ -205,10 +238,10 @@ class TestCompositeDailyOnlyVariables:
         "dwd_stations": [],
     }
 
-    def test_hybrid_filters_daily_only_from_dwd(self) -> None:
+    def test_hybrid_filters_unobserved_from_dwd(self) -> None:
         from datavia.weather.composite_downloader import CompositeWeatherDownloader
 
-        variables = ["temperature_2m_max", "2m_temperature"]
+        variables = ["surface_solar_radiation_downwards", "2m_temperature"]
         composite = CompositeWeatherDownloader(
             config={"source": "HYRAS", "variables": variables, **self._CFG}
         )
@@ -216,29 +249,41 @@ class TestCompositeDailyOnlyVariables:
         assert composite._dwd.variables == ["2m_temperature"]
         assert composite._grid is not None
 
-    def test_hybrid_only_daily_only_disables_dwd(self) -> None:
+    def test_hybrid_only_unobserved_disables_dwd(self) -> None:
         from datavia.weather.composite_downloader import CompositeWeatherDownloader
 
         composite = CompositeWeatherDownloader(
             config={
                 "source": "HYRAS",
-                "variables": ["temperature_2m_max", "temperature_2m_min"],
+                "variables": ["surface_solar_radiation_downwards"],
                 **self._CFG,
             }
         )
         assert composite._dwd is None
         assert len(composite.downloaders) == 1
 
-    def test_dwd_only_daily_only_raises(self) -> None:
+    def test_daily_extremes_come_from_stations_too(self) -> None:
+        """CDC daily data include the daily maximum and minimum temperature."""
+        from datavia.weather.composite_downloader import CompositeWeatherDownloader
+
+        variables = ["temperature_2m_max", "temperature_2m_min"]
+        composite = CompositeWeatherDownloader(
+            config={"source": "HYRAS", "variables": variables, **self._CFG}
+        )
+        assert composite._dwd is not None
+        assert composite._dwd.variables == variables
+
+    def test_dwd_stations_unsupported_variable_raises(self) -> None:
         import pytest
         from datavia.weather.composite_downloader import CompositeWeatherDownloader
 
-        with pytest.raises(ValueError, match="does not support"):
+        with pytest.raises(ValueError, match="not available from DWD_stations"):
             CompositeWeatherDownloader(
                 config={
                     "source": "DWD_stations",
-                    "variables": ["temperature_2m_max"],
-                    **self._CFG,
+                    "variables": ["surface_solar_radiation_downwards"],
+                    "date_start": "2024-01-01",
+                    "date_end": "2024-01-31",
                 }
             )
 

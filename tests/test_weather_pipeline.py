@@ -276,12 +276,8 @@ class TestWeatherPipeline:
                 }
             )
 
-    def test_update_data_skips_dwd_when_stations_covered(self) -> None:
-        """update_data() returns True without downloading when DWD data is cached.
-
-        When saver.check_data_exists() returns True for the configured station
-        set and date range, update_data() must not call the downloader.
-        """
+    def _dwd_pipeline(self):
+        """A DWD_stations pipeline with mocked components."""
         from datavia.weather.pipeline import WeatherPipeline
 
         pipe = WeatherPipeline(
@@ -290,68 +286,54 @@ class TestWeatherPipeline:
                 "variables": ["2m_temperature"],
                 "date_start": "2024-07-01",
                 "date_end": "2024-07-31",
-                "dwd_stations": [
-                    {"id": "01234", "latitude": 53.5, "longitude": 10.0},
-                ],
             }
         )
         pipe.downloader = MagicMock()
         pipe.saver = MagicMock()
-        pipe.saver.check_data_exists.return_value = True
-        pipe.getter = MagicMock()
-
-        with patch.object(pipe, "sync_files_and_database"):
-            result = pipe.update_data()
-
-        assert result is True
-        pipe.saver.check_data_exists.assert_called_once_with(
-            variable="2m_temperature",
-            from_dt="2024-07-01",
-            to_dt="2024-07-31",
-            station_ids=["01234"],
-        )
-        pipe.downloader.download.assert_not_called()
-
-    def test_update_data_downloads_dwd_when_station_set_differs(self) -> None:
-        """update_data() proceeds to download when the requested DWD stations
-        are not yet cached.
-
-        When saver.check_data_exists() returns False, update_data() must call
-        the downloader exactly once and save the returned file path.
-        """
-        from datavia.weather.pipeline import WeatherPipeline
-
-        pipe = WeatherPipeline(
-            config={
-                "source": "DWD_stations",
-                "variables": ["2m_temperature"],
-                "date_start": "2024-07-01",
-                "date_end": "2024-07-31",
-                "dwd_stations": [
-                    {"id": "99999", "latitude": 48.1, "longitude": 11.6},
-                ],
-            }
-        )
-        mock_cell_dl = MagicMock()
-        mock_cell_dl.download.return_value = "/tmp/dwd.parquet"
-        pipe.downloader = MagicMock()
-        pipe.saver = MagicMock()
-        pipe.saver.check_data_exists.return_value = False
         pipe.saver.save.return_value = True
         pipe.getter = MagicMock()
+        return pipe
 
+    def test_dwd_stations_uses_coverage_on_the_hyras_envelope(self) -> None:
+        """The kriged DWD source checks coverage like HYRAS: nothing missing,
+        nothing downloaded; the request covers HYRAS's fixed envelope."""
+        from datavia.weather.source_registry import SOURCE_REGISTRY
+
+        pipe = self._dwd_pipeline()
         with (
+            patch("datavia.weather.pipeline.CoverageManager") as mock_cm_cls,
+            patch("datavia.weather.pipeline.CompositeWeatherDownloader") as dl_cls,
             patch.object(pipe, "sync_files_and_database"),
+        ):
+            mock_cm_cls.return_value.missing_spatiotemporal.return_value = []
+            assert pipe.update_data() is True
+
+        bbox = mock_cm_cls.return_value.missing_spatiotemporal.call_args.args[0]
+        assert tuple(bbox) == SOURCE_REGISTRY["HYRAS"]["coverage_bbox"]
+        dl_cls.assert_not_called()
+
+    def test_dwd_stations_saves_kriged_netcdf_of_missing_cell(self) -> None:
+        """A missing cell is downloaded (kriged) and its NetCDF saved."""
+        from datavia.weather.coverage_manager import CoverageCell
+
+        pipe = self._dwd_pipeline()
+        cell = CoverageCell(
+            bbox=(5.3, 47.0, 15.7, 55.1), date_start="2024-07-01", date_end="2024-07-31"
+        )
+        mock_cell_dl = MagicMock()
+        mock_cell_dl.download.return_value = "/tmp/dwd_kriged_tas_2024.nc"
+        with (
+            patch("datavia.weather.pipeline.CoverageManager") as mock_cm_cls,
             patch(
                 "datavia.weather.pipeline.CompositeWeatherDownloader",
                 return_value=mock_cell_dl,
             ),
+            patch.object(pipe, "sync_files_and_database"),
         ):
-            result = pipe.update_data()
+            mock_cm_cls.return_value.missing_spatiotemporal.return_value = [cell]
+            assert pipe.update_data() is True
 
-        assert result is True
-        mock_cell_dl.download.assert_called_once()
-        pipe.saver.save.assert_called_once_with("/tmp/dwd.parquet")
+        pipe.saver.save.assert_called_once_with("/tmp/dwd_kriged_tas_2024.nc")
 
 
 # ---------------------------------------------------------------------------

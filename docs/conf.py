@@ -73,6 +73,10 @@ napoleon_google_docstring = True
 napoleon_numpy_docstring = True
 napoleon_include_init_with_doc = False
 napoleon_include_private_with_doc = False
+# Render "Attributes" sections as a field list: dataclass fields are also
+# picked up by autodoc (undoc-members), and attribute directives would
+# document them twice.
+napoleon_use_ivar = True
 
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output

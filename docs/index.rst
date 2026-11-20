@@ -4,7 +4,7 @@ Datavia Documentation
 **Datavia** is a modular, pipeline-based system for integrating geospatial data sources. It uses **namespace packages** for truly modular installation - install only the data sources you need.
 
 .. note::
-   Datavia uses a multi-package architecture. The core system (``datavia``) contains NO pipeline code. Pipelines are separate packages (``datavia-elevation``, ``datavia-soil``, ``datavia-weather``) installed on demand.
+   Datavia uses a multi-package architecture. The core system (``datavia``) contains NO pipeline code. Pipelines are separate packages (``datavia-elevation``, ``datavia-soil``, ``datavia-weather``) installed on demand; ``datavia-kriging`` provides the interpolation of station data.
 
 
 
@@ -21,7 +21,8 @@ Available pipeline packages:
 
 * **Elevation Pipeline** (``datavia[elevation]``): German BKG DGM200 (200 m resolution)
 * **Soil Pipeline** (``datavia[soil]``): SoilGrids (WCS) + HiHydroSoil (HTTP GeoTIFF) — incremental download per coverage
-* **Weather Pipeline** (``datavia[weather]``): ERA5-Land (CDS API), HYRAS, and DWD station data —
+* **Weather Pipeline** (``datavia[weather]``): ERA5-Land (CDS API), HYRAS, and DWD station
+  observations kriged onto the HYRAS 1 km grid (see :doc:`user_guide/kriging`) —
   temperature, precipitation, solar radiation, and relative humidity.
   Radiation (``surface_solar_radiation_downwards``) is available as a variable within this pipeline
   via ERA5 (``ssrd``) and HYRAS (``rsds``); no separate radiation pipeline is required.
@@ -207,6 +208,7 @@ Documentation
    user_guide/quick_start
    user_guide/basic_usage
    user_guide/examples
+   user_guide/kriging
 
 .. toctree::
    :maxdepth: 2

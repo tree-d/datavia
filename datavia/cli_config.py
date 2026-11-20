@@ -134,8 +134,9 @@ def create_config_file(selected_pipelines: list[str], config_file: str) -> None:
     if "weather" in selected_pipelines:
         imports.append("from datavia.weather import WeatherPipeline")
         pipeline_instances.append(
-            """# WeatherPipeline downloads gridded data (HYRAS / ERA5) and optionally
-# Open-Meteo model data at DWD station coordinates (no key required).
+            """# WeatherPipeline downloads gridded data (HYRAS / ERA5 / kriged DWD
+# stations, source "DWD_stations") and optionally daily DWD station
+# observations for blending ("dwd_stations": True; no key required).
 # Adjust source, variables, date_start/date_end, and era5_bbox to your area.
 weather = WeatherPipeline(
     config={

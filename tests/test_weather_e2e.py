@@ -2,8 +2,10 @@
 
 These tests exercise real remote services:
 
-- **DWD via Open-Meteo** (no auth required): downloads a short Parquet file,
-  registers it in the database, and performs a point interpolation query.
+- **DWD Climate Data Center** (no auth required): downloads the daily
+  observations of three stations as Parquet, registers them in the database,
+  and performs a point interpolation query.  Kriging a month over Germany
+  (Mojo) is gated behind ``DATAVIA_E2E_SLOW=1``.
 - **ERA5 via Copernicus CDS** (requires ``~/.cdsapirc``): downloads a small
   NetCDF file for a one-day period; skipped automatically when credentials
   are absent.
@@ -67,7 +69,7 @@ _SLOW_GUARD = pytest.mark.skipif(
 # Dates and coordinates
 # ---------------------------------------------------------------------------
 
-# Use a short recent historical window so Open-Meteo always has the data.
+# Use a short recent window that the DWD has published (up to yesterday).
 # Stay 3-6 days before today to avoid gaps in ERA5 (which lags by ~5 days).
 _DATE_END: date = date.today() - timedelta(days=3)
 _DATE_START: date = _DATE_END - timedelta(days=2)
@@ -86,7 +88,7 @@ _QUERY_DATETIME: str = f"{_DATE_START.isoformat()}T12:00:00"
 _TEMP_MIN_C: float = -25.0
 _TEMP_MAX_C: float = 50.0
 
-# Variable name shared by both ERA5 and Open-Meteo.
+# Variable name shared by ERA5 and the DWD stations.
 _VARIABLE: str = "2m_temperature"
 
 
@@ -121,179 +123,110 @@ def live_database():
 
 
 # ---------------------------------------------------------------------------
-# DWD / Open-Meteo E2E
+# DWD Climate Data Center E2E
 # ---------------------------------------------------------------------------
+
+#: DWD station ids: Berlin-Tempelhof, Frankfurt/Main, Koeln/Bonn.
+_CDC_STATIONS: list[str] = ["00433", "01420", "02667"]
 
 
 @_E2E_GUARD
 class TestDWDStationE2E:
-    """End-to-end tests for the DWD station path (Open-Meteo, no auth required)."""
+    """End-to-end tests for the daily DWD station observations (CDC, no auth)."""
+
+    def _download(self, tmp_path) -> str:
+        from datavia.weather.dwd_downloader import DWDStationDownloader
+
+        downloader = DWDStationDownloader(
+            variables=[_VARIABLE],
+            date_start=str(_DATE_START),
+            date_end=str(_DATE_END),
+            stations=_CDC_STATIONS,
+            data_dir=tmp_path,
+        )
+        return downloader.download()
 
     def test_dwd_download_produces_parquet(self, live_database, tmp_path) -> None:
-        """DWDStationDownloader.download() creates a non-empty Parquet file.
+        """DWDStationDownloader.download() writes one row per station and day."""
+        import pandas as pd
 
-        Fetches hourly ``temperature_2m`` for Berlin over three days.  Only
-        the Berlin station is included to keep the request small.
-        """
-        from datavia.weather.dwd_downloader import DWDStationDownloader
-
-        downloader = DWDStationDownloader(
-            variables=[_VARIABLE],
-            date_start=str(_DATE_START),
-            date_end=str(_DATE_END),
-            stations=[
-                {"id": "Berlin", "latitude": _BERLIN_LAT, "longitude": _BERLIN_LON}
-            ],
-        )
-        output_path = downloader.download()
-
+        output_path = self._download(tmp_path)
         try:
-            import pandas as pd
-
             df = pd.read_parquet(output_path)
-            assert len(df) > 0, "Parquet file is empty"
-            assert _VARIABLE in df.columns, (
-                f"Column '{_VARIABLE}' missing from Parquet; "
-                f"columns: {list(df.columns)}"
-            )
+            assert set(df["station_id"]) == set(_CDC_STATIONS)
+            assert df[_VARIABLE].between(_TEMP_MIN_C, _TEMP_MAX_C).all()
+            assert (df["datetime"].dt.hour == 0).all()
         finally:
-            # Clean up the temp file produced by DWDStationDownloader.
             if os.path.isfile(output_path):
                 os.remove(output_path)
-
-    def test_dwd_save_registers_in_database(self, live_database, tmp_path) -> None:
-        """SaverWeather correctly saves a Parquet file and inserts a DB row.
-
-        Downloads a fresh Parquet via :class:`DWDStationDownloader`, saves it
-        into *tmp_path* via :class:`SaverWeather`, and asserts the row appears
-        in ``weather_layers``.
-        """
-        from datavia.weather.dwd_downloader import DWDStationDownloader
-        from datavia.weather.saver_weather import SaverWeather
-
-        from datavia.library.database.query import check_weather_source_exists
-
-        downloader = DWDStationDownloader(
-            variables=[_VARIABLE],
-            date_start=str(_DATE_START),
-            date_end=str(_DATE_END),
-            stations=[
-                {"id": "Berlin", "latitude": _BERLIN_LAT, "longitude": _BERLIN_LON}
-            ],
-        )
-        raw_path = downloader.download()
-
-        try:
-            saver = SaverWeather.__new__(SaverWeather)
-            saver.source_name = "dwd_stations"
-            saver.data_dir = str(tmp_path)
-
-            result = saver.save(raw_path)
-            assert result is True, "SaverWeather.save() returned False"
-            assert check_weather_source_exists("dwd_stations"), (
-                "No 'dwd_stations' row found in weather_layers after save"
-            )
-        finally:
-            if os.path.isfile(raw_path):
-                os.remove(raw_path)
 
     def test_dwd_point_query_returns_realistic_temperature(
         self, live_database, tmp_path
     ) -> None:
-        """GetterWeather returns a finite temperature in a plausible range.
-
-        Performs the full DWD path: download → save → point query at Berlin.
-        The returned value must be a finite float within the expected
-        temperature range for Germany (``_TEMP_MIN_C`` to ``_TEMP_MAX_C``).
-        """
-        from datavia.weather.dwd_downloader import DWDStationDownloader
+        """download -> save -> daily point query at Berlin gives a finite value."""
         from datavia.weather.getter_weather import GetterWeather
         from datavia.weather.saver_weather import SaverWeather
 
-        downloader = DWDStationDownloader(
-            variables=[_VARIABLE],
-            date_start=str(_DATE_START),
-            date_end=str(_DATE_END),
-            stations=[
-                {"id": "Berlin", "latitude": _BERLIN_LAT, "longitude": _BERLIN_LON},
-                {"id": "Munich", "latitude": 48.14, "longitude": 11.58},
-                {"id": "Hamburg", "latitude": 53.55, "longitude": 10.0},
-            ],
-        )
-        raw_path = downloader.download()
-
+        raw_path = self._download(tmp_path)
         try:
             saver = SaverWeather.__new__(SaverWeather)
             saver.source_name = "dwd_stations"
             saver.data_dir = str(tmp_path)
-            saver.save(raw_path)
+            assert saver.save(raw_path) is True
 
-            getter = GetterWeather("dwd_stations")
-            value = getter.get_weather_data(
+            value = GetterWeather("dwd_stations").get_weather_data(
                 lat=_BERLIN_LAT,
                 lon=_BERLIN_LON,
                 variable=_VARIABLE,
                 datetime_utc=_QUERY_DATETIME,
             )
-
-            assert math.isfinite(value), (
-                f"get_weather_data returned non-finite value: {value}"
-            )
-            assert _TEMP_MIN_C <= value <= _TEMP_MAX_C, (
-                f"Temperature {value}°C is outside the expected range "
-                f"[{_TEMP_MIN_C}, {_TEMP_MAX_C}]"
-            )
+            assert math.isfinite(value)
+            assert _TEMP_MIN_C <= value <= _TEMP_MAX_C
         finally:
             if os.path.isfile(raw_path):
                 os.remove(raw_path)
 
-    def test_dwd_get_data_array_interface(self, live_database, tmp_path) -> None:
-        """GetterWeather.get_data() returns a shape-(N,) numpy array.
 
-        Exercises the vectorised coordinate-array interface so that it is
-        tested in the same pipeline run as the scalar convenience method.
-        """
-        from datavia.weather.dwd_downloader import DWDStationDownloader
-        from datavia.weather.getter_weather import GetterWeather
-        from datavia.weather.saver_weather import SaverWeather
+@_E2E_GUARD
+@_SLOW_GUARD
+class TestDWDKrigingE2E:
+    """Kriging one month of real station data over Germany (needs Mojo)."""
 
-        downloader = DWDStationDownloader(
-            variables=[_VARIABLE],
-            date_start=str(_DATE_START),
-            date_end=str(_DATE_END),
-            stations=[
-                {"id": "Berlin", "latitude": _BERLIN_LAT, "longitude": _BERLIN_LON},
-                {"id": "Frankfurt", "latitude": 50.11, "longitude": 8.68},
-                {"id": "Cologne", "latitude": 50.94, "longitude": 6.96},
-            ],
+    def test_kriged_month_is_plausible(self, tmp_path) -> None:
+        """A month of daily mean temperature kriged onto the 1 km grid."""
+        pytest.importorskip("datavia.kriging")
+        import pandas as pd
+        from datavia.weather.dwd_grid import grid_elevation
+        from datavia.weather.dwd_kriging_downloader import (
+            KRIGING_SETTINGS,
+            DWDKrigingDownloader,
+            _cells,
         )
-        raw_path = downloader.download()
 
-        try:
-            saver = SaverWeather.__new__(SaverWeather)
-            saver.source_name = "dwd_stations"
-            saver.data_dir = str(tmp_path)
-            saver.save(raw_path)
-
-            coords = np.array(
-                [
-                    [_BERLIN_LON, _BERLIN_LAT],  # Berlin (lon, lat)
-                    [8.68, 50.11],  # Frankfurt
-                ]
-            )
-            getter = GetterWeather("dwd_stations")
-            result = getter.get_data(
-                coords,
-                variable=_VARIABLE,
-                datetime_utc=_QUERY_DATETIME,
-            )
-
-            assert result.shape == (2,), f"Expected shape (2,), got {result.shape}"
-            for i, v in enumerate(result):
-                assert math.isfinite(v), f"Non-finite value at index {i}: {v}"
-        finally:
-            if os.path.isfile(raw_path):
-                os.remove(raw_path)
+        month = pd.Period(_DATE_END - timedelta(days=40), "M")
+        downloader = DWDKrigingDownloader(
+            variables=[_VARIABLE],
+            data_dir=tmp_path,
+            date_start=str(month.start_time.date()),
+            date_end=str(month.end_time.date()),
+        )
+        elevation = grid_elevation(tmp_path / "DWD_stations" / "_grid")
+        land = np.isfinite(elevation)
+        data = downloader.client.station_data(
+            _VARIABLE, month.start_time.date(), month.end_time.date()
+        )
+        block, cached = downloader._krige_month(
+            _VARIABLE,
+            month,
+            data,
+            _cells(land, elevation),
+            land,
+            KRIGING_SETTINGS[_VARIABLE],
+        )
+        assert data.n_stations > 300
+        assert np.isfinite(block[:, land]).mean() > 0.99
+        assert np.nanmin(block) > _TEMP_MIN_C and np.nanmax(block) < _TEMP_MAX_C
+        assert cached.path.exists()
 
 
 # ---------------------------------------------------------------------------

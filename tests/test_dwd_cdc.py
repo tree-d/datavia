@@ -1,0 +1,305 @@
+"""Tests of :mod:`datavia.weather.dwd_cdc`: download, cache and read of DWD
+Climate Data Center daily station archives.
+
+All network access goes to the in-memory :class:`cdc_fake.FakeCDC`.
+"""
+
+from __future__ import annotations
+
+import os
+import time
+from datetime import date, timedelta
+
+import numpy as np
+import pytest
+from cdc_fake import FakeCDC
+from datavia.weather.dwd_cdc import CDCClient
+
+TODAY = date(2026, 11, 20)
+
+
+@pytest.fixture(autouse=True)
+def fixed_today(monkeypatch):
+    """Pin "today" so the choice of archive branches is deterministic."""
+    monkeypatch.setattr("datavia.weather.dwd_cdc._utc_today", lambda: TODAY)
+    monkeypatch.setattr("datavia.weather.dwd_cdc.time.sleep", lambda s: None)
+
+
+def _client(fake: FakeCDC, tmp_path, **kwargs) -> CDCClient:
+    return CDCClient(tmp_path / "cdc", session=fake.session(), **kwargs)
+
+
+def _tmk(values):
+    """kl product columns with the given TMK values (others plausible)."""
+    n = len(values)
+    return {
+        "QN_4": [10] * n,
+        "TMK": values,
+        "TXK": [20.0] * n,
+        "TNK": [0.0] * n,
+        "UPM": [80.0] * n,
+    }
+
+
+class TestReading:
+    """Values, missing values and positions."""
+
+    def test_values_missing_and_implausible(self, tmp_path):
+        fake = FakeCDC()
+        fake.add(
+            "kl", "recent", "00044", date(2026, 1, 1), _tmk([1.5, -999, 99.0, -2.0])
+        )
+        data = _client(fake, tmp_path).station_data(
+            "2m_temperature", date(2026, 1, 1), date(2026, 1, 5)
+        )
+        assert list(data.station_id) == ["00044"]
+        # -999 is missing, 99 degC is outside the plausible range, Jan 5 has no row.
+        np.testing.assert_array_equal(
+            data.values[0], [1.5, np.nan, np.nan, -2.0, np.nan]
+        )
+        assert len(data.dates) == 5
+
+    def test_position_is_the_last_geography_row(self, tmp_path):
+        fake = FakeCDC()
+        fake.add(
+            "kl",
+            "recent",
+            "00044",
+            date(2026, 1, 1),
+            _tmk([1.0]),
+            positions=[(10.0, 50.0, 8.0), (44.0, 52.9336, 8.237)],
+        )
+        data = _client(fake, tmp_path).station_data(
+            "2m_temperature", date(2026, 1, 1), date(2026, 1, 1)
+        )
+        assert (data.longitude[0], data.latitude[0], data.elevation[0]) == (
+            8.237,
+            52.9336,
+            44.0,
+        )
+
+    def test_other_columns(self, tmp_path):
+        fake = FakeCDC()
+        fake.add("kl", "recent", "00044", date(2026, 1, 1), _tmk([1.0]))
+        client = _client(fake, tmp_path)
+        day = date(2026, 1, 1)
+        assert client.station_data("temperature_2m_max", day, day).values[0, 0] == 20.0
+        assert client.station_data("temperature_2m_min", day, day).values[0, 0] == 0.0
+        assert (
+            client.station_data("relative_humidity_2m", day, day).values[0, 0] == 80.0
+        )
+
+    def test_precipitation_comes_from_more_precip(self, tmp_path):
+        fake = FakeCDC()
+        fake.add(
+            "more_precip",
+            "recent",
+            "00006",
+            date(2026, 6, 1),
+            {"QN_6": [3, 3], "RS": [0.0, 12.4]},
+        )
+        data = _client(fake, tmp_path).station_data(
+            "total_precipitation", date(2026, 6, 1), date(2026, 6, 2)
+        )
+        np.testing.assert_array_equal(data.values[0], [0.0, 12.4])
+
+    def test_stations_without_data_in_range_are_dropped(self, tmp_path):
+        fake = FakeCDC()
+        fake.add("kl", "recent", "00044", date(2026, 1, 1), _tmk([1.0]))
+        fake.add(
+            "kl",
+            "recent",
+            "00073",
+            date(2026, 1, 1),
+            _tmk([-999]),
+            positions=[(5.0, 48.0, 13.0)],
+        )
+        data = _client(fake, tmp_path).station_data(
+            "2m_temperature", date(2026, 1, 1), date(2026, 1, 1)
+        )
+        assert list(data.station_id) == ["00044"]
+
+    def test_duplicate_positions_keep_the_station_with_more_data(self, tmp_path):
+        fake = FakeCDC()
+        same = [(100.0, 51.0, 12.0)]
+        fake.add("kl", "recent", "00001", date(2026, 1, 1), _tmk([1.0, -999]), same)
+        fake.add("kl", "recent", "00002", date(2026, 1, 1), _tmk([2.0, 3.0]), same)
+        data = _client(fake, tmp_path).station_data(
+            "2m_temperature", date(2026, 1, 1), date(2026, 1, 2)
+        )
+        assert list(data.station_id) == ["00002"]
+
+    def test_corrupt_station_is_skipped(self, tmp_path):
+        fake = FakeCDC()
+        fake.add("more_precip", "recent", "05127", date(2026, 6, 1), {"RS": [1.0]})
+        fake.add(
+            "more_precip",
+            "recent",
+            "00006",
+            date(2026, 6, 1),
+            {"RS": [2.0]},
+            positions=[(5.0, 48.0, 13.0)],
+        )
+        client = _client(fake, tmp_path)
+        data = client.station_data(
+            "total_precipitation", date(2026, 6, 1), date(2026, 6, 1)
+        )
+        assert list(data.station_id) == ["00006"]
+        assert not any("05127" in u for u in fake.archive_requests())
+
+    def test_station_filter_downloads_only_those_archives(self, tmp_path):
+        fake = FakeCDC()
+        fake.add("kl", "recent", "00044", date(2026, 1, 1), _tmk([1.0]))
+        fake.add(
+            "kl",
+            "recent",
+            "00073",
+            date(2026, 1, 1),
+            _tmk([2.0]),
+            positions=[(5.0, 48.0, 13.0)],
+        )
+        data = _client(fake, tmp_path).station_data(
+            "2m_temperature", date(2026, 1, 1), date(2026, 1, 1), station_ids=["00073"]
+        )
+        assert list(data.station_id) == ["00073"]
+        assert len(fake.archive_requests()) == 1
+
+    def test_unknown_variable_and_reversed_range_raise(self, tmp_path):
+        client = _client(FakeCDC(), tmp_path)
+        with pytest.raises(ValueError, match="not available"):
+            client.station_data("surface_solar_radiation_downwards", TODAY, TODAY)
+        with pytest.raises(ValueError, match="must not be before"):
+            client.station_data("2m_temperature", TODAY, TODAY - timedelta(days=1))
+
+
+class TestBranches:
+    """Historical and recent archives."""
+
+    def test_historical_wins_and_recent_fills_the_rest(self, tmp_path):
+        fake = FakeCDC()
+        # Historical: Dec 30 - Dec 31 2025; recent: Dec 31 2025 - Jan 2 2026.
+        fake.add(
+            "kl",
+            "historical",
+            "00044",
+            date(2025, 12, 30),
+            _tmk([1.0, 2.0]),
+            positions=[(40.0, 52.0, 8.0)],
+        )
+        fake.add(
+            "kl",
+            "recent",
+            "00044",
+            date(2025, 12, 31),
+            _tmk([20.0, 3.0, 4.0]),
+            positions=[(44.0, 52.9, 8.2)],
+        )
+        data = _client(fake, tmp_path).station_data(
+            "2m_temperature", date(2025, 12, 30), date(2026, 1, 2)
+        )
+        np.testing.assert_array_equal(data.values[0], [1.0, 2.0, 3.0, 4.0])
+        assert data.elevation[0] == 44.0  # position from the (newer) recent archive
+
+    def test_current_year_reads_no_historical_branch(self, tmp_path):
+        fake = FakeCDC()
+        fake.add("kl", "recent", "00044", date(2026, 3, 1), _tmk([1.0]))
+        _client(fake, tmp_path).station_data(
+            "2m_temperature", date(2026, 3, 1), date(2026, 3, 1)
+        )
+        assert not any("/historical/" in u for u in fake.requests)
+
+    def test_old_years_read_no_recent_branch(self, tmp_path):
+        fake = FakeCDC()
+        fake.add("kl", "historical", "00044", date(2010, 1, 1), _tmk([1.0]))
+        data = _client(fake, tmp_path).station_data(
+            "2m_temperature", date(2010, 1, 1), date(2010, 1, 1)
+        )
+        assert data.values[0, 0] == 1.0
+        assert not any("/recent/" in u for u in fake.requests)
+
+    def test_only_overlapping_historical_archives_are_downloaded(self, tmp_path):
+        fake = FakeCDC()
+        fake.add("kl", "historical", "00044", date(2010, 1, 1), _tmk([1.0]))
+        fake.add(
+            "kl",
+            "historical",
+            "00073",
+            date(1990, 1, 1),
+            _tmk([1.0]),
+            positions=[(5.0, 48.0, 13.0)],
+        )
+        _client(fake, tmp_path).station_data(
+            "2m_temperature", date(2010, 1, 1), date(2010, 1, 1)
+        )
+        assert [u.rsplit("/", 1)[1] for u in fake.archive_requests()] == [
+            "tageswerte_KL_00044_20100101_20100101_hist.zip"
+        ]
+
+
+class TestCache:
+    """Archives are cached; recent ones expire, replaced historical ones go."""
+
+    def test_second_read_uses_the_cache(self, tmp_path):
+        fake = FakeCDC()
+        fake.add("kl", "recent", "00044", date(2026, 1, 1), _tmk([1.0]))
+        client = _client(fake, tmp_path)
+        client.station_data("2m_temperature", date(2026, 1, 1), date(2026, 1, 1))
+        client.station_data("2m_temperature", date(2026, 1, 1), date(2026, 1, 1))
+        assert len(fake.archive_requests()) == 1
+
+    def test_stale_recent_archive_is_downloaded_again(self, tmp_path):
+        fake = FakeCDC()
+        name = fake.add("kl", "recent", "00044", date(2026, 1, 1), _tmk([1.0]))
+        client = _client(fake, tmp_path, recent_max_age=timedelta(hours=1))
+        client.station_data("2m_temperature", date(2026, 1, 1), date(2026, 1, 1))
+        old = time.time() - 2 * 3600
+        os.utime(tmp_path / "cdc" / "kl" / "recent" / name, (old, old))
+        fake.add("kl", "recent", "00044", date(2026, 1, 1), _tmk([5.0]))
+        data = client.station_data("2m_temperature", date(2026, 1, 1), date(2026, 1, 1))
+        assert len(fake.archive_requests()) == 2
+        assert data.values[0, 0] == 5.0
+
+    def test_replaced_historical_archive_is_removed(self, tmp_path):
+        fake = FakeCDC()
+        old = fake.add("kl", "historical", "00044", date(2010, 1, 1), _tmk([1.0]))
+        client = _client(fake, tmp_path)
+        client.station_data("2m_temperature", date(2010, 1, 1), date(2010, 1, 1))
+        # The DWD publishes a longer file for the station; the old one disappears.
+        fake.files[("kl", "historical")].clear()
+        new = fake.add("kl", "historical", "00044", date(2010, 1, 1), _tmk([1.0, 2.0]))
+        client.station_data("2m_temperature", date(2010, 1, 1), date(2010, 1, 2))
+        cached = {p.name for p in (tmp_path / "cdc" / "kl" / "historical").iterdir()}
+        assert cached == {new}
+        assert old != new
+
+
+class TestHTTP:
+    """Retries and errors."""
+
+    def test_server_error_is_retried(self, tmp_path):
+        fake = FakeCDC()
+        name = fake.add("kl", "recent", "00044", date(2026, 1, 1), _tmk([1.0]))
+        url = f"https://opendata.dwd.de/climate_environment/CDC/observations_germany/climate/daily/kl/recent/{name}"
+        fake.errors[url] = [503, 429]
+        data = _client(fake, tmp_path).station_data(
+            "2m_temperature", date(2026, 1, 1), date(2026, 1, 1)
+        )
+        assert data.values[0, 0] == 1.0
+        assert fake.requests.count(url) == 3
+
+    def test_client_error_raises(self, tmp_path):
+        fake = FakeCDC()
+        name = fake.add("kl", "recent", "00044", date(2026, 1, 1), _tmk([1.0]))
+        url = f"https://opendata.dwd.de/climate_environment/CDC/observations_germany/climate/daily/kl/recent/{name}"
+        fake.errors[url] = [404]
+        with pytest.raises(RuntimeError, match="HTTP 404"):
+            _client(fake, tmp_path).station_data(
+                "2m_temperature", date(2026, 1, 1), date(2026, 1, 1)
+            )
+        assert not (tmp_path / "cdc" / "kl" / "recent" / name).exists()
+
+    def test_empty_listing_raises(self, tmp_path):
+        with pytest.raises(RuntimeError, match="No station archives"):
+            _client(FakeCDC(), tmp_path).station_data(
+                "2m_temperature", date(2026, 1, 1), date(2026, 1, 1)
+            )

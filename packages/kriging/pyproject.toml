@@ -1,0 +1,59 @@
+[build-system]
+requires = ["hatchling<1.32"]  # 1.32+ emits Metadata-Version 2.5, which twine 6.2.0 rejects
+build-backend = "hatchling.build"
+
+[project]
+name = "datavia-kriging"
+version = "0.1.0"
+description = "External drift and ordinary kriging of station data, computed in Mojo (datavia.kriging)"
+authors = [
+    {name = "Peter Mace", email = "peter.mace@ufz.de"},
+]
+readme = "README.md"
+license = {file = "LICENSE"}
+requires-python = ">=3.12"
+keywords = ["kriging", "geostatistics", "variogram", "mojo", "datavia"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: GIS",
+]
+# Deliberately no dependency on datavia itself: this package is self-contained
+# so it can be moved into its own repository unchanged.
+dependencies = [
+    "numpy>=2.0.0,<3",
+]
+
+# Mojo and MAX are needed at run time.  They are an extra rather than a
+# dependency so that conda/pixi environments can take them from the channel
+# https://conda.modular.com/max (conda packages "mojo" and "max-all") without
+# pip installing a second copy.  With pip: pip install "datavia-kriging[mojo]".
+[project.optional-dependencies]
+mojo = [
+    "mojo>=1.2,<2",
+    "max>=26.6,<27",
+]
+
+[project.urls]
+Homepage = "https://github.com/tree-d/datavia"
+Repository = "https://github.com/tree-d/datavia.git"
+Issues = "https://github.com/tree-d/datavia/issues"
+
+# datavia/ is a namespace package portion (PEP 420): no datavia/__init__.py is
+# shipped, so datavia.kriging installs next to datavia's other subpackages.
+# The .mojo sources ship with the wheel; mojo.importer compiles them on first
+# import into __mojocache__/ (excluded through .gitignore).
+[tool.hatch.build]
+include = [
+    "datavia/kriging/**/*.py",
+    "datavia/kriging/**/*.mojo",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["datavia"]
+
+[tool.hatch.build.targets.editable]
+mode = "strict"

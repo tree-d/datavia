@@ -8,13 +8,19 @@ interface backed by a `CompositeWeatherDownloader`:
 |---|---|
 | **HYRAS** — DWD daily gridded observations (ETRS89-LAEA, ~1 km) | none |
 | **ERA5-Land** — Copernicus hourly reanalysis (WGS84, 0.1°) | `~/.cdsapirc` |
-| **DWD stations** — Open-Meteo point observations (Parquet) | none |
+| **DWD stations** — DWD daily station observations (Climate Data Center), kriged onto the HYRAS 1 km grid (external drift kriging) | none (needs the `kriging` extra) |
 
 All downloads are registered in the shared SQLite `weather_layers` table with
 `valid_from`/`valid_until` temporal bounds.  At query time `GetterWeather`
-interpolates the gridded source (HYRAS or ERA5-Land) at the requested
-coordinates, optionally blending with inverse-distance-weighted DWD station
-observations.
+interpolates the gridded source (HYRAS, ERA5-Land or the kriged DWD stations)
+at the requested coordinates, optionally blending with inverse-distance-weighted
+daily DWD station observations (`dwd_stations`).
+
+The DWD source works in two steps: the station data are downloaded from the
+DWD Climate Data Center, then interpolated by external drift kriging with
+`datavia.kriging` (package `packages/kriging`, computed in Mojo).  One
+variogram per variable and month is fitted and cached in
+`<data_dir>/DWD_stations/_variograms/`.  See `docs/user_guide/kriging.rst`.
 
 ---
 
@@ -24,8 +30,11 @@ observations.
 # Core + ERA5 support (requires ~/.cdsapirc Copernicus credentials)
 pip install datavia[weather,era5]
 
-# Core + DWD station support only (no credentials required)
+# Core + HYRAS / DWD station Parquet (no credentials required)
 pip install datavia[weather]
+
+# Kriged DWD station grids (source "DWD_stations"): kriging (Mojo) and DGM200
+pip install "datavia-weather[kriging]" "datavia-kriging[mojo]"
 
 # Development: install the package directly from the git workspace
 pip install -e packages/weather
@@ -180,11 +189,21 @@ WeatherPipeline(config={
     "date_start": "2024-01-01",
     "date_end":   "2024-12-31",
 
-    # Optional: blend in DWD point-station observations.
-    "dwd_stations": [
-        {"id": "Berlin",  "latitude": 52.52, "longitude": 13.41},
-        {"id": "Munich",  "latitude": 48.14, "longitude": 11.58},
-    ],
+    # Optional: blend in daily DWD station observations (True = all
+    # stations, or a list of DWD station ids such as ["00433", "03379"]).
+    "dwd_stations": True,
+})
+```
+
+### DWD stations (kriged)
+
+```python
+WeatherPipeline(config={
+    "source":     "DWD_stations",
+    "variables":  ["total_precipitation", "2m_temperature"],
+    # Whole calendar years are kriged (1 Jan to the last published day).
+    "date_start": "2025-06-01",
+    "date_end":   "2025-06-30",
 })
 ```
 
@@ -206,13 +225,8 @@ WeatherPipeline(
         # ERA5 bounding box [north, west, south, east] in degrees.
         # Edges are automatically snapped outward to the 0.1° ERA5-Land grid.
         "era5_bbox": [55.1, 5.9, 47.3, 15.0],  # Germany default
-        # Optional: blend in DWD point-station observations.
-        "dwd_stations": [
-            {"id": "Berlin", "latitude": 52.52, "longitude": 13.41},
-            {"id": "Munich", "latitude": 48.14, "longitude": 11.58},
-            {"id": "Hamburg", "latitude": 53.55, "longitude": 10.0},
-            {"id": "Frankfurt", "latitude": 50.11, "longitude": 8.68},
-        ],
+        # Optional: blend in daily DWD station observations (daily queries).
+        "dwd_stations": ["00433", "03379", "01975", "01420"],
     }
 )
 ```
@@ -225,7 +239,7 @@ WeatherPipeline(
 |---|---|---|---|
 | **HYRAS** (DWD OpenData) | NetCDF (`.nc`) | ETRS89-LAEA (EPSG:3035), ~1 km | none |
 | **ERA5-Land** (Copernicus CDS) | NetCDF (`.nc`) | WGS84, 0.1° (~9 km) | `~/.cdsapirc` |
-| **DWD stations** (Open-Meteo archive API) | Parquet (`.parquet`) | model output at station points | none |
+| **DWD stations** (DWD Climate Data Center) | Zarr, kriged (and Parquet for the station blend) | HYRAS grid, EPSG:3035, 1 km | none |
 
 ### HYRAS variables
 
@@ -255,24 +269,28 @@ Unit conversions (K→°C, m→mm, SSRD→PAR) are applied automatically in
 | `total_precipitation` | m water equiv. | mm |
 | `surface_solar_radiation_downwards` | J m⁻² | µmol(photons) m⁻² s⁻¹ PAR |
 
-### DWD / Open-Meteo variables
+### DWD station variables
 
 The station source supports exactly these pipeline variable names; any other
 name raises `ValueError` (in a hybrid config it is skipped for the station
-download with a warning and served by the grid source alone).
+download with a warning and served by the grid source alone).  Values are in
+the final units; the kriged grids are stored under HYRAS's CF names and time
+stamps.
 
-| Pipeline variable name | Open-Meteo parameter | Unit | Stamp |
-|---|---|---|---|
-| `2m_temperature` | `temperature_2m` | °C | instantaneous |
-| `relative_humidity_2m` | `relative_humidity_2m` | % | instantaneous |
-| `total_precipitation` | `precipitation` | mm | preceding-hour sum |
-| `surface_solar_radiation_downwards` | `shortwave_radiation` | W/m² (returned as PAR) | preceding-hour mean |
+| Pipeline variable name | CDC group / column | CF name | Unit | Day |
+|---|---|---|---|---|
+| `2m_temperature` | `kl` / `TMK` | `tas` | °C | 00-24 UTC mean |
+| `temperature_2m_max` | `kl` / `TXK` | `tasmax` | °C | 00-24 UTC maximum |
+| `temperature_2m_min` | `kl` / `TNK` | `tasmin` | °C | 00-24 UTC minimum |
+| `total_precipitation` | `more_precip` / `RS` | `pr` | mm | 06-06 UTC sum |
+| `relative_humidity_2m` | `kl` / `UPM` | `hurs` | % | 00-24 UTC mean |
 
-The values are Open-Meteo model output (ERA5/IFS-based) at the station
-coordinates, not DWD observations; see `docs/development/known_issues.md`.
-`surface_solar_radiation_downwards` is returned as PAR (µmol(photons) m⁻² s⁻¹)
-for every source.  Station values are converted to the gridded source's
-target unit (including `unit_conversions` overrides) before blending.
+The station Parquet (`dwd_stations`) holds one row per station and day;
+precipitation is stamped at the end of its day (D+1 06:00 UTC), the other
+variables at its start (D 00:00 UTC).  It is blended only into daily,
+single-timestamp queries.  Station values are converted to the gridded
+source's target unit (including `unit_conversions` overrides) before
+blending.
 
 ---
 
@@ -283,7 +301,8 @@ WeatherPipeline
 ├── CompositeWeatherDownloader
 │   ├── HYRASDownloader         → annual NetCDF from DWD OpenData (ETRS89-LAEA)
 │   ├── ERA5Downloader          → ERA5-Land NetCDF via cdsapi (CDS API v2, WGS84)
-│   └── DWDStationDownloader    → Open-Meteo archive API → Parquet
+│   ├── DWDKrigingDownloader    → DWD CDC stations → kriging (datavia.kriging) → NetCDF
+│   └── DWDStationDownloader    → DWD CDC stations → Parquet (station blend)
 ├── SaverWeather                → copy files + insert weather_layers DB rows
 └── GetterWeather               → interpolate + unit conversion + optional IDW blend
 ```
@@ -317,8 +336,7 @@ Key design decisions:
   total and its 06-06 UTC precipitation window).  The trailing request is
   skipped while that day is not yet published (about 5 days behind real
   time); a failed buffer request only logs a warning.  `buffer_days=0`
-  disables both.  The DWD downloader likewise requests one extra day after
-  `date_end`.  At query time accumulated variables are read as day totals
+  disables both.  At query time accumulated variables are read as day totals
   (daily mode) or per-hour increments (hourly mode); see
   `datavia.library.temporal`.
 - **Multi-variable NetCDF** — `SaverWeather.save()` inserts one
@@ -353,6 +371,9 @@ DATAVIA_E2E=1 pytest tests/test_weather_e2e.py::TestHYRASE2E -v
 # End-to-end tests — DWD stations only (no credentials needed)
 DATAVIA_E2E=1 pytest tests/test_weather_e2e.py::TestDWDStationE2E -v
 
+# End-to-end test — kriging a month over Germany (Mojo)
+DATAVIA_E2E=1 DATAVIA_E2E_SLOW=1 pytest tests/test_weather_e2e.py::TestDWDKrigingE2E -v
+
 # End-to-end tests — ERA5 (requires ~/.cdsapirc)
 DATAVIA_E2E=1 pytest tests/test_weather_e2e.py::TestERA5E2E -v
 ```
@@ -367,7 +388,7 @@ DATAVIA_E2E=1 pytest tests/test_weather_e2e.py::TestERA5E2E -v
 | `netCDF4 >= 1.7` | xarray NetCDF backend | `weather` |
 | `pyarrow >= 14.0` | Parquet read/write | `weather` |
 | `pandas >= 2.2` | Station data manipulation | `weather` |
-| `requests` | Open-Meteo HTTP calls | `weather` |
+| `requests` | DWD CDC HTTP calls | `weather` |
 | `zarr >= 3.0, < 4` | Zarr v3 store format | `weather` |
 | `numcodecs >= 0.12, < 1` | Blosc/zstd compression codecs | `weather` |
 | `fasteners >= 0.19` | Cross-process file locking for writes | `weather` |
@@ -505,8 +526,9 @@ WeatherPipeline(
 
 - `"daily"` (default) — one value per requested timestamp for its **calendar
   date** D; the time of day is ignored.  All sources give the same quantity:
-  - Temperature and humidity: the daily mean.  HYRAS stores it directly; for
-    ERA5 and DWD it is the mean of the 24 hourly values `00:00..23:00` UTC.
+  - Temperature and humidity: the daily mean.  HYRAS and the DWD stations
+    store it directly; for ERA5 it is the mean of the 24 hourly values
+    `00:00..23:00` UTC.
   - Precipitation: the total of `06:00 D` to `06:00 D+1` UTC (the HYRAS and
     DWD convention).
   - Radiation: the mean flux of `00:00` to `24:00` UTC.
@@ -517,9 +539,10 @@ WeatherPipeline(
 - `"hourly"` — one value per requested timestamp at its hour: the stamp
   within 30 minutes, or for accumulated ERA5 variables the de-accumulated
   increment of the hour containing it.  Same output shape as `"daily"`:
-  `(N,)` for one timestamp, `(N, T)` for a list.  Supported by ERA5 and DWD
-  stations; `HYRASDownloader` raises `ValueError` at initialisation if hourly
-  is requested (HYRAS is daily-only).
+  `(N,)` for one timestamp, `(N, T)` for a list.  Supported by ERA5 only;
+  `HYRASDownloader` and `DWDKrigingDownloader` raise `ValueError` at
+  initialisation if hourly is requested (both are daily-only), and the daily
+  DWD station blend is skipped for hourly queries.
 
 ## Planned enhancements
 
@@ -532,7 +555,7 @@ A planned incremental download manager would:
 - **Sub-region bounding box** — callers should be able to specify a custom
   sub-region bounding box to download a smaller geographic area instead of the
   full default extent (e.g. just Berlin rather than all of Germany).
-- **Respect already-downloaded extents** — before issuing a CDS or Open-Meteo
+- **Respect already-downloaded extents** — before issuing a CDS
   request, query the `weather_layers` table for overlapping spatial bounding
   boxes and temporal ranges and request only the missing portion.  This makes
   repeated or widened requests safe and cheap.  The mechanism that computes the
@@ -660,5 +683,6 @@ address this and related lifecycle issues:
 - **HYRAS** — Deutscher Wetterdienst (DWD), gridded observation dataset for Germany.
   Licence: Creative Commons Attribution 4.0 International (CC BY 4.0).
   Attribution: Deutscher Wetterdienst (DWD), https://opendata.dwd.de/climate_environment/CDC/grids_germany/daily/hyras_de/
-- **DWD / Open-Meteo** — DWD Open Data, CC-BY 4.0.
-  Attribution: https://open-meteo.com/en/docs/dwd-api
+- **DWD stations** — Deutscher Wetterdienst (DWD), Climate Data Center daily
+  station observations.  Licence: CC BY 4.0.
+  Attribution: Deutscher Wetterdienst (DWD), https://opendata.dwd.de/climate_environment/CDC/observations_germany/climate/daily/
