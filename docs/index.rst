@@ -92,25 +92,32 @@ Datavia's pipeline-based architecture consists of three core interfaces:
 Core Interfaces
 ~~~~~~~~~~~~~~~
 
+A pipeline is built from three component *classes*, which it instantiates on
+first use. ``ElevationPipeline``, for example, uses only the generic GeoTIFF
+components from the core package:
+
 .. doctest::
 
-    >>> from datavia.core.interfaces import Downloader, Saver, Getter, Pipeline
-    >>> 
-    >>> # Each pipeline implements these three components:
-    >>> class MyPipeline: # Simplified example
-    ...     def __init__(self):
-    ...         # Initialize pipeline with required components
-    ...         pass
-    >>> 
-    >>> # Verify the class exists
-    >>> callable(MyPipeline)
+    >>> from datavia.core.interfaces import Downloader, Getter, Pipeline, Saver
+    >>> from datavia.elevation import ElevationPipeline
+    >>> pipe = ElevationPipeline()
+    >>> pipe.name
+    'elevation'
+    >>> pipe.downloader_class.__name__, pipe.saver_class.__name__, pipe.getter_class.__name__
+    ('TiffDownloader', 'TiffSaver', 'GetterTiff')
+    >>> issubclass(pipe.saver_class, Saver) and issubclass(pipe.getter_class, Getter)
     True
 
 **Pipeline Components:**
 
-* **Downloader**: Fetches data from external sources (URLs, APIs)
-* **Saver**: Stores data locally and metadata in the SQLite metadata database
-* **Getter**: Provides coordinate-based data access with spatial interpolation
+* **Downloader**: Fetches data from external sources (URLs, APIs) into a local file
+* **Saver**: Copies the file into the data directory and registers it in the
+  metadata database (writes only, never reads the database)
+* **Getter**: Looks files up in the database and returns values at coordinates
+  (reads only, never writes)
+
+To add a data source, see the developer guide
+`Adding a New Pipeline <https://github.com/tree-d/datavia/blob/main/docs/development/adding-a-pipeline.md>`_.
 
 Current Data Sources
 ~~~~~~~~~~~~~~~~~~~~

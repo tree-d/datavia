@@ -17,6 +17,9 @@ time-series queries significantly faster.
 
 Added
 ~~~~~
+- Developer guide ``docs/development/adding-a-pipeline.md``: component
+  contract, worked examples, packaging, CLI wiring, tests, and a checklist
+  for adding a new pipeline.
 - ``datavia.weather`` sub-package with a full pipeline architecture.
 - ``WeatherPipeline`` orchestrator for multi-source weather data retrieval.
 - ``SourceRegistry`` for managing and selecting weather data sources.

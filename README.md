@@ -325,15 +325,14 @@ We welcome contributions! Please see our [Coding Standards](docs/development/cod
 
 ### Adding New Pipelines
 
-The system uses namespace packages for easy extension:
+Each pipeline is a separate package under `packages/<name>/` that adds `datavia.<name>` to the
+shared namespace. A single GeoTIFF at a URL may not need a new package at all:
+`ElevationPipeline({"source": ..., "url": ...})` handles it.
 
-1. **Create new package**: Add directory under `packages/your_pipeline/`
-2. **Add pyproject.toml**: Configure package metadata and dependencies
-3. **Implement pipeline class**: Follow `packages/elevation/datavia/elevation/pipeline.py` as template
-4. **Add documentation**: Create README.md in package directory
-5. **Add tests**: Create test files in `tests/`
-
-See existing pipelines ([elevation](packages/elevation/), [soil](packages/soil/)) as examples.
+See **[Adding a New Pipeline](docs/development/adding-a-pipeline.md)** for the component contract,
+worked examples, packaging, CLI wiring, tests, and a checklist of every file to touch.
+The existing pipelines ([elevation](packages/elevation/), [soil](packages/soil/),
+[weather](packages/weather/)) are the reference implementations.
 
 ## License
 
