@@ -102,7 +102,10 @@ def spatial_interpolate(
     Returns
     -------
     np.ndarray
-        Interpolated values at each coordinate location
+        Interpolated values at each coordinate location.  A point at a
+        pixel's centre returns that pixel's value.  Points in the outer half
+        of a border pixel (beyond the last pixel centre, but inside the
+        raster) take the border value; points outside the raster are NaN.
 
     Raises
     ------
@@ -132,7 +135,7 @@ def spatial_interpolate(
         # preserves the actual local signal rather than using a global median, so
         # if a query point lands exactly on a nodata pixel its interpolated value
         # is still derived from real nearby measurements.  Out-of-domain points
-        # (fully outside the raster extent) return NaN via mode='constant'.
+        # (fully outside the raster extent) are set to NaN below.
         nodata = src.nodata
         if nodata is not None:
             nodata_mask = band_data == nodata
@@ -151,16 +154,23 @@ def spatial_interpolate(
 
         transform = src.transform
 
-        # Convert world coordinates to fractional row/col for all points at once
+        # World coordinates -> fractional col/row.  The inverse affine
+        # transform measures from pixel corners: pixel c spans [c, c+1) and
+        # its centre is c + 0.5.
         cols, rows = ~transform * (coords[:, 0], coords[:, 1])
+        cols = np.asarray(cols, dtype=np.float64)
+        rows = np.asarray(rows, dtype=np.float64)
+        height, width = band_data.shape
+        inside = (cols >= 0) & (cols <= width) & (rows >= 0) & (rows <= height)
 
-        # Stack coordinates for scipy.ndimage.map_coordinates
-        # map_coordinates expects (row, col) order;
-        # rowcol conversion above already provides that order.
-        coord_array = np.vstack([rows, cols])
+        # map_coordinates puts index c at the centre of pixel c, so shift by
+        # half a pixel.  Between the last pixel centre and the raster edge,
+        # clamp to the border pixel instead of reading fill values.
+        cols = np.where(inside, np.clip(cols - 0.5, 0, width - 1), 0.0)
+        rows = np.where(inside, np.clip(rows - 0.5, 0, height - 1), 0.0)
 
-        # Perform interpolation for all points simultaneously
-        coordinates = np.asarray(coord_array, dtype=np.float64)
+        # map_coordinates expects (row, col) order.
+        coordinates = np.vstack([rows, cols])
 
         # Ensure order is one of the accepted literal values
         order_val = min(max(interpolation_order, 0), 5)
@@ -177,16 +187,18 @@ def spatial_interpolate(
         else:
             order_literal = 5
 
+        # "nearest" extends the border values, so cubic splines near the edge
+        # are not pulled towards a fill value.
         interpolated_values = map_coordinates(
             band_data,
             coordinates,
             order=order_literal,
-            cval=np.nan,
             prefilter=interpolation_order > 1,
-            mode="constant",
+            mode="nearest",
         )
 
-        result = np.asarray(interpolated_values)
+        result = np.asarray(interpolated_values, dtype=np.float64)
+        result[~inside] = np.nan
 
         return result
 

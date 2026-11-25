@@ -97,9 +97,9 @@ def average_onto_grid(dem_path: str | Path) -> np.ndarray:
 
     Each grid cell gets the mean of the raster pixels that fall into it
     (``rasterio`` average resampling, area weighted), ignoring fill values.
-    This works directly on the pixel footprints, so it is free of the
-    half-pixel offset that point sampling through
-    :func:`datavia.library.interpolation.spatial_interpolate` has.
+    This works directly on the pixel footprints: each cell gets an area
+    mean, not the point sample that
+    :func:`datavia.library.interpolation.spatial_interpolate` returns.
 
     Parameters
     ----------
