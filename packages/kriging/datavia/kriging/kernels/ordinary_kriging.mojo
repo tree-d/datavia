@@ -48,16 +48,11 @@ Edge cases:
 
 from std.math import sqrt
 from std.memory import Pointer
-from std.sys import simd_width_of
 from max.algorithm.backend.cpu.parallelize import parallelize
 from max.runtime.asyncrt import parallelism_level
 
-from kernels.variogram import Variogram, variogram_value
-
-comptime _VECTOR_SIZE = simd_width_of[DType.float64]()
-
-comptime F64Ptr = Pointer[Float64, MutUntrackedOrigin]
-comptime F32Ptr = Pointer[Float32, MutUntrackedOrigin]
+from kernels.memory_layout import F32Ptr, F64Ptr, VECTOR_SIZE, untracked
+from kernels.variogram import Variogram
 
 comptime OUT_NODATA: Float32 = -9999.0
 """Output for cells without a valid DEM value and for failed solves."""
@@ -81,16 +76,18 @@ comptime _CHUNKS_PER_WORKER = 16
 """Cells are cut into this many contiguous chunks per worker, taken cyclically (see `krige_cells`)."""
 
 
-def _untracked[T: AnyType](pointer: Pointer[T, _]) -> Pointer[T, MutUntrackedOrigin]:
-    """`pointer` without its origin, so it can be stored in a struct field.
-
-    Only used for the arguments of the public functions: the caller's pointer is in
-    use for the whole call, so the memory behind it outlives every use here."""
-    return Pointer[T, MutUntrackedOrigin](unsafe_from_address=Int(pointer))
-
-
 def _distance(x1: Float64, y1: Float64, x2: Float64, y2: Float64) -> Float64:
-    """Euclidean distance."""
+    """Returns the Euclidean distance between two points.
+
+    Args:
+        x1: Easting [m] of the first point.
+        y1: Northing [m] of the first point.
+        x2: Easting [m] of the second point.
+        y2: Northing [m] of the second point.
+
+    Returns:
+        The distance [m].
+    """
     var dx = x1 - x2
     var dy = y1 - y2
     return sqrt(dx * dx + dy * dy)
@@ -114,6 +111,23 @@ struct Cells(Copyable, ImplicitlyCopyable, Movable):
     var count: Int
     """Number of cells."""
 
+    @staticmethod
+    def from_pointers(
+        x: Pointer[Float64, _], y: Pointer[Float64, _], elevation: Pointer[Float64, _], count: Int
+    ) -> Self:
+        """Returns the cells behind the caller's pointers, which must stay valid for the whole call.
+
+        Args:
+            x: Cell eastings [m], `count` entries.
+            y: Cell northings [m], `count` entries.
+            elevation: Cell elevations [m], `count` entries.
+            count: Number of cells.
+
+        Returns:
+            The cells, reading the caller's memory in place.
+        """
+        return Self(untracked(x), untracked(y), untracked(elevation), count)
+
 
 @fieldwise_init
 struct Stations(Copyable, ImplicitlyCopyable, Movable):
@@ -132,8 +146,40 @@ struct Stations(Copyable, ImplicitlyCopyable, Movable):
     var day_count: Int
     """Number of days."""
 
+    @staticmethod
+    def from_pointers(
+        x: Pointer[Float64, _],
+        y: Pointer[Float64, _],
+        elevation: Pointer[Float64, _],
+        values: Pointer[Float64, _],
+        count: Int,
+        day_count: Int,
+    ) -> Self:
+        """Returns the stations behind the caller's pointers, which must stay valid for the whole call.
+
+        Args:
+            x: Station eastings [m], `count` entries.
+            y: Station northings [m], `count` entries.
+            elevation: Station elevations [m], `count` entries.
+            values: Station values, C-ordered `(count, day_count)`.
+            count: Number of stations.
+            day_count: Number of days.
+
+        Returns:
+            The stations, reading the caller's memory in place.
+        """
+        return Self(untracked(x), untracked(y), untracked(elevation), untracked(values), count, day_count)
+
     def value(self, station: Int, day: Int) -> Float64:
-        """Value of `station` on `day`."""
+        """Returns the value of one station on one day.
+
+        Args:
+            station: Station index, `0 <= station < count`.
+            day: Day index, `0 <= day < day_count`.
+
+        Returns:
+            The value; equals the run's `nodata` if the station has none that day.
+        """
         return self.values[unsafe_offset=station * self.day_count + day]
 
 
@@ -184,17 +230,26 @@ struct SelectedStations(Movable):
     """Elevation [m] of each selected station (filled by `gather`)."""
 
     def __init__(out self):
+        """Creates an empty selection."""
         self.index = List[Int]()
         self.x = List[Float64]()
         self.y = List[Float64]()
         self.elevation = List[Float64]()
 
     def count(self) -> Int:
-        """Number of selected stations."""
+        """Returns the number of selected stations.
+
+        Returns:
+            The length of `index`.
+        """
         return len(self.index)
 
     def gather(mut self, stations: Stations):
-        """Copies the position of every selected station into `x`, `y` and `elevation`."""
+        """Copies the position of every selected station into `x`, `y` and `elevation`.
+
+        Args:
+            stations: All stations; `index` refers to them.
+        """
         self.x.clear()
         self.y.clear()
         self.elevation.clear()
@@ -213,11 +268,22 @@ trait KrigingSystem(Copyable, Deinitable, ImplicitlyCopyable, Movable):
     """
 
     def constraint_count(self) -> Int:
-        """Constraint rows below the `n` station rows."""
+        """Returns the number of constraint rows below the `n` station rows.
+
+        Returns:
+            The number of Lagrange multipliers of the system.
+        """
         ...
 
     def assemble_matrix(self, selected: SelectedStations, model: Variogram, mut matrix: List[Float64], size: Int):
-        """Writes all `size * size` entries of the system matrix."""
+        """Writes all `size * size` entries of the system matrix.
+
+        Args:
+            selected: The reporting stations; must be gathered (`SelectedStations.gather`).
+            model: The variogram.
+            matrix: Receives the matrix, row-major; must hold at least `size * size` entries.
+            size: `selected.count() + constraint_count()`.
+        """
         ...
 
     def assemble_right_hand_side(
@@ -230,19 +296,32 @@ trait KrigingSystem(Copyable, Deinitable, ImplicitlyCopyable, Movable):
         mut right_hand_side: List[Float64],
         size: Int,
     ):
-        """Writes the `size` entries of the right-hand side for the cell."""
+        """Writes the `size` entries of the right-hand side for the cell.
+
+        Args:
+            selected: The reporting stations; must be gathered (`SelectedStations.gather`).
+            cell_x: Easting [m] of the cell.
+            cell_y: Northing [m] of the cell.
+            cell_elevation: Elevation [m] of the cell (the drift value, if the system has one).
+            model: The variogram.
+            right_hand_side: Receives the right-hand side; must hold at least `size` entries.
+            size: `selected.count() + constraint_count()`.
+        """
         ...
 
 
 def _store_semivariances[vector_size: Int](
     x: Float64, y: Float64, selected: SelectedStations, model: Variogram, mut target: List[Float64], offset: Int
 ):
-    """`target[offset + j] = gamma(|(x, y) - s_j|)` for every selected station `j`.
+    """Sets `target[offset + j] = gamma(|(x, y) - s_j|)` for every selected station `j`.
 
     Vectorised over the stations; the stations that do not fill a whole vector are
     handled one at a time. Compared with a plain scalar loop, some entries differ
     in the last bit (tests/mojo/test_kriging.mojo counts them), so the weights
     agree with a scalar implementation to rounding, not bit for bit.
+
+    Parameters:
+        vector_size: Number of stations processed per SIMD instruction.
 
     Args:
         x: Easting [m] of the point the distances are measured from.
@@ -260,7 +339,9 @@ def _store_semivariances[vector_size: Int](
     while j + vector_size <= n:
         var dx = x - station_x.unsafe_load[width=vector_size](offset=j)
         var dy = y - station_y.unsafe_load[width=vector_size](offset=j)
-        destination.unsafe_store[width=vector_size](offset=offset + j, val=model.value[vector_size](sqrt(dx * dx + dy * dy)))
+        destination.unsafe_store[width=vector_size](
+            offset=offset + j, val=model.value[vector_size](sqrt(dx * dx + dy * dy))
+        )
         j += vector_size
     while j < n:
         target[offset + j] = model.value[1](_distance(x, y, selected.x[j], selected.y[j]))[0]
@@ -279,14 +360,28 @@ struct OrdinaryKrigingSystem(KrigingSystem):
     """
 
     def constraint_count(self) -> Int:
+        """Returns the number of constraint rows: 1, the row of ones.
+
+        Returns:
+            1.
+        """
         return 1
 
     def assemble_matrix(self, selected: SelectedStations, model: Variogram, mut matrix: List[Float64], size: Int):
-        """Gamma_ij = gamma(|s_i - s_j|), whole rows at a time. The diagonal is the
-        nugget, as gamma(0) is (see `Variogram`)."""
+        """Writes Gamma_ij = gamma(|s_i - s_j|) and the row and column of ones, whole rows at a time.
+
+        The diagonal is the nugget, as gamma(0) is (see `Variogram`). Entries beyond
+        row and column `n` are set to 0, for a bordering system to fill.
+
+        Args:
+            selected: The reporting stations; must be gathered (`SelectedStations.gather`).
+            model: The variogram.
+            matrix: Receives the matrix, row-major; must hold at least `size * size` entries.
+            size: At least `selected.count() + 1`.
+        """
         var n = selected.count()
         for i in range(n):
-            _store_semivariances[_VECTOR_SIZE](selected.x[i], selected.y[i], selected, model, matrix, i * size)
+            _store_semivariances[VECTOR_SIZE](selected.x[i], selected.y[i], selected, model, matrix, i * size)
             matrix[i * size + n] = 1.0
             for k in range(n + 1, size):
                 matrix[i * size + k] = 0.0
@@ -306,9 +401,19 @@ struct OrdinaryKrigingSystem(KrigingSystem):
         mut right_hand_side: List[Float64],
         size: Int,
     ):
-        """Entries gamma_0,i = gamma(|s_i - s_0|), then 1; entries from `n + 1` on are set to 0."""
+        """Writes gamma_0,i = gamma(|s_i - s_0|), then 1; entries from `n + 1` on are set to 0.
+
+        Args:
+            selected: The reporting stations; must be gathered (`SelectedStations.gather`).
+            cell_x: Easting [m] of the cell.
+            cell_y: Northing [m] of the cell.
+            cell_elevation: Unused by ordinary kriging.
+            model: The variogram.
+            right_hand_side: Receives the right-hand side; must hold at least `size` entries.
+            size: At least `selected.count() + 1`.
+        """
         var n = selected.count()
-        _store_semivariances[_VECTOR_SIZE](cell_x, cell_y, selected, model, right_hand_side, 0)
+        _store_semivariances[VECTOR_SIZE](cell_x, cell_y, selected, model, right_hand_side, 0)
         right_hand_side[n] = 1.0
         for k in range(n + 1, size):
             right_hand_side[k] = 0.0
@@ -319,18 +424,31 @@ struct OrdinaryKrigingSystem(KrigingSystem):
 # ---------------------------------------------------------------------------
 
 
-def _lu_solve_kernel[vector_size: Int](mut matrix: List[Float64], mut right_hand_side: List[Float64], size: Int) -> Bool:
-    """Solves `matrix * x = right_hand_side` in place (x goes into `right_hand_side`)
-    by Gaussian elimination with partial pivoting, the algorithm of LAPACK dgesv.
-    `matrix` is destroyed.
+def _lu_solve_kernel[vector_size: Int](
+    mut matrix: List[Float64], mut right_hand_side: List[Float64], size: Int
+) -> Bool:
+    """Solves `matrix * x = right_hand_side` in place by Gaussian elimination with partial pivoting.
+
+    This is the algorithm of LAPACK dgesv. The solution x goes into
+    `right_hand_side`, and `matrix` is destroyed.
 
     The row updates, where almost all the time goes, are vectorised: each entry is
     updated on its own, so the result is the same as the scalar loop. The pivot
     search (a strided column) and the back substitution (a sum in fixed order) stay
     scalar; both are O(size^2) against the O(size^3) of the updates.
 
-    Returns False if the matrix is singular or the solution is not finite.
+    Parameters:
+        vector_size: Number of matrix entries updated per SIMD instruction.
+
+    Args:
+        matrix: The system matrix, row-major `(size, size)`; overwritten.
+        right_hand_side: The right-hand side, `size` entries; replaced by the solution.
+        size: Number of unknowns.
+
+    Returns:
+        False if the matrix is singular or the solution is not finite, else True.
     """
+    # The usual linear-algebra names: solve A x = b.
     var a = matrix.unsafe_ptr()
     var b = right_hand_side.unsafe_ptr()
     for col in range(size):
@@ -399,11 +517,25 @@ def _kriging_weights[System: KrigingSystem](
     mut matrix: List[Float64],
     mut weights: List[Float64],
 ) -> Int:
-    """Step 3: the kriging weights w_1..n (followed by the Lagrange multipliers) into
-    `weights`. `selected` must be gathered.
+    """Step 3: assembles and solves the kriging system of one cell.
 
-    Returns `_SOLVE_OK`, `_SOLVE_SINGULAR`, or `_SOLVE_SUM_WARNING` if the weights do
-    not sum to 1 within `_WEIGHT_SUM_TOLERANCE`.
+    Parameters:
+        System: The kriging system type (ordinary or external drift).
+
+    Args:
+        system: The kriging system.
+        selected: The reporting stations; must be gathered (`SelectedStations.gather`).
+        cell_x: Easting [m] of the cell.
+        cell_y: Northing [m] of the cell.
+        cell_elevation: Elevation [m] of the cell.
+        model: The variogram.
+        matrix: Scratch space for the system matrix; grown as needed, destroyed by the solve.
+        weights: Receives the weights w_1..n followed by the Lagrange multipliers; grown as needed.
+
+    Returns:
+        `_SOLVE_OK`, `_SOLVE_SINGULAR` (the weights are unusable), or
+        `_SOLVE_SUM_WARNING` if the weights do not sum to 1 within
+        `_WEIGHT_SUM_TOLERANCE` (they are usable).
     """
     var n = selected.count()
     var size = n + system.constraint_count()
@@ -413,7 +545,7 @@ def _kriging_weights[System: KrigingSystem](
         weights.resize(size, 0.0)
     system.assemble_matrix(selected, model, matrix, size)
     system.assemble_right_hand_side(selected, cell_x, cell_y, cell_elevation, model, weights, size)
-    if not _lu_solve_kernel[_VECTOR_SIZE](matrix, weights, size):
+    if not _lu_solve_kernel[VECTOR_SIZE](matrix, weights, size):
         return _SOLVE_SINGULAR
     var weight_sum: Float64 = 0.0
     for i in range(n):
@@ -426,8 +558,18 @@ def _kriging_weights[System: KrigingSystem](
 def _find_neighbourhood_kernel[vector_size: Int](
     cell_x: Float64, cell_y: Float64, stations: Stations, max_dist: Float64, mut neighbours: List[Int]
 ):
-    """Step 1: the stations within `max_dist` of the cell, in increasing order of
-    their index. Vectorised over the stations."""
+    """Step 1: finds the stations within `max_dist` of the cell, vectorised over the stations.
+
+    Parameters:
+        vector_size: Number of stations tested per SIMD instruction.
+
+    Args:
+        cell_x: Easting [m] of the cell.
+        cell_y: Northing [m] of the cell.
+        stations: All stations.
+        max_dist: Search radius [m].
+        neighbours: Receives the station indices, in increasing order (cleared first).
+    """
     neighbours.clear()
     var station = 0
     while station + vector_size <= stations.count:
@@ -448,8 +590,18 @@ def _find_neighbourhood_kernel[vector_size: Int](
 def _select_valid_stations(
     neighbours: List[Int], stations: Stations, day: Int, nodata: Float64, mut selected: SelectedStations
 ) -> Int:
-    """Step 2: the neighbours that have a value on `day` into `selected.index`.
-    Returns how many of them are exactly 0."""
+    """Step 2: selects the neighbours that have a value on `day`.
+
+    Args:
+        neighbours: Indices of the stations within the search radius.
+        stations: All stations.
+        day: Day index.
+        nodata: Marks a missing value.
+        selected: Its `index` receives the reporting neighbours, in the order of `neighbours`.
+
+    Returns:
+        How many of the selected stations report exactly 0.
+    """
     selected.index.clear()
     var zero_count = 0
     for i in range(len(neighbours)):
@@ -463,8 +615,18 @@ def _select_valid_stations(
 
 
 def _choose_estimator(selected_count: Int, zero_count: Int) -> Int:
-    """Step 2: the estimator for the day. All values 0
-    (or no station) -> 0; one station -> its value; two -> IDW; more -> kriging."""
+    """Step 2: chooses the estimator for the day from the number of reporting stations.
+
+    All values 0 (or no station) -> 0; one station -> its value; two -> IDW;
+    more -> kriging.
+
+    Args:
+        selected_count: Number of reporting stations within the search radius.
+        zero_count: How many of them report exactly 0.
+
+    Returns:
+        `_ESTIMATE_ZERO`, `_ESTIMATE_SINGLE`, `_ESTIMATE_IDW` or `_ESTIMATE_KRIGING`.
+    """
     if zero_count == selected_count:
         return _ESTIMATE_ZERO
     if selected_count == 1:
@@ -475,7 +637,15 @@ def _choose_estimator(selected_count: Int, zero_count: Int) -> Int:
 
 
 def _same_selection(a: List[Int], b: List[Int]) -> Bool:
-    """True if both lists hold the same stations (test of the weight cache)."""
+    """Tests whether two selections hold the same stations (test of the weight cache).
+
+    Args:
+        a: Station indices.
+        b: Station indices.
+
+    Returns:
+        True if both lists are equal entry by entry.
+    """
     if len(a) != len(b):
         return False
     for i in range(len(a)):
@@ -484,9 +654,20 @@ def _same_selection(a: List[Int], b: List[Int]) -> Bool:
     return True
 
 
-def _idw_weights(selected: SelectedStations, cell_x: Float64, cell_y: Float64, stations: Stations, mut weights: List[Float64]):
-    """Inverse squared distance weights w_i = d_i^-2 / sum_j d_j^-2.
-    A station at distance 0 gets all the weight."""
+def _idw_weights(
+    selected: SelectedStations, cell_x: Float64, cell_y: Float64, stations: Stations, mut weights: List[Float64]
+):
+    """Computes inverse squared distance weights w_i = d_i^-2 / sum_j d_j^-2.
+
+    A station at distance 0 gets all the weight.
+
+    Args:
+        selected: The reporting stations (only `index` is used).
+        cell_x: Easting [m] of the cell.
+        cell_y: Northing [m] of the cell.
+        stations: All stations.
+        weights: Receives one weight per selected station; grown as needed.
+    """
     var n = selected.count()
     if len(weights) < n:
         weights.resize(n, 0.0)
@@ -507,17 +688,37 @@ def _idw_weights(selected: SelectedStations, cell_x: Float64, cell_y: Float64, s
 
 
 def _single_station_estimate(value: Float64, distance: Float64, settings: KrigingSettings) -> Float32:
-    """Only one station has a value: copy it, or 0 if `dist_zero` is on and the station
-    is farther than `threshold_dist`."""
+    """Estimates a cell from the only station that has a value.
+
+    Args:
+        value: The station's value.
+        distance: Distance [m] from the cell to the station.
+        settings: Its `dist_zero` and `threshold_dist` decide whether a distant station counts.
+
+    Returns:
+        0 if `dist_zero` is on and the station is farther than `threshold_dist`,
+        else the station's value.
+    """
     if settings.dist_zero and distance > settings.threshold_dist:
         return 0.0
     return Float32(value)
 
 
 def _weighted_estimate(weights: List[Float64], selected: SelectedStations, stations: Stations, day: Int) -> Float32:
-    """Step 4: z0 = sum_i w_i z_i, accumulated in single precision in station order
-    (also used for IDW). The fixed order makes the result independent of vector width
-    and thread count."""
+    """Step 4: computes z0 = sum_i w_i z_i (kriging or IDW).
+
+    The sum is accumulated in single precision in station order. The fixed order
+    makes the result independent of vector width and thread count.
+
+    Args:
+        weights: One weight per selected station (further entries are ignored).
+        selected: The reporting stations (only `index` is used).
+        stations: All stations.
+        day: Day index.
+
+    Returns:
+        The estimate.
+    """
     var estimate: Float32 = 0.0
     for i in range(selected.count()):
         estimate += Float32(weights[i] * stations.value(selected.index[i], day))
@@ -525,15 +726,32 @@ def _weighted_estimate(weights: List[Float64], selected: SelectedStations, stati
 
 
 def _correct_negative(estimate: Float32) -> Float32:
-    """Step 5: a negative estimate (but not `OUT_NODATA`) becomes 0."""
+    """Step 5: sets a negative estimate to 0, leaving `OUT_NODATA` alone.
+
+    Args:
+        estimate: The estimate.
+
+    Returns:
+        0 if the estimate is negative but not `OUT_NODATA`, else the estimate.
+    """
     if estimate > OUT_NODATA and estimate < 0.0:
         return 0.0
     return estimate
 
 
 def _is_dem_nodata(elevation: Float64, dem_nodata: Float64) -> Bool:
-    """True if the cell's elevation, rounded half away from zero to an integer, is `dem_nodata`.
-    Rounding lets an integer nodata marker match a DEM stored as floating point."""
+    """Tests whether a cell has no DEM value.
+
+    The elevation is rounded half away from zero to an integer first, so an
+    integer nodata marker matches a DEM stored as floating point.
+
+    Args:
+        elevation: The cell's elevation [m].
+        dem_nodata: The DEM's nodata marker.
+
+    Returns:
+        True if the rounded elevation equals `dem_nodata`.
+    """
     return Float64(Int(elevation + 0.5 if elevation >= 0.0 else elevation - 0.5)) == dem_nodata
 
 
@@ -556,6 +774,7 @@ struct _Workspace(Movable):
     """Counts of this worker's cells."""
 
     def __init__(out self):
+        """Creates an empty workspace with zero counts."""
         self.neighbours = List[Int]()
         self.selected = SelectedStations()
         self.cached_selection = List[Int]()
@@ -576,10 +795,23 @@ def _krige_cell_kernel[System: KrigingSystem](
     estimates: F32Ptr,
     mut workspace: _Workspace,
 ):
-    """Estimates `cell` on every day into `estimates[cell * day_count + day]`.
+    """Estimates one cell on every day into `estimates[cell * day_count + day]`.
 
     The weights depend only on which stations report, not on their values, so they
     are reused as long as the selection stays the same from one day to the next.
+
+    Parameters:
+        System: The kriging system type (ordinary or external drift).
+
+    Args:
+        system: The kriging system.
+        cells: All cells.
+        cell: Index of the cell to estimate.
+        stations: All stations and their values.
+        model: The variogram.
+        settings: Search radius, nodata values and the precipitation options.
+        estimates: Output, C-ordered `(cells.count, stations.day_count)`; only this cell's row is written.
+        workspace: The calling worker's scratch space; its `counts` are increased.
     """
     var cell_x = cells.x[unsafe_offset=cell]
     var cell_y = cells.y[unsafe_offset=cell]
@@ -590,12 +822,14 @@ def _krige_cell_kernel[System: KrigingSystem](
             estimates[unsafe_offset=first_output + day] = OUT_NODATA
         return
 
-    _find_neighbourhood_kernel[_VECTOR_SIZE](cell_x, cell_y, stations, settings.max_dist, workspace.neighbours)
+    _find_neighbourhood_kernel[VECTOR_SIZE](cell_x, cell_y, stations, settings.max_dist, workspace.neighbours)
     var have_weights = False
     workspace.cached_selection.clear()
 
     for day in range(stations.day_count):
-        var zero_count = _select_valid_stations(workspace.neighbours, stations, day, settings.nodata, workspace.selected)
+        var zero_count = _select_valid_stations(
+            workspace.neighbours, stations, day, settings.nodata, workspace.selected
+        )
         var estimator = _choose_estimator(workspace.selected.count(), zero_count)
         var estimate: Float32
 
@@ -618,7 +852,9 @@ def _krige_cell_kernel[System: KrigingSystem](
                 estimate = OUT_NODATA
         elif estimator == _ESTIMATE_SINGLE:
             var station = workspace.selected.index[0]
-            var distance = _distance(cell_x, cell_y, stations.x[unsafe_offset=station], stations.y[unsafe_offset=station])
+            var distance = _distance(
+                cell_x, cell_y, stations.x[unsafe_offset=station], stations.y[unsafe_offset=station]
+            )
             estimate = _single_station_estimate(stations.value(station, day), distance, settings)
         elif estimator == _ESTIMATE_IDW:
             _idw_weights(workspace.selected, cell_x, cell_y, stations, workspace.idw_weights)
@@ -652,6 +888,9 @@ def krige_cells[System: KrigingSystem](
 
     Does not touch Python: callers from Python release the GIL around it.
 
+    Parameters:
+        System: The kriging system type (ordinary or external drift).
+
     Args:
         system: The kriging system (`OrdinaryKrigingSystem`, or the external drift one).
         cells: The cells to estimate.
@@ -675,6 +914,11 @@ def krige_cells[System: KrigingSystem](
 
     def work(worker: Int) {var system, var cells, var stations, var model, var settings, var estimates,
                            ref singular, ref sum_warning, var cell_count, var n_chunks, var n_workers}:
+        """Estimates the cells of the chunks `worker, worker + n_workers, ...` and stores its counts.
+
+        Args:
+            worker: Index of this worker, `0 <= worker < n_workers`.
+        """
         var workspace = _Workspace()
         for chunk in range(worker, n_chunks, n_workers):
             for cell in range(chunk * cell_count // n_chunks, (chunk + 1) * cell_count // n_chunks):
@@ -713,8 +957,9 @@ def ordinary_kriging(
     settings: KrigingSettings,
     estimates: Pointer[Float32, _],
 ) -> KrigingCounts:
-    """Ordinary kriging of every cell on every day, on all CPUs the process may use
-    (see `krige_cells`).
+    """Ordinary kriging of every cell on every day, on all CPUs the process may use.
+
+    See `krige_cells` for how the work is spread.
 
     Args:
         cell_x: Cell eastings [m], `cell_count` entries.
@@ -737,10 +982,9 @@ def ordinary_kriging(
     """
     return krige_cells(
         system=OrdinaryKrigingSystem(),
-        cells=Cells(_untracked(cell_x), _untracked(cell_y), _untracked(cell_elevation), cell_count),
-        stations=Stations(
-            _untracked(station_x), _untracked(station_y), _untracked(station_elevation),
-            _untracked(station_values), station_count, day_count,
+        cells=Cells.from_pointers(cell_x, cell_y, cell_elevation, cell_count),
+        stations=Stations.from_pointers(
+            station_x, station_y, station_elevation, station_values, station_count, day_count
         ),
-        model=model, settings=settings, estimates=_untracked(estimates),
+        model=model, settings=settings, estimates=untracked(estimates),
     )

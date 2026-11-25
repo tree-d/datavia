@@ -29,7 +29,8 @@ dependencies = [
 
 # Mojo and MAX are needed at run time.  They are an extra rather than a
 # dependency so that conda/pixi environments can take them from the channel
-# https://conda.modular.com/max (conda packages "mojo" and "max-all") without
+# https://conda.modular.com/max (conda packages "mojo" and "max", not "max-all",
+# which pulls in pandas 3; see README.md) without
 # pip installing a second copy.  With pip: pip install "datavia-kriging[mojo]".
 [project.optional-dependencies]
 mojo = [

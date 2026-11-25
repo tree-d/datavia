@@ -236,6 +236,7 @@ packages/kriging/
 │   ├── _krige.py             # krige, krige_grid: arguments -> Mojo extension
 │   ├── _core.mojo            # the Python extension module (one function: krige)
 │   └── kernels/              # Mojo package with the algorithms
+│       ├── memory_layout.mojo            # shared pointer types and SIMD width
 │       ├── empirical_variogram.mojo
 │       ├── variogram.mojo                # models, misfit, bounded Nelder-Mead
 │       ├── ordinary_kriging.mojo         # neighbourhood, estimators, solve, cell loop
@@ -244,6 +245,7 @@ packages/kriging/
     ├── test_api.py           # Python API on synthetic data
     ├── test_variogram_io.py  # saving and loading variograms
     └── mojo/                 # kernel tests against scalar reference implementations
+                              # (testing_helpers.mojo: shared by the tests)
 ```
 
 ## Tests
@@ -251,9 +253,13 @@ packages/kriging/
 From the datavia repository root:
 
 ```sh
-pixi run test-kriging        # Python API (pytest)
-pixi run test-kriging-mojo   # Mojo kernels against scalar references
+pixi run test-kriging              # Python API (pytest)
+pixi run test-kriging-mojo         # Mojo kernels against scalar references
+pixi run check-kriging-mojo-docs   # Mojo docstrings (mojo doc --Werror)
 ```
+
+The pull-request CI (job *Mojo (kriging)* in
+`.github/workflows/ci-pull-request.yml`) runs all three.
 
 ## Extracting the package
 

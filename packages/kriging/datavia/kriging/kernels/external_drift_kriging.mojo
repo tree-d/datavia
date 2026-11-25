@@ -31,23 +31,37 @@ from kernels.ordinary_kriging import (
     OrdinaryKrigingSystem,
     SelectedStations,
     Stations,
-    _untracked,
     krige_cells,
 )
+from kernels.memory_layout import untracked
 from kernels.variogram import Variogram
 
 
 @fieldwise_init
 struct ExternalDriftSystem(KrigingSystem):
-    """The EDK system: the OK system with the
-    station elevations as one more row and column, and the cell elevation as one
-    more entry of the right-hand side."""
+    """The EDK system: the OK system bordered by the elevations.
+
+    The station elevations are one more row and column of the matrix, and the cell
+    elevation is one more entry of the right-hand side.
+    """
 
     def constraint_count(self) -> Int:
+        """Returns the number of constraint rows: the row of ones and the drift row.
+
+        Returns:
+            The ordinary kriging count plus 1.
+        """
         return OrdinaryKrigingSystem().constraint_count() + 1
 
     def assemble_matrix(self, selected: SelectedStations, model: Variogram, mut matrix: List[Float64], size: Int):
-        """The OK matrix, then the elevations into the last row and column."""
+        """Writes the OK matrix, then the station elevations into the last row and column.
+
+        Args:
+            selected: The reporting stations; must be gathered (`SelectedStations.gather`).
+            model: The variogram.
+            matrix: Receives the matrix, row-major; must hold at least `size * size` entries.
+            size: `selected.count() + 2`.
+        """
         OrdinaryKrigingSystem().assemble_matrix(selected, model, matrix, size)
         var n = selected.count()
         var drift = n + 1
@@ -65,7 +79,17 @@ struct ExternalDriftSystem(KrigingSystem):
         mut right_hand_side: List[Float64],
         size: Int,
     ):
-        """The OK right-hand side, then the cell elevation."""
+        """Writes the OK right-hand side, then the cell elevation.
+
+        Args:
+            selected: The reporting stations; must be gathered (`SelectedStations.gather`).
+            cell_x: Easting [m] of the cell.
+            cell_y: Northing [m] of the cell.
+            cell_elevation: Elevation [m] of the cell: the drift value it must reproduce.
+            model: The variogram.
+            right_hand_side: Receives the right-hand side; must hold at least `size` entries.
+            size: `selected.count() + 2`.
+        """
         OrdinaryKrigingSystem().assemble_right_hand_side(
             selected, cell_x, cell_y, cell_elevation, model, right_hand_side, size
         )
@@ -88,8 +112,9 @@ def external_drift_kriging(
     settings: KrigingSettings,
     estimates: Pointer[Float32, _],
 ) -> KrigingCounts:
-    """External drift kriging of every cell on every day, with the elevation as the
-    drift, on all CPUs the process may use (see `ordinary_kriging.krige_cells`).
+    """External drift kriging of every cell on every day, with the elevation as the drift.
+
+    Runs on all CPUs the process may use (see `ordinary_kriging.krige_cells`).
 
     The bordered system needs at least as many reporting stations as it has
     unknowns besides the multipliers, and their elevations must differ: where all
@@ -119,10 +144,9 @@ def external_drift_kriging(
     """
     return krige_cells(
         system=ExternalDriftSystem(),
-        cells=Cells(_untracked(cell_x), _untracked(cell_y), _untracked(cell_elevation), cell_count),
-        stations=Stations(
-            _untracked(station_x), _untracked(station_y), _untracked(station_elevation),
-            _untracked(station_values), station_count, day_count,
+        cells=Cells.from_pointers(cell_x, cell_y, cell_elevation, cell_count),
+        stations=Stations.from_pointers(
+            station_x, station_y, station_elevation, station_values, station_count, day_count
         ),
-        model=model, settings=settings, estimates=_untracked(estimates),
+        model=model, settings=settings, estimates=untracked(estimates),
     )

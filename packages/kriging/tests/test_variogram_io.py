@@ -22,16 +22,39 @@ NODATA = -999.0
 
 
 def stations(n_stations: int = 60, n_days: int = 10):
-    """Synthetic stations: positions, elevations and values with an elevation trend."""
+    """Return synthetic stations with an elevation trend in their values.
+
+    Parameters
+    ----------
+    n_stations : int
+        Number of stations.
+    n_days : int
+        Number of days.
+
+    Returns
+    -------
+    tuple of np.ndarray
+        ``(station_x, station_y, station_elevation, z)``; ``z`` is
+        ``(n_stations, n_days)``.
+    """
     rng = np.random.default_rng(1)
-    sx, sy = rng.uniform(0, 5e4, n_stations), rng.uniform(0, 5e4, n_stations)
-    sh = rng.uniform(0, 500, n_stations)
-    z = 5 + 0.01 * sh[:, None] + rng.normal(0, 1, (n_stations, n_days))
-    return sx, sy, sh, z
+    station_x, station_y = (
+        rng.uniform(0, 5e4, n_stations),
+        rng.uniform(0, 5e4, n_stations),
+    )
+    station_elevation = rng.uniform(0, 500, n_stations)
+    z = 5 + 0.01 * station_elevation[:, None] + rng.normal(0, 1, (n_stations, n_days))
+    return station_x, station_y, station_elevation, z
 
 
 def fit():
-    """Only the variogram: krige on no points."""
+    """Fit a variogram to :func:`stations` by kriging on no points.
+
+    Returns
+    -------
+    KrigingResult
+        Empty estimates, the fitted variogram and its bins.
+    """
     none = np.empty(0)
     return krige(
         none,
@@ -48,11 +71,11 @@ def fit():
 @pytest.mark.parametrize("model_type", [SPHERICAL, EXPONENTIAL])
 def test_round_trip_is_exact(tmp_path, model_type):
     """A saved variogram reads back bit-identical, for both models."""
-    v = Variogram(0.1 + 1e-17, 2 / 3, 12345.678901234567, model_type)
-    v.save(tmp_path / "v.json")
-    assert Variogram.load(tmp_path / "v.json") == v
-    assert load_variogram(tmp_path / "v.json") == v
-    assert Variogram.from_dict(v.to_dict()) == v
+    variogram = Variogram(0.1 + 1e-17, 2 / 3, 12345.678901234567, model_type)
+    variogram.save(tmp_path / "v.json")
+    assert Variogram.load(tmp_path / "v.json") == variogram
+    assert load_variogram(tmp_path / "v.json") == variogram
+    assert Variogram.from_dict(variogram.to_dict()) == variogram
 
 
 def test_file_is_self_describing(tmp_path):
@@ -115,28 +138,42 @@ def test_saved_fit_has_bins_and_gives_the_same_kriging(tmp_path):
     assert np.array_equal(bins.semivariance, result.bins.semivariance)
     assert np.array_equal(bins.pair_count, result.bins.pair_count)
 
-    sx, sy, sh, z = stations()
-    points = (sx[:8] + 500.0, sy[:8] - 500.0, sh[:8])
+    station_x, station_y, station_elevation, z = stations()
+    points = (station_x[:8] + 500.0, station_y[:8] - 500.0, station_elevation[:8])
     with_fit = krige(
-        *points, sx, sy, sh, z, nodata=NODATA, max_dist=3e4, variogram=result.variogram
+        *points,
+        station_x,
+        station_y,
+        station_elevation,
+        z,
+        nodata=NODATA,
+        max_dist=3e4,
+        variogram=result.variogram,
     )
     with_file = krige(
-        *points, sx, sy, sh, z, nodata=NODATA, max_dist=3e4, variogram=loaded
+        *points,
+        station_x,
+        station_y,
+        station_elevation,
+        z,
+        nodata=NODATA,
+        max_dist=3e4,
+        variogram=loaded,
     )
     assert np.array_equal(with_fit.estimates, with_file.estimates)
 
 
 def test_given_variogram_saves_without_bins(tmp_path):
     """A given (not fitted) variogram is saved without bins."""
-    sx, sy, sh, z = stations()
+    station_x, station_y, station_elevation, z = stations()
     given = Variogram(0.1, 1.0, 2e4, SPHERICAL)
     result = krige(
-        sx[:3],
-        sy[:3],
-        sh[:3],
-        sx,
-        sy,
-        sh,
+        station_x[:3],
+        station_y[:3],
+        station_elevation[:3],
+        station_x,
+        station_y,
+        station_elevation,
         z,
         nodata=NODATA,
         max_dist=3e4,

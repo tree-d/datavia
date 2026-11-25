@@ -187,6 +187,8 @@ class Variogram:
         ------
         ValueError
             If :attr:`model_type` is unknown.
+        OSError
+            If the file cannot be written.
         """
         _write_json(path, self.to_dict())
 
@@ -208,9 +210,12 @@ class Variogram:
         Raises
         ------
         ValueError
-            If the file has another format version or an unknown model.
+            If the file is not valid JSON, has another format version or an
+            unknown model.
         KeyError
             If a required field is missing.
+        OSError
+            If the file cannot be read.
         """
         return cls.from_dict(_read_json(path))
 
@@ -297,7 +302,11 @@ class EmpiricalBins:
         ------
         ValueError
             If the file holds no bins (the variogram was given, not fitted),
-            or has another format version.
+            is not valid JSON, or has another format version.
+        KeyError
+            If a bins field is missing.
+        OSError
+            If the file cannot be read.
         """
         data = _read_json(path)
         if "bins" not in data:
@@ -358,6 +367,8 @@ class KrigingResult:
         ------
         ValueError
             If the variogram's model type is unknown.
+        OSError
+            If the file cannot be written.
         """
         data = self.variogram.to_dict()
         if self.converged is not None:
@@ -368,7 +379,20 @@ class KrigingResult:
 
 
 def _write_json(path: str | os.PathLike, data: dict[str, Any]) -> None:
-    """Write *data* with the format ``version`` first, indented one space."""
+    """Write a variogram file: *data* with the format ``version`` first.
+
+    Parameters
+    ----------
+    path : str or os.PathLike
+        File to write; overwritten if it exists.
+    data : dict[str, Any]
+        JSON-compatible content, without ``version``.
+
+    Raises
+    ------
+    OSError
+        If the file cannot be written.
+    """
     with open(path, "w", encoding="utf-8") as f:
         json.dump({"version": _FILE_VERSION, **data}, f, indent=1)
         f.write("\n")
@@ -377,10 +401,23 @@ def _write_json(path: str | os.PathLike, data: dict[str, Any]) -> None:
 def _read_json(path: str | os.PathLike) -> dict[str, Any]:
     """Read a variogram file and check its format version.
 
+    Parameters
+    ----------
+    path : str or os.PathLike
+        File written by :func:`_write_json`.
+
+    Returns
+    -------
+    dict[str, Any]
+        The file's content, ``version`` included.
+
     Raises
     ------
     ValueError
-        If the file's ``version`` is not :data:`_FILE_VERSION`.
+        If the file is not valid JSON (:class:`json.JSONDecodeError`), or its
+        ``version`` is not :data:`_FILE_VERSION`.
+    OSError
+        If the file cannot be read.
     """
     with open(path, encoding="utf-8") as f:
         data: dict[str, Any] = json.load(f)

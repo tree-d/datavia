@@ -82,12 +82,13 @@ stations onto two points, fitting the variogram from the 10 days given:
 >>> import numpy as np
 >>> from datavia.kriging import krige
 >>> rng = np.random.default_rng(0)
->>> sx, sy = rng.uniform(0, 5e4, 60), rng.uniform(0, 5e4, 60)
->>> sh = rng.uniform(0, 800, 60)
->>> z = 5 - 0.0065 * sh[:, None] + rng.normal(0, 0.3, (60, 10))
+>>> station_x = rng.uniform(0, 5e4, 60)
+>>> station_y = rng.uniform(0, 5e4, 60)
+>>> station_elevation = rng.uniform(0, 800, 60)
+>>> z = 5 - 0.0065 * station_elevation[:, None] + rng.normal(0, 0.3, (60, 10))
 >>> result = krige(
 ...     np.array([1e4, 4e4]), np.array([2e4, 3e4]), np.array([100.0, 700.0]),
-...     sx, sy, sh, z, nodata=-9999.0, max_dist=1e5,
+...     station_x, station_y, station_elevation, z, nodata=-9999.0, max_dist=1e5,
 ... )  # doctest: +SKIP
 >>> result.estimates.shape  # doctest: +SKIP
 (2, 10)

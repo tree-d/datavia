@@ -15,16 +15,36 @@ DEM_NODATA = -9999.0
 
 
 def synthetic(n_stations: int = 60, n_days: int = 10):
-    """Synthetic stations (with one missing value) and a grid with one DEM gap."""
+    """Return synthetic stations (with one missing value) and a grid with one DEM gap.
+
+    Parameters
+    ----------
+    n_stations : int
+        Number of stations.
+    n_days : int
+        Number of days.
+
+    Returns
+    -------
+    stations : tuple of np.ndarray
+        ``(station_x, station_y, station_elevation, z)``; ``z`` is
+        ``(n_stations, n_days)`` with a linear elevation trend.
+    grid : tuple of np.ndarray
+        ``(easting, northing, dem)``, each ``(40, 50)`` at 1 km spacing;
+        ``dem[0, 0]`` is ``DEM_NODATA``.
+    """
     rng = np.random.default_rng(0)
-    sx, sy = rng.uniform(0, 5e4, n_stations), rng.uniform(0, 5e4, n_stations)
-    sh = rng.uniform(0, 500, n_stations)
-    z = 5 + 0.01 * sh[:, None] + rng.normal(0, 1, (n_stations, n_days))
+    station_x, station_y = (
+        rng.uniform(0, 5e4, n_stations),
+        rng.uniform(0, 5e4, n_stations),
+    )
+    station_elevation = rng.uniform(0, 500, n_stations)
+    z = 5 + 0.01 * station_elevation[:, None] + rng.normal(0, 1, (n_stations, n_days))
     z[0, 2] = NODATA
     easting, northing = np.meshgrid(np.arange(0, 5e4, 1e3), np.arange(0, 4e4, 1e3))
     dem = rng.uniform(0, 500, easting.shape)
     dem[0, 0] = DEM_NODATA
-    return (sx, sy, sh, z), (easting, northing, dem)
+    return (station_x, station_y, station_elevation, z), (easting, northing, dem)
 
 
 def test_grid_and_points_agree():
@@ -67,33 +87,33 @@ def test_grid_and_points_agree():
 
 def test_single_day_and_ordinary_kriging():
     """Single-day input drops the day axis; ordinary kriging runs too."""
-    (sx, sy, sh, z), (easting, northing, dem) = synthetic()
-    vario = kriging.Variogram(0.1, 1.0, 2e4, kriging.SPHERICAL)
+    (station_x, station_y, station_elevation, z), (easting, northing, dem) = synthetic()
+    spherical_variogram = kriging.Variogram(0.1, 1.0, 2e4, kriging.SPHERICAL)
     one_day = kriging.krige_grid(
         easting,
         northing,
         dem,
-        sx,
-        sy,
-        sh,
+        station_x,
+        station_y,
+        station_elevation,
         z[:, 3],
         nodata=NODATA,
         dem_nodata=DEM_NODATA,
         max_dist=3e4,
-        variogram=vario,
+        variogram=spherical_variogram,
     )
     all_days = kriging.krige_grid(
         easting,
         northing,
         dem,
-        sx,
-        sy,
-        sh,
+        station_x,
+        station_y,
+        station_elevation,
         z,
         nodata=NODATA,
         dem_nodata=DEM_NODATA,
         max_dist=3e4,
-        variogram=vario,
+        variogram=spherical_variogram,
     )
     assert one_day.estimates.shape == easting.shape
     assert np.array_equal(one_day.estimates, all_days.estimates[3])
@@ -101,13 +121,13 @@ def test_single_day_and_ordinary_kriging():
         easting.ravel()[:7],
         northing.ravel()[:7],
         dem.ravel()[:7],
-        sx,
-        sy,
-        sh,
+        station_x,
+        station_y,
+        station_elevation,
         z[:, 3],
         nodata=NODATA,
         max_dist=3e4,
-        variogram=vario,
+        variogram=spherical_variogram,
         drift=False,
     )
     assert ok.estimates.shape == (7,)
@@ -127,7 +147,7 @@ def test_single_day_and_ordinary_kriging():
 )
 def test_bad_input_raises(bad, message):
     """The extension rejects wrong dtypes, lengths and memory layouts."""
-    (sx, sy, sh, z), _ = synthetic()
+    (station_x, station_y, station_elevation, z), _ = synthetic()
     settings = {
         "nodata": NODATA,
         "dem_nodata": DEM_NODATA,
@@ -141,10 +161,60 @@ def test_bad_input_raises(bad, message):
     }
     cells = np.zeros(3)
     args = {
-        "float32": (cells.astype(np.float32), cells, cells, sx, sy, sh, z),
-        "short_cell_y": (cells, cells[:2], cells, sx, sy, sh, z),
-        "short_values": (cells, cells, cells, sx, sy, sh, z[:-1]),
-        "fortran_order": (cells, cells, cells, sx, sy, sh, np.asfortranarray(z)),
+        "float32": (
+            cells.astype(np.float32),
+            cells,
+            cells,
+            station_x,
+            station_y,
+            station_elevation,
+            z,
+        ),
+        "short_cell_y": (
+            cells,
+            cells[:2],
+            cells,
+            station_x,
+            station_y,
+            station_elevation,
+            z,
+        ),
+        "short_values": (
+            cells,
+            cells,
+            cells,
+            station_x,
+            station_y,
+            station_elevation,
+            z[:-1],
+        ),
+        "fortran_order": (
+            cells,
+            cells,
+            cells,
+            station_x,
+            station_y,
+            station_elevation,
+            np.asfortranarray(z),
+        ),
     }[bad]
     with pytest.raises(Exception, match=message):  # Mojo raises a plain Exception
         _extension().krige(*args, settings)
+
+
+def test_public_api_raises_value_error():
+    """The public API turns the extension's plain Exception into a ValueError."""
+    (station_x, station_y, station_elevation, z), _ = synthetic()
+    with pytest.raises(ValueError, match="station_values"):
+        kriging.krige(
+            [1e4],
+            [1e4],
+            [100.0],
+            station_x,
+            station_y,
+            station_elevation,
+            z[:-1],  # one station short
+            nodata=NODATA,
+            max_dist=3e4,
+            variogram=kriging.Variogram(0.1, 1.0, 2e4),
+        )

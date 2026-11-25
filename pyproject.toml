@@ -317,6 +317,13 @@ test-kriging-mojo-kriging = "mojo run -I packages/kriging/datavia/kriging packag
 test-kriging-mojo-variogram = "mojo run -I packages/kriging/datavia/kriging packages/kriging/tests/mojo/test_variogram.mojo"
 test-kriging-mojo-empirical-variogram = "mojo run -I packages/kriging/datavia/kriging packages/kriging/tests/mojo/test_empirical_variogram.mojo"
 test-kriging-mojo = { depends-on = ["test-kriging-mojo-kriging", "test-kriging-mojo-variogram", "test-kriging-mojo-empirical-variogram"] }
+# Docstring check (coding standards, Documentation AC3): --Werror turns a missing or
+# partial docstring (no Args/Returns/Parameters/Raises where needed) into a failure.
+# The tests also need -I for their own directory: `mojo doc`, unlike `mojo run`, does
+# not find the sibling module testing_helpers.mojo by itself.
+check-kriging-mojo-docs-library = "mojo doc --diagnose-missing-doc-strings --Werror -o /dev/null packages/kriging/datavia/kriging/kernels && mojo doc --diagnose-missing-doc-strings --Werror -o /dev/null -I packages/kriging/datavia/kriging packages/kriging/datavia/kriging/_core.mojo"
+check-kriging-mojo-docs-tests = "mojo doc --diagnose-missing-doc-strings --Werror -o /dev/null -I packages/kriging/datavia/kriging -I packages/kriging/tests/mojo packages/kriging/tests/mojo/test_kriging.mojo && mojo doc --diagnose-missing-doc-strings --Werror -o /dev/null -I packages/kriging/datavia/kriging -I packages/kriging/tests/mojo packages/kriging/tests/mojo/test_variogram.mojo && mojo doc --diagnose-missing-doc-strings --Werror -o /dev/null -I packages/kriging/datavia/kriging -I packages/kriging/tests/mojo packages/kriging/tests/mojo/test_empirical_variogram.mojo && mojo doc --diagnose-missing-doc-strings --Werror -o /dev/null -I packages/kriging/datavia/kriging -I packages/kriging/tests/mojo packages/kriging/tests/mojo/testing_helpers.mojo"
+check-kriging-mojo-docs = { depends-on = ["check-kriging-mojo-docs-library", "check-kriging-mojo-docs-tests"] }
 
 # Environments
 [tool.pixi.environments]

@@ -242,3 +242,37 @@ jobs:
           name: security-report
           path: |
             bandit-report.json
+
+  # Job 7: Mojo (datavia.kriging, packages/kriging)
+  # Kernel tests against scalar references, the Python API on the compiled
+  # extension, and the Mojo docstring check. Mojo and MAX come with the dev
+  # environment (pixi feature "kriging"), so no extra setup is needed.
+  mojo:
+    name: Mojo (kriging)
+    needs: format-check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pixi
+        uses: prefix-dev/setup-pixi@v0.9.6
+        with:
+          pixi-version: ${{ env.PIXI_VERSION }}
+
+      - name: Install dependencies (includes Mojo and MAX)
+        run: pixi install -e dev
+
+      - name: Mojo kernel tests (against scalar references)
+        run: pixi run -e dev test-kriging-mojo
+
+      # The remaining checks also run after a failure above, so every problem
+      # is reported in one run (they are still skipped if the install fails).
+      - name: Python API tests (compiles the Mojo extension)
+        if: success() || failure()
+        run: pixi run -e dev test-kriging
+
+      - name: Mojo docstring check
+        if: success() || failure()
+        run: pixi run -e dev check-kriging-mojo-docs

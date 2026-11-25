@@ -16,22 +16,33 @@ package (`datavia.kriging`, see `_krige.py`) wraps this for points (`krige`) and
 grids (`krige_grid`).
 """
 
-from std.memory import Pointer
 from std.os import abort
 from std.python import Python, PythonObject
 from std.python.bindings import PythonModuleBuilder
 
 from kernels.empirical_variogram import EmpiricalVariogram, empirical_variogram
 from kernels.external_drift_kriging import external_drift_kriging
+from kernels.memory_layout import F32Ptr, F64Ptr
 from kernels.ordinary_kriging import KrigingCounts, KrigingSettings, ordinary_kriging
 from kernels.variogram import Variogram, variogram
 
-comptime _F64Ptr = Pointer[Float64, MutUntrackedOrigin]
-comptime _F32Ptr = Pointer[Float32, MutUntrackedOrigin]
 
+def _float64_data(numpy: PythonObject, array: PythonObject, name: String, ndim: Int) raises -> F64Ptr:
+    """Returns a pointer to the data of a numpy array, after checking its type and layout.
 
-def _float64_data(numpy: PythonObject, array: PythonObject, name: String, ndim: Int) raises -> _F64Ptr:
-    """The data of `array`, which must be a C-contiguous float64 numpy array with `ndim` dimensions."""
+    Args:
+        numpy: The `numpy` module.
+        array: The array.
+        name: The argument's name, for error messages.
+        ndim: Required number of dimensions.
+
+    Returns:
+        A pointer to the array's first element; valid while `array` is alive.
+
+    Raises:
+        Error: If `array` is not a numpy array, has another number of dimensions,
+            is not float64, or is not C-contiguous.
+    """
     if not Bool(py=Python.import_module("builtins").isinstance(array, numpy.ndarray)):
         raise Error(String(name, " must be a numpy array"))
     if Int(py=array.ndim) != ndim:
@@ -40,17 +51,41 @@ def _float64_data(numpy: PythonObject, array: PythonObject, name: String, ndim: 
         raise Error(String(name, " must be float64, not ", String(py=array.dtype.name)))
     if not Bool(py=array.flags["C_CONTIGUOUS"]):
         raise Error(String(name, " must be C-contiguous"))
-    return _F64Ptr(unsafe_from_address=Int(py=array.ctypes.data))
+    return F64Ptr(unsafe_from_address=Int(py=array.ctypes.data))
 
 
 def _require_length(array: PythonObject, name: String, axis: Int, length: Int) raises:
-    """Raises unless `array` has `length` entries along `axis`."""
+    """Checks the length of a numpy array along one axis.
+
+    Args:
+        array: The array.
+        name: The argument's name, for error messages.
+        axis: The axis to check.
+        length: Required number of entries along `axis`.
+
+    Raises:
+        Error: If `array` has another number of entries along `axis`.
+    """
     if Int(py=array.shape[axis]) != length:
-        raise Error(String(name, " has ", Int(py=array.shape[axis]), " entries along axis ", axis, ", expected ", length))
+        raise Error(
+            String(name, " has ", Int(py=array.shape[axis]), " entries along axis ", axis, ", expected ", length)
+        )
 
 
 def _populated_bins(numpy: PythonObject, bins: EmpiricalVariogram) raises -> PythonObject:
-    """(lag [m], semivariance, pair count) of the populated bins, in physical units, as numpy arrays."""
+    """Returns the populated bins of an empirical variogram, in physical units.
+
+    Args:
+        numpy: The `numpy` module.
+        bins: The normalised empirical variogram.
+
+    Returns:
+        A tuple of numpy arrays (lag [m], semivariance, pair count), one entry per
+        populated bin.
+
+    Raises:
+        Error: If a Python call fails.
+    """
     var lag = Python.list()
     var semivariance = Python.list()
     var pair_count = Python.list()
@@ -110,13 +145,13 @@ def krige(
             or no station pair qualifies for the variogram.
     """
     var numpy = Python.import_module("numpy")
-    var x = _float64_data(numpy, cell_x, "cell_x", 1)
-    var y = _float64_data(numpy, cell_y, "cell_y", 1)
-    var elevation = _float64_data(numpy, cell_elevation, "cell_elevation", 1)
-    var sx = _float64_data(numpy, station_x, "station_x", 1)
-    var sy = _float64_data(numpy, station_y, "station_y", 1)
-    var sh = _float64_data(numpy, station_elevation, "station_elevation", 1)
-    var values = _float64_data(numpy, station_values, "station_values", 2)
+    var cell_x_data = _float64_data(numpy, cell_x, "cell_x", 1)
+    var cell_y_data = _float64_data(numpy, cell_y, "cell_y", 1)
+    var cell_elevation_data = _float64_data(numpy, cell_elevation, "cell_elevation", 1)
+    var station_x_data = _float64_data(numpy, station_x, "station_x", 1)
+    var station_y_data = _float64_data(numpy, station_y, "station_y", 1)
+    var station_elevation_data = _float64_data(numpy, station_elevation, "station_elevation", 1)
+    var station_values_data = _float64_data(numpy, station_values, "station_values", 2)
     var cell_count = Int(py=cell_x.shape[0])
     var station_count = Int(py=station_x.shape[0])
     _require_length(cell_y, "cell_y", 0, cell_count)
@@ -149,7 +184,8 @@ def krige(
         var min_pairs_per_bin = Int(py=settings["min_pairs_per_bin"])
         var gil = cpython.PyEval_SaveThread()
         var bins = empirical_variogram(
-            x=sx, y=sy, elevation=sh, values=values, station_count=station_count, day_count=day_count,
+            x=station_x_data, y=station_y_data, elevation=station_elevation_data, values=station_values_data,
+            station_count=station_count, day_count=day_count,
             nodata=nodata, bin_width=bin_width, max_lag=max_lag,
             max_elevation_gradient=max_elevation_gradient, min_pairs_per_bin=min_pairs_per_bin,
         )
@@ -166,20 +202,22 @@ def krige(
         result["converged"] = Python.none()
 
     var estimates = numpy.empty(Python.tuple(cell_count, day_count), dtype=numpy.float32)
-    var estimates_data = _F32Ptr(unsafe_from_address=Int(py=estimates.ctypes.data))
+    var estimates_data = F32Ptr(unsafe_from_address=Int(py=estimates.ctypes.data))
     var counts = KrigingCounts(0, 0)
     var gil = cpython.PyEval_SaveThread()
     if drift:
         counts = external_drift_kriging(
-            cell_x=x, cell_y=y, cell_elevation=elevation, cell_count=cell_count,
-            station_x=sx, station_y=sy, station_elevation=sh, station_values=values,
+            cell_x=cell_x_data, cell_y=cell_y_data, cell_elevation=cell_elevation_data, cell_count=cell_count,
+            station_x=station_x_data, station_y=station_y_data, station_elevation=station_elevation_data,
+            station_values=station_values_data,
             station_count=station_count, day_count=day_count,
             model=model, settings=kriging_settings, estimates=estimates_data,
         )
     else:
         counts = ordinary_kriging(
-            cell_x=x, cell_y=y, cell_elevation=elevation, cell_count=cell_count,
-            station_x=sx, station_y=sy, station_elevation=sh, station_values=values,
+            cell_x=cell_x_data, cell_y=cell_y_data, cell_elevation=cell_elevation_data, cell_count=cell_count,
+            station_x=station_x_data, station_y=station_y_data, station_elevation=station_elevation_data,
+            station_values=station_values_data,
             station_count=station_count, day_count=day_count,
             model=model, settings=kriging_settings, estimates=estimates_data,
         )
@@ -200,8 +238,10 @@ def PyInit__core() abi("C") -> PythonObject:
         The module object, with the single function `krige`.
     """
     try:
-        var m = PythonModuleBuilder("_core")
-        m.def_function[krige]("krige", docstring="Variogram (unless given) and kriging of station values onto cells")
-        return m.finalize()
+        var module = PythonModuleBuilder("_core")
+        module.def_function[krige](
+            "krige", docstring="Variogram (unless given) and kriging of station values onto cells"
+        )
+        return module.finalize()
     except e:
         abort(String("error creating Python module datavia.kriging._core: ", e))

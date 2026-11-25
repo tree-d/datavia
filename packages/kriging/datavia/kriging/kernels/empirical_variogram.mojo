@@ -25,33 +25,24 @@ The binned distances are rescaled exactly once, in step 4.
 
 from std.math import ceil, sqrt
 from std.memory import Pointer
-from std.sys import simd_width_of
 from max.algorithm.backend.cpu.parallelize import parallelize
 from max.runtime.asyncrt import parallelism_level
 
-comptime _F64Ptr = Pointer[Float64, MutUntrackedOrigin]
+from kernels.memory_layout import F64Ptr, VECTOR_SIZE, untracked
 
 # Marks a pair that is left out of the variogram (too far apart, or too steep).
 comptime _PAIR_EXCLUDED: Int64 = -1
-
-
-def _untracked(pointer: Pointer[Float64, _]) -> _F64Ptr:
-    """`pointer` without its origin, so it can be stored in a struct field.
-
-    Only used for the arguments of `empirical_variogram`: the caller's pointer is in
-    use for the whole call, so the memory behind it outlives every use here."""
-    return _F64Ptr(unsafe_from_address=Int(pointer))
 
 
 @fieldwise_init
 struct _StationGeometry(Copyable, ImplicitlyCopyable, Movable):
     """Where the stations are: `station_count` entries each."""
 
-    var x: _F64Ptr
+    var x: F64Ptr
     """Easting [m]."""
-    var y: _F64Ptr
+    var y: F64Ptr
     """Northing [m]."""
-    var elevation: _F64Ptr
+    var elevation: F64Ptr
     """Elevation [m]."""
 
 
@@ -126,7 +117,12 @@ struct EmpiricalVariogram(Movable):
     """Factor that turns a normalised `semivariance` back into its unit. 1.0 until `normalise` has run."""
 
     def __init__(out self, bin_width: Float64, max_lag: Float64):
-        """Creates an empty variogram with enough bins to cover distances up to `max_lag` [m]."""
+        """Creates an empty variogram with enough bins to cover distances up to `max_lag`.
+
+        Args:
+            bin_width: Width of one distance class [m], > 0.
+            max_lag: Largest distance to cover [m].
+        """
         self.bin_width = bin_width
         self.bin_count = Int(ceil(max_lag / bin_width))
         self.pair_count = List[Int](length=self.bin_count, fill=0)
@@ -137,11 +133,22 @@ struct EmpiricalVariogram(Movable):
         self.semivariance_scale = 1.0
 
     def is_populated(self, bin: Int) -> Bool:
-        """True if at least one station pair lies in the bin."""
+        """Tests whether at least one station pair lies in a bin.
+
+        Args:
+            bin: Bin index, `0 <= bin < bin_count`.
+
+        Returns:
+            True if the bin's `pair_count` is positive.
+        """
         return self.pair_count[bin] > 0
 
     def any_populated(self) -> Bool:
-        """True if at least one bin has a station pair."""
+        """Tests whether any bin has a station pair.
+
+        Returns:
+            True if at least one bin is populated.
+        """
         for bin in range(self.bin_count):
             if self.is_populated(bin):
                 return True
@@ -156,6 +163,9 @@ struct EmpiricalVariogram(Movable):
         no next neighbour, is handled by the second pass). The bin that was merged
         away is left empty. If the receiving bin is empty, it simply takes over
         the counts and sums.
+
+        Args:
+            min_pairs: Bins with fewer pairs than this are merged away.
         """
         for k in range(self.bin_count - 1):
             self._move_into(source=k, target=k + 1, min_pairs=min_pairs)
@@ -166,7 +176,13 @@ struct EmpiricalVariogram(Movable):
         """Moves the pairs of `source` into `target` if `source` has fewer than `min_pairs`.
 
         An empty target holds exactly 0 pairs and a sum of 0.0, so adding to it is
-        the same as taking over the values."""
+        the same as taking over the values.
+
+        Args:
+            source: Index of the bin that may be merged away.
+            target: Index of the neighbouring bin that receives its pairs.
+            min_pairs: `source` is merged only if it has fewer pairs than this (but some).
+        """
         var pairs = self.pair_count[source]
         if pairs > 0 and pairs < min_pairs:
             self.pair_count[target] += pairs
@@ -220,13 +236,24 @@ struct EmpiricalVariogram(Movable):
 def _bins_of_pairs[width: Int](
     stations: _StationGeometry, rules: _PairRules, row: Int, first_column: Int
 ) -> SIMD[DType.int64, width]:
-    """For `width` consecutive stations starting at `first_column`, the bin of their pair
-    with station `row`, or `_PAIR_EXCLUDED` if the pair is left out.
+    """Returns the bins of the pairs of station `row` with `width` consecutive stations.
 
     A pair is left out if the stations are farther apart than `max_lag`, or if their
     elevation differs by more than `max_elevation_gradient` metres per metre of
     distance: such pairs mostly measure the terrain, not the weather.
     All these quantities depend on the two stations only, not on the day.
+
+    Parameters:
+        width: Number of pairs (SIMD lanes).
+
+    Args:
+        stations: Positions and elevations of all stations.
+        rules: Distance limit, steepness limit and bin width.
+        row: Index of the first station of each pair.
+        first_column: Index of the second station of the first pair; the others follow.
+
+    Returns:
+        For each pair, its 0-based bin, or `_PAIR_EXCLUDED` if it is left out.
     """
     var row_x = stations.x.unsafe_load(offset=row)
     var row_y = stations.y.unsafe_load(offset=row)
@@ -254,11 +281,22 @@ def _find_bins_of_row[vector_size: Int](
     row: Int,
     mut bin_of_column: List[Int64],
 ) -> None:
-    """Step 1: the bin of every pair (row, column) with column > row, or `_PAIR_EXCLUDED`.
+    """Step 1: finds the bin of every pair (row, column) with column > row.
 
     Vectorised over the columns. The result does not depend on the day, so it is
     computed once per pair, not once per pair and day. The columns that do not fill
     a whole vector are handled one at a time.
+
+    Parameters:
+        vector_size: Number of columns processed per SIMD instruction.
+
+    Args:
+        stations: Positions and elevations of all stations.
+        rules: Distance limit, steepness limit and bin width.
+        station_count: Number of stations.
+        row: The row station.
+        bin_of_column: Receives, at index `column`, the pair's bin or `_PAIR_EXCLUDED`;
+            must hold `station_count` entries. Entries up to `row` are not written.
     """
     var column = row + 1
     while column + vector_size <= station_count:
@@ -283,12 +321,29 @@ def _add_pairs_of_row[vector_size: Int](
     mut row_pair_count: List[Int64],
     mut row_squared_difference_sum: List[Float64],
 ) -> None:
-    """Step 2: for every kept pair (row, column), add (z_row - z_column)^2 and a count
-    to the pair's bin, for each day on which both stations have a value.
+    """Step 2: adds the squared differences of the kept pairs of one row to their bins.
+
+    For every kept pair (row, column), adds (z_row - z_column)^2 and a count to the
+    pair's bin, for each day on which both stations have a value.
 
     Vectorised over the days: the days of a station are contiguous in memory, so each
     pair is processed `vector_size` days at a time. Padded days equal `nodata` and are
-    skipped. `bin_of_column` is the result of `_find_bins_of_row` for this row.
+    skipped.
+
+    Parameters:
+        vector_size: Number of days processed per SIMD instruction; must divide
+            `padded_day_count`.
+
+    Args:
+        padded_values: Station values, C-ordered `(station_count, padded_day_count)`.
+        padded_day_count: Days per station row, padding included.
+        station_count: Number of stations.
+        nodata: Marks a missing (or padded) value.
+        row: The row station.
+        bin_count: Number of bins per row in the accumulators.
+        bin_of_column: The result of `_find_bins_of_row` for this row.
+        row_pair_count: Per-row pair counts, `(station_count, bin_count)`; only this row's bins grow.
+        row_squared_difference_sum: Per-row sums, laid out like `row_pair_count`.
     """
     var values = padded_values.unsafe_ptr()
     var first_bin_of_row = row * bin_count
@@ -304,7 +359,9 @@ def _add_pairs_of_row[vector_size: Int](
             var value_column = values.unsafe_load[width=vector_size](offset=column * padded_day_count + day)
             var has_both_values = value_row.ne(nodata) & value_column.ne(nodata)
             var difference = value_row - value_column
-            squared_differences += has_both_values.select(difference * difference, SIMD[DType.float64, vector_size](0.0))
+            squared_differences += has_both_values.select(
+                difference * difference, SIMD[DType.float64, vector_size](0.0)
+            )
             valid_days += has_both_values.cast[DType.int64]()
 
         row_pair_count[first_bin_of_row + bin] += valid_days.reduce_add()
@@ -325,14 +382,30 @@ def _accumulate_row_kernel[vector_size: Int](
     mut row_pair_count: List[Int64],
     mut row_squared_difference_sum: List[Float64],
 ) -> None:
-    """Accumulates all pairs (row, column) with column > row into the row's own bins:
-    step 1 (`_find_bins_of_row`) finds each pair's bin, step 2 (`_add_pairs_of_row`)
+    """Accumulates all pairs (row, column) with column > row into the row's own bins.
+
+    Step 1 (`_find_bins_of_row`) finds each pair's bin, step 2 (`_add_pairs_of_row`)
     adds the pairs' squared differences to those bins.
 
     `row_pair_count` and `row_squared_difference_sum` hold `bin_count` bins per row;
     this row writes only its own, `row * bin_count` onwards, so rows can run on
-    different threads without sharing memory. `bin_of_column` is scratch space for
-    `station_count` entries, owned by the calling worker.
+    different threads without sharing memory.
+
+    Parameters:
+        vector_size: SIMD width of both steps.
+
+    Args:
+        stations: Positions and elevations of all stations.
+        rules: Distance limit, steepness limit and bin width.
+        padded_values: Station values, C-ordered `(station_count, padded_day_count)`.
+        padded_day_count: Days per station row, padding included.
+        station_count: Number of stations.
+        nodata: Marks a missing (or padded) value.
+        row: The row station.
+        bin_count: Number of bins per row in the accumulators.
+        bin_of_column: Scratch space for `station_count` entries, owned by the calling worker.
+        row_pair_count: Per-row pair counts, `(station_count, bin_count)`.
+        row_squared_difference_sum: Per-row sums, laid out like `row_pair_count`.
     """
     _find_bins_of_row[vector_size](
         stations=stations, rules=rules, station_count=station_count, row=row, bin_of_column=bin_of_column
@@ -390,17 +463,16 @@ def empirical_variogram(
         The variogram after all four steps (see the module docstring), so `lag` and
         `semivariance` are normalised. If no pair qualified, no bin is populated.
     """
-    comptime vector_size = simd_width_of[DType.float64]()
     var bins = EmpiricalVariogram(bin_width, max_lag)
     if station_count < 2 or bins.bin_count < 1:
         return bins^
     var bin_count = bins.bin_count
-    var stations = _StationGeometry(_untracked(x), _untracked(y), _untracked(elevation))
+    var stations = _StationGeometry(untracked(x), untracked(y), untracked(elevation))
     var rules = _PairRules(bin_width, max_lag, max_elevation_gradient)
 
     # Copy the values into rows padded to a whole number of vectors, filled with
     # `nodata`, so the kernel can read full vectors and ignore the padding.
-    var padded_day_count = ((day_count + vector_size - 1) // vector_size) * vector_size
+    var padded_day_count = ((day_count + VECTOR_SIZE - 1) // VECTOR_SIZE) * VECTOR_SIZE
     var padded_values = List[Float64](length=station_count * padded_day_count, fill=nodata)
     for station in range(station_count):
         for day in range(day_count):
@@ -419,9 +491,14 @@ def empirical_variogram(
     def work(worker: Int) {var stations, var rules, ref padded_values, var padded_day_count,
                            var station_count, var nodata, ref row_pair_count, ref row_squared_difference_sum,
                            var bin_count, var n_workers}:
+        """Accumulates the rows `worker, worker + n_workers, ...` into their own bins.
+
+        Args:
+            worker: Index of this worker, `0 <= worker < n_workers`.
+        """
         var bin_of_column = List[Int64](length=station_count, fill=_PAIR_EXCLUDED)
         for row in range(worker, station_count - 1, n_workers):
-            _accumulate_row_kernel[vector_size](
+            _accumulate_row_kernel[VECTOR_SIZE](
                 stations=stations, rules=rules, padded_values=padded_values,
                 padded_day_count=padded_day_count, station_count=station_count, nodata=nodata, row=row,
                 bin_count=bin_count, bin_of_column=bin_of_column,

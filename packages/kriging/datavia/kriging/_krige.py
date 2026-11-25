@@ -8,7 +8,8 @@ extension ``_core`` (``_core.mojo``).  They
 2. collect the settings into the dict the extension expects, with a given
    variogram as ``(nugget, sill, range)``;
 3. call the extension, which estimates the variogram (unless given) and
-   kriges every target on every day on all CPU cores, with the GIL released;
+   kriges every target on every day on all CPU cores, with the GIL released
+   (its errors, plain ``Exception`` from Mojo, are re-raised as ``ValueError``);
 4. wrap the returned dict in a :class:`~datavia.kriging.KrigingResult` and
    reshape the estimates: ``(n_points, n_days)`` for points,
    ``(n_days, ny, nx)`` for grids, without the day axis for single-day input.
@@ -56,7 +57,23 @@ def _extension() -> Any:
 
 
 def _as_f64(array: Any) -> np.ndarray:
-    """Return *array* as a contiguous float64 vector (not copied if it is one)."""
+    """Return *array* as a contiguous float64 vector.
+
+    Parameters
+    ----------
+    array : array_like
+        Any array or sequence of numbers; flattened in C order.
+
+    Returns
+    -------
+    np.ndarray
+        1-D, C-contiguous float64; *array* itself if it already is one.
+
+    Raises
+    ------
+    ValueError, TypeError
+        If *array* cannot be converted to float64.
+    """
     return np.ascontiguousarray(array, dtype=np.float64).ravel()
 
 
@@ -103,7 +120,8 @@ def _run(
     Raises
     ------
     ValueError
-        If the arrays have inconsistent lengths (raised by the extension).
+        If the extension rejects the input: inconsistent lengths, or no station
+        pair within ``max_lag`` to estimate a variogram from.
     ImportError
         If Mojo is not installed.
     """
@@ -115,24 +133,29 @@ def _run(
             variogram=(variogram.nugget, variogram.sill, variogram.range),
             model_type=variogram.model_type,
         )
-    r = _extension().krige(
-        _as_f64(cell_x),
-        _as_f64(cell_y),
-        _as_f64(cell_elevation),
-        _as_f64(station_x),
-        _as_f64(station_y),
-        _as_f64(station_elevation),
-        np.ascontiguousarray(values.reshape(len(values), -1)),
-        settings,
-    )
-    bins = None if r["bins"] is None else EmpiricalBins(*r["bins"])
+    extension = _extension()  # outside the try: its ImportError must pass unchanged
+    try:
+        raw = extension.krige(
+            _as_f64(cell_x),
+            _as_f64(cell_y),
+            _as_f64(cell_elevation),
+            _as_f64(station_x),
+            _as_f64(station_y),
+            _as_f64(station_elevation),
+            np.ascontiguousarray(values.reshape(len(values), -1)),
+            settings,
+        )
+    except Exception as exc:
+        # Mojo raises a plain Exception; its errors all concern the input.
+        raise ValueError(str(exc)) from exc
+    bins = None if raw["bins"] is None else EmpiricalBins(*raw["bins"])
     result = KrigingResult(
-        r["estimates"],
-        Variogram(*r["variogram"]),
+        raw["estimates"],
+        Variogram(*raw["variogram"]),
         bins,
-        r["converged"],
-        r["singular"],
-        r["sum_warning"],
+        raw["converged"],
+        raw["singular"],
+        raw["sum_warning"],
     )
     return result, single_day
 
@@ -289,12 +312,14 @@ def krige(
     --------
     >>> import numpy as np
     >>> rng = np.random.default_rng(0)
-    >>> sx, sy = rng.uniform(0, 5e4, 40), rng.uniform(0, 5e4, 40)
-    >>> sh = rng.uniform(0, 500, 40)
-    >>> z = 5 - 0.0065 * sh + rng.normal(0, 0.3, 40)  # one day
-    >>> r = krige([2.5e4], [2.5e4], [250.0], sx, sy, sh, z,
-    ...           nodata=-9999.0, max_dist=1e5)  # doctest: +SKIP
-    >>> r.estimates.shape  # doctest: +SKIP
+    >>> station_x = rng.uniform(0, 5e4, 40)
+    >>> station_y = rng.uniform(0, 5e4, 40)
+    >>> station_elevation = rng.uniform(0, 500, 40)
+    >>> z = 5 - 0.0065 * station_elevation + rng.normal(0, 0.3, 40)  # one day
+    >>> result = krige([2.5e4], [2.5e4], [250.0],
+    ...                station_x, station_y, station_elevation, z,
+    ...                nodata=-9999.0, max_dist=1e5)  # doctest: +SKIP
+    >>> result.estimates.shape  # doctest: +SKIP
     (1,)
     """
     settings = _settings(

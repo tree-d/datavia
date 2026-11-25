@@ -32,6 +32,9 @@ Added
 - ``datavia-kriging`` package (``packages/kriging``, ``datavia.kriging``):
   external drift and ordinary kriging with empirical variogram and variogram
   fit, computed in Mojo; self-contained so it can move to its own repository.
+- CI job *Mojo (kriging)* on pull requests: the Mojo kernel tests, the
+  ``datavia.kriging`` Python tests, and a Mojo docstring check
+  (``pixi run check-kriging-mojo-docs``).
 - ``VariogramCache``: one fitted variogram per variable and calendar month,
   cached as JSON in ``<data_dir>/DWD_stations/_variograms``.
 - ``DWDStationDownloader`` writes the daily CDC station observations as

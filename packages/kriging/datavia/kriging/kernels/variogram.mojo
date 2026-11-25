@@ -29,11 +29,9 @@ only a few dozen bins, less work than handing it to another thread costs.
 """
 
 from std.math import exp
-from std.sys import simd_width_of
 
 from kernels.empirical_variogram import EmpiricalVariogram
-
-comptime _VECTOR_SIZE = simd_width_of[DType.float64]()
+from kernels.memory_layout import VECTOR_SIZE
 
 # Model types. The numbers are part of the Python API (`SPHERICAL`, `EXPONENTIAL`).
 comptime SPHERICAL_MODEL = 1
@@ -47,7 +45,16 @@ The fourth lane only pads the vector to a power of two; it is kept at 0."""
 
 
 def _parameters(nugget: Float64, sill: Float64, range: Float64) -> VariogramParameters:
-    """`VariogramParameters` from its three parameters."""
+    """Packs the three model parameters into one `VariogramParameters` vector.
+
+    Args:
+        nugget: The nugget.
+        sill: The partial sill.
+        range: The range.
+
+    Returns:
+        (nugget, sill, range, 0).
+    """
     return VariogramParameters(nugget, sill, range, 0.0)
 
 
@@ -59,11 +66,23 @@ def _parameters(nugget: Float64, sill: Float64, range: Float64) -> VariogramPara
 def _semivariance_of_model[model_type: Int, width: Int](
     model: Variogram, distance: SIMD[DType.float64, width]
 ) -> SIMD[DType.float64, width]:
-    """Semivariance of the model at `distance` > 0.
+    """Returns the semivariance of the model at `distance` > 0.
 
     Spherical: rises as 1.5 r - 0.5 r^3 with r = distance / range and stays at
     nugget + sill from the range on. Exponential: approaches nugget + sill as
     1 - exp(-distance / range). A range of 0 gives nugget + sill everywhere.
+
+    Parameters:
+        model_type: `SPHERICAL_MODEL`, or any other value for exponential; fixed at
+            compile time so the choice is not made inside loops.
+        width: Number of distances (SIMD lanes).
+
+    Args:
+        model: The variogram (its `model_type` field is ignored).
+        distance: Distances, each > 0, in the unit of `model.range`.
+
+    Returns:
+        The semivariance at each distance.
     """
     var plateau = SIMD[DType.float64, width](model.nugget + model.sill)
     comptime if model_type == SPHERICAL_MODEL:
@@ -98,7 +117,7 @@ struct Variogram(Copyable, ImplicitlyCopyable, Movable):
     """`SPHERICAL_MODEL` or `EXPONENTIAL_MODEL`; any other value means exponential."""
 
     def value[width: Int](self, distance: SIMD[DType.float64, width]) -> SIMD[DType.float64, width]:
-        """Semivariance at `distance` [m], for `width` distances at once.
+        """Returns the semivariance at `distance` [m], for `width` distances at once.
 
         Parameters:
             width: Number of distances (SIMD lanes); 1 for a single distance.
@@ -119,7 +138,7 @@ struct Variogram(Copyable, ImplicitlyCopyable, Movable):
 
 
 def variogram_value(distance: Float64, model: Variogram) -> Float64:
-    """Semivariance of `model` at `distance` [m].
+    """Returns the semivariance of `model` at one distance.
 
     Args:
         distance: Distance [m], >= 0.
@@ -154,6 +173,11 @@ struct _FitBins(Movable):
     """Number of entries, padding included: a multiple of the vector size."""
 
     def __init__(out self, bins: EmpiricalVariogram):
+        """Copies the usable bins of `bins` and pads them.
+
+        Args:
+            bins: The normalised empirical variogram (after `normalise`).
+        """
         self.lag = List[Float64]()
         self.semivariance = List[Float64]()
         self.pair_weight = List[Float64]()
@@ -163,7 +187,7 @@ struct _FitBins(Movable):
                 self.lag.append(lag)
                 self.semivariance.append(bins.semivariance[bin])
                 self.pair_weight.append(Float64(bins.pair_count[bin]))
-        self.padded_count = ((len(self.lag) + _VECTOR_SIZE - 1) // _VECTOR_SIZE) * _VECTOR_SIZE
+        self.padded_count = ((len(self.lag) + VECTOR_SIZE - 1) // VECTOR_SIZE) * VECTOR_SIZE
         while len(self.lag) < self.padded_count:
             self.lag.append(1.0)
             self.semivariance.append(0.0)
@@ -171,7 +195,9 @@ struct _FitBins(Movable):
 
 
 def _misfit_kernel[model_type: Int, vector_size: Int](fit_bins: _FitBins, model: Variogram) -> Float64:
-    """Pair-weighted L1 misfit: sum over the bins of
+    """Returns the pair-weighted L1 misfit of a model to the bins.
+
+    The misfit is the sum over the bins of
     pairs * |empirical semivariance - model semivariance at the bin's lag|.
 
     The model semivariances and differences are computed for a whole vector of bins
@@ -183,6 +209,18 @@ def _misfit_kernel[model_type: Int, vector_size: Int](fit_bins: _FitBins, model:
     misfit is bit-identical to it. Summing per vector lane changes the misfit in the
     last bits, and on flat stretches of the misfit that is enough to send Nelder-Mead
     down a different path (in tests, to a range up to 30% different).
+
+    Parameters:
+        model_type: `SPHERICAL_MODEL` or `EXPONENTIAL_MODEL`.
+        vector_size: Number of bins processed per SIMD instruction; must divide
+            `fit_bins.padded_count`.
+
+    Args:
+        fit_bins: The bins, padded.
+        model: The model, in normalised units.
+
+    Returns:
+        The misfit.
     """
     var lags = fit_bins.lag.unsafe_ptr()
     var semivariances = fit_bins.semivariance.unsafe_ptr()
@@ -201,11 +239,20 @@ def _misfit_kernel[model_type: Int, vector_size: Int](fit_bins: _FitBins, model:
 
 
 def _misfit(fit_bins: _FitBins, parameters: VariogramParameters, model_type: Int) -> Float64:
-    """Misfit of the model with `parameters` to the bins (runs `_misfit_kernel`)."""
+    """Returns the misfit of the model with `parameters` to the bins (runs `_misfit_kernel`).
+
+    Args:
+        fit_bins: The bins, padded.
+        parameters: (nugget, sill, range, unused), in normalised units.
+        model_type: `SPHERICAL_MODEL` or `EXPONENTIAL_MODEL`.
+
+    Returns:
+        The pair-weighted L1 misfit.
+    """
     var model = Variogram(parameters[0], parameters[1], parameters[2], model_type)
     if model_type == SPHERICAL_MODEL:
-        return _misfit_kernel[SPHERICAL_MODEL, _VECTOR_SIZE](fit_bins, model)
-    return _misfit_kernel[EXPONENTIAL_MODEL, _VECTOR_SIZE](fit_bins, model)
+        return _misfit_kernel[SPHERICAL_MODEL, VECTOR_SIZE](fit_bins, model)
+    return _misfit_kernel[EXPONENTIAL_MODEL, VECTOR_SIZE](fit_bins, model)
 
 
 # ---------------------------------------------------------------------------
@@ -219,8 +266,11 @@ comptime _PARAMETER_COUNT = 3
 comptime _VERTEX_COUNT = _PARAMETER_COUNT + 1
 """Points of the simplex."""
 comptime _REFLECTION_FACTOR = 1.0
+"""How far the worst point is mirrored through the centroid of the others."""
 comptime _EXPANSION_FACTOR = 2.0
+"""How far an expansion goes from the centroid, relative to the reflected point."""
 comptime _CONTRACTION_FACTOR = 0.5
+"""How far a contraction goes from the centroid, relative to the point contracted to."""
 comptime _LOCAL_MINIMUM_PROBE = 0.001
 """Probe step of the local-minimum test, and simplex size after a restart, as a
 fraction of `initial_step`."""
@@ -245,12 +295,28 @@ struct NelderMeadResult(Copyable, ImplicitlyCopyable, Movable):
 def _clamp(
     point: VariogramParameters, lower_bound: VariogramParameters, upper_bound: VariogramParameters
 ) -> VariogramParameters:
-    """`point` moved into the box [lower_bound, upper_bound], parameter by parameter."""
+    """Moves `point` into the box [lower_bound, upper_bound], parameter by parameter.
+
+    Args:
+        point: The point.
+        lower_bound: Smallest allowed value of each parameter.
+        upper_bound: Largest allowed value of each parameter.
+
+    Returns:
+        The nearest point within the box.
+    """
     return min(upper_bound, max(lower_bound, point))
 
 
 def _index_of_smallest(values: List[Float64]) -> Int:
-    """Index of the first smallest entry."""
+    """Returns the index of the first smallest entry.
+
+    Args:
+        values: At least one value.
+
+    Returns:
+        The index.
+    """
     var smallest = 0
     for index in range(1, len(values)):
         if values[index] < values[smallest]:
@@ -259,7 +325,14 @@ def _index_of_smallest(values: List[Float64]) -> Int:
 
 
 def _index_of_largest(values: List[Float64]) -> Int:
-    """Index of the first largest entry."""
+    """Returns the index of the first largest entry.
+
+    Args:
+        values: At least one value.
+
+    Returns:
+        The index.
+    """
     var largest = 0
     for index in range(1, len(values)):
         if values[index] > values[largest]:
@@ -268,7 +341,15 @@ def _index_of_largest(values: List[Float64]) -> Int:
 
 
 def _centroid_without(simplex: List[VariogramParameters], left_out: Int) -> VariogramParameters:
-    """Mean of all vertices of the simplex except `left_out`."""
+    """Returns the mean of all vertices of the simplex except one.
+
+    Args:
+        simplex: The `_VERTEX_COUNT` vertices.
+        left_out: Index of the vertex to leave out.
+
+    Returns:
+        The centroid of the other vertices.
+    """
     var total = VariogramParameters(0.0)
     for vertex in range(len(simplex)):
         total += simplex[vertex]
@@ -315,6 +396,15 @@ struct _NelderMeadSearch(Movable):
         upper_bound: VariogramParameters,
         convergence_check_interval: Int,
     ):
+        """Prepares a search; `start_simplex` must be called before stepping.
+
+        Args:
+            bins: The normalised empirical variogram (after `normalise`).
+            model_type: `SPHERICAL_MODEL` or `EXPONENTIAL_MODEL`.
+            lower_bound: Smallest allowed value of each parameter.
+            upper_bound: Largest allowed value of each parameter.
+            convergence_check_interval: Steps between two convergence checks.
+        """
         self.fit_bins = _FitBins(bins)
         self.model_type = model_type
         self.lower_bound = lower_bound
@@ -329,16 +419,36 @@ struct _NelderMeadSearch(Movable):
     # --- small helpers ---
 
     def _within_bounds(self, point: VariogramParameters) -> VariogramParameters:
-        """`point` moved into [lower_bound, upper_bound]."""
+        """Moves `point` into [lower_bound, upper_bound].
+
+        Args:
+            point: The point.
+
+        Returns:
+            The nearest point within the bounds.
+        """
         return _clamp(point, self.lower_bound, self.upper_bound)
 
     def _evaluate(mut self, point: VariogramParameters) -> Float64:
-        """Misfit at `point`, counted as one evaluation."""
+        """Returns the misfit at `point`, counted as one evaluation.
+
+        Args:
+            point: The model parameters.
+
+        Returns:
+            The misfit.
+        """
         self.evaluation_count += 1
         return _misfit(self.fit_bins, point, self.model_type)
 
     def _replace_vertex(mut self, vertex: Int, point: VariogramParameters, misfit: Float64):
-        """Puts `point`, whose misfit is `misfit`, in place of `vertex`."""
+        """Puts a point in place of a vertex.
+
+        Args:
+            vertex: Index of the vertex to replace.
+            point: The new point.
+            misfit: The misfit at `point`.
+        """
         self.simplex[vertex] = point
         self.vertex_misfit[vertex] = misfit
 
@@ -348,7 +458,11 @@ struct _NelderMeadSearch(Movable):
         self.best_misfit = self.vertex_misfit[self.best_vertex]
 
     def _misfit_spread(self) -> Float64:
-        """Sum of squared deviations of the vertex misfits from their mean."""
+        """Returns the spread of the vertex misfits.
+
+        Returns:
+            The sum of squared deviations of the vertex misfits from their mean.
+        """
         var mean_misfit: Float64 = 0.0
         for vertex in range(_VERTEX_COUNT):
             mean_misfit += self.vertex_misfit[vertex]
@@ -361,15 +475,22 @@ struct _NelderMeadSearch(Movable):
     # --- simplex operations ---
 
     def start_simplex(mut self, *, centre: VariogramParameters, step: VariogramParameters):
-        """A new simplex: `centre` itself, plus one point per parameter, moved by
-        `step` along that parameter (only that parameter is moved into the bounds)."""
+        """Starts a new simplex around `centre`.
+
+        The simplex is `centre` itself, plus one point per parameter, moved by
+        `step` along that parameter (only that parameter is moved into the bounds).
+
+        Args:
+            centre: The first vertex.
+            step: How far each other vertex lies from `centre` along its parameter.
+        """
         var centre_misfit = self._evaluate(centre)
         self._replace_vertex(_PARAMETER_COUNT, centre, centre_misfit)
         for parameter in range(_PARAMETER_COUNT):
             var stepped = centre
-            stepped[parameter] = min(
-                self.upper_bound[parameter], max(self.lower_bound[parameter], centre[parameter] + step[parameter])
-            )
+            stepped[parameter] = centre[parameter] + step[parameter]
+            # Only the moved parameter is clamped; the others are taken from `centre` as they are.
+            stepped[parameter] = self._within_bounds(stepped)[parameter]
             var stepped_misfit = self._evaluate(stepped)
             self._replace_vertex(parameter, stepped, stepped_misfit)
         self._find_best_vertex()
@@ -378,8 +499,16 @@ struct _NelderMeadSearch(Movable):
         mut self, worst_vertex: Int, centroid: VariogramParameters,
         reflected: VariogramParameters, reflected_misfit: Float64,
     ):
-        """The reflected point beats the best point: try going twice as far, and keep
-        whichever of the two is better."""
+        """Expansion: the reflected point beats the best point, so tries going twice as far.
+
+        Keeps whichever of the reflected and the expanded point is better.
+
+        Args:
+            worst_vertex: Index of the vertex to replace.
+            centroid: Centroid of the other vertices.
+            reflected: The reflected point.
+            reflected_misfit: The misfit at `reflected`.
+        """
         var expanded = self._within_bounds(centroid + _EXPANSION_FACTOR * (reflected - centroid))
         var expanded_misfit = self._evaluate(expanded)
         if reflected_misfit < expanded_misfit:
@@ -391,8 +520,17 @@ struct _NelderMeadSearch(Movable):
         mut self, worst_vertex: Int, centroid: VariogramParameters,
         reflected: VariogramParameters, reflected_misfit: Float64,
     ):
-        """The reflected point beats only the worst point: try halfway between the
-        centroid and the reflected point, and keep whichever of the two is better."""
+        """Outside contraction: the reflected point beats only the worst point.
+
+        Tries halfway between the centroid and the reflected point, and keeps
+        whichever of the two is better.
+
+        Args:
+            worst_vertex: Index of the vertex to replace.
+            centroid: Centroid of the other vertices.
+            reflected: The reflected point.
+            reflected_misfit: The misfit at `reflected`.
+        """
         var contracted = self._within_bounds(centroid + _CONTRACTION_FACTOR * (reflected - centroid))
         var contracted_misfit = self._evaluate(contracted)
         if contracted_misfit <= reflected_misfit:
@@ -401,10 +539,17 @@ struct _NelderMeadSearch(Movable):
             self._replace_vertex(worst_vertex, reflected, reflected_misfit)
 
     def _contract_from_worst_side(mut self, worst_vertex: Int, centroid: VariogramParameters) -> Bool:
-        """The reflected point is worse than every point: try halfway between the
-        centroid and the worst point. If that is worse still, shrink the whole simplex.
+        """Inside contraction: the reflected point is worse than every point.
 
-        Returns True if the simplex was shrunk.
+        Tries halfway between the centroid and the worst point. If that is worse
+        still, shrinks the whole simplex.
+
+        Args:
+            worst_vertex: Index of the worst vertex.
+            centroid: Centroid of the other vertices.
+
+        Returns:
+            True if the simplex was shrunk.
         """
         var contracted = self._within_bounds(centroid + _CONTRACTION_FACTOR * (self.simplex[worst_vertex] - centroid))
         var contracted_misfit = self._evaluate(contracted)
@@ -423,10 +568,16 @@ struct _NelderMeadSearch(Movable):
         self._find_best_vertex()
 
     def _step(mut self, worst_vertex: Int) -> Bool:
-        """One Nelder-Mead step: reflect the worst point through the centroid of the
-        others, then expand, contract or shrink depending on how good that is.
+        """Makes one Nelder-Mead step.
 
-        Returns True if the simplex was shrunk (which ends the step at once).
+        Reflects the worst point through the centroid of the others, then expands,
+        contracts or shrinks depending on how good that is.
+
+        Args:
+            worst_vertex: Index of the vertex with the largest misfit.
+
+        Returns:
+            True if the simplex was shrunk (which ends the step at once).
         """
         var centroid = _centroid_without(self.simplex, worst_vertex)
         var reflected = self._within_bounds(
@@ -453,8 +604,13 @@ struct _NelderMeadSearch(Movable):
     def run_until_converged(
         mut self, *, convergence_check_interval: Int, convergence_threshold: Float64, max_evaluations: Int
     ):
-        """Steps until the vertex misfits spread by no more than `convergence_threshold`
-        (checked every `convergence_check_interval` steps) or the budget is used up."""
+        """Steps until the simplex has converged or the evaluation budget is used up.
+
+        Args:
+            convergence_check_interval: Steps between two convergence checks.
+            convergence_threshold: Converged when `_misfit_spread()` is at most this.
+            max_evaluations: Budget of misfit evaluations, over all restarts.
+        """
         while self.evaluation_count < max_evaluations:
             var worst_vertex = _index_of_largest(self.vertex_misfit)
             if self._step(worst_vertex):
@@ -474,20 +630,39 @@ struct _NelderMeadSearch(Movable):
     # --- result ---
 
     def best_point(self) -> VariogramParameters:
-        """The best point of the simplex."""
+        """Returns the best point of the simplex.
+
+        Returns:
+            The vertex `best_vertex`, within the bounds.
+        """
         return self._within_bounds(self.simplex[self.best_vertex])
 
     def misfit_at_best_point(self) -> Float64:
-        """The misfit at the best point of the simplex."""
+        """Returns the misfit at the best point of the simplex.
+
+        Returns:
+            The misfit at `best_vertex`.
+        """
         return self.vertex_misfit[self.best_vertex]
 
     def is_local_minimum(
         mut self, mut point: VariogramParameters, misfit: Float64, initial_step: VariogramParameters
     ) -> Bool:
-        """Local-minimum test: a small step up or down in any parameter must not give
-        a misfit below `misfit`. The steps are made on `point` itself: on failure it
-        holds the better probe point; on success each parameter went up one step,
-        down two and up one again (all within the bounds)."""
+        """Tests whether `point` is a local minimum of the misfit.
+
+        A small step up or down in any parameter must not give a misfit below
+        `misfit`. The steps are made on `point` itself: on failure it holds the
+        better probe point; on success each parameter went up one step, down two
+        and up one again (all within the bounds).
+
+        Args:
+            point: The candidate; modified as described above.
+            misfit: The misfit at `point`.
+            initial_step: The search's initial step; probes are `_LOCAL_MINIMUM_PROBE` of it.
+
+        Returns:
+            True if no probe improved on `misfit`.
+        """
         for parameter in range(_PARAMETER_COUNT):
             var probe = initial_step[parameter] * _LOCAL_MINIMUM_PROBE
             point[parameter] = point[parameter] + probe
@@ -537,6 +712,10 @@ def nelder_mead_bounded(
         min_misfit_variance: Convergence threshold, per parameter.
         convergence_check_interval: Steps between two convergence checks.
         max_evaluations: Budget of misfit evaluations.
+
+    Returns:
+        The best point and its misfit, the evaluations and restarts used, and
+        whether the search converged to a local minimum within the budget.
     """
     var search = _NelderMeadSearch(
         bins=bins, model_type=model_type, lower_bound=lower_bound, upper_bound=upper_bound,
@@ -585,8 +764,9 @@ struct VariogramFit(Copyable, ImplicitlyCopyable, Movable):
 
 
 def variogram(*, empirical_variogram: EmpiricalVariogram, model_type: Int) -> VariogramFit:
-    """Fits a model of `model_type` to the normalised empirical variogram and
-    converts its range to metres.
+    """Fits a model of `model_type` to the normalised empirical variogram.
+
+    The fitted range is converted back to metres.
 
     The search starts at (0, 1, 0.5) and stays within nugget [0, 0.3], sill [0, 5]
     and range [0, 2] (in units of the largest lag). Because the semivariances are
