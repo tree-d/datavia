@@ -214,6 +214,7 @@ Documentation
 
    user_guide/quick_start
    user_guide/basic_usage
+   user_guide/variables
    user_guide/examples
    user_guide/kriging
 

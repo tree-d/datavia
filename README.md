@@ -1,354 +1,178 @@
 # Datavia - Geospatial Data Integration System
 
-A modular, pipeline-based system for integrating geospatial data sources in Germany. Datavia provides a unified interface for downloading, storing, and accessing various types of geospatial data including elevation, soil properties, and more.
+A modular, pipeline-based system for integrating geospatial data sources in Germany. Datavia gives one interface for downloading, storing, and querying elevation, soil, and weather data at arbitrary coordinates.
 
 [![Python](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 
 ## Overview
 
-Datavia is designed for researchers who need efficient integration of multiple geospatial data sources. The system uses a modular architecture where **downloaders**, **savers**, and **getters** work together through abstract interfaces to process and provide access to geospatial data.
-
-### Key Features
-
-- 🗺️ **Unified Data Access**: Single interface for multiple geospatial data sources
-- 🔄 **Pipeline-Based Architecture**: Modular design for easy extension to new data sources
-- 🌍 **Coordinate System Support**: Automatic CRS transformations using PyProj
-- 📊 **Spatial Interpolation**: Multiple interpolation methods for data access
-- 🗄️ **Zero-setup Database**: SQLite metadata database created automatically on first use
-
-### Available Pipelines (Modular Installation)
-
-- **📈 Elevation Pipeline** (`datavia[elevation]`): BKG DGM200 (200m resolution German elevation model)
-- **🌱 Soil Pipeline** (`datavia[soil]`): SoilGrids + HiHydroSoil integration with selective download strategy
-- **🌤️ Weather Pipeline** (`datavia[weather]`): Available — HYRAS daily gridded data (precipitation, temperature) + DWD station data + ERA5-Land hourly reanalysis; Zarr v3 storage backend with per-store write safety and automatic DB reconciliation
-- **☀️ Radiation Pipeline**: Planned - CAMS radiation data
-
-Each pipeline is a separate, optional package that extends the core system with specific data source capabilities.
-
-## Quick Start
-
-### Installation
-
-- **Note: this is not fully developed yet. Developers should have a look at [Local Development Setup](docs/development/local-setup.md)**
-
-#### Option 1: pip (Recommended for most users)
-
-```bash
-# Install CORE SYSTEM ONLY (no pipeline code included)
-pip install datavia
-
-# Install with specific pipelines (downloads additional packages)
-pip install datavia[elevation]     # Core + elevation pipeline code
-pip install datavia[soil]          # Core + soil pipeline code  
-pip install datavia[weather]       # Core + weather pipeline code
-pip install datavia[elevation,soil] # Core + multiple pipelines
-
-# or use this (as datavia is dependency of the pipeline packages)
-pip install datavia-elevation
-pip install datavia-soil
-
-# Install everything
-pip install datavia[all]
-```
-
-**Vector data (shapefiles)**: To enable Fiona-based shapefile support, install GDAL first, then install the `vector` extra:
-
-```bash
-# Linux (conda-forge)
-conda install -c conda-forge gdal
-
-# pixi
-pixi add gdal
-
-# Then install datavia with vector support
-pip install datavia[vector]
-```
-
-If GDAL is missing, Fiona will fail to build with errors about `gdal-config`.
-
-**Important**: The core `datavia` package contains NO pipeline implementations by design. Pipelines are separate packages (`datavia-elevation`, `datavia-soil`) that are installed only when explicitly requested.
-
-#### Option 2: pixi (Development environment)
-
-```bash
-pixi add --pypi datavia
-# or with elevationpipeline
-pixi add --pypi datavia[soil]
-
-# Vector support (requires GDAL from conda-forge in your pixi.toml)
-pixi add gdal -c conda-forge
-pixi add --pypi datavia[vector]
-```
-
-#### Option 3: pixi (GitHub as source)
-```bash
-# Core system
-pixi add --git https://github.com/tree-d/datavia --branch main --pypi datavia
-
-# Pipelines
-pixi add --git https://github.com/tree-d/datavia --branch main --subdirectory packages/elevation --pypi datavia-elevation
-pixi add --git https://github.com/tree-d/datavia --branch main --subdirectory packages/soil --pypi datavia-soil
-pixi add --git https://github.com/tree-d/datavia --branch main --subdirectory packages/weather --pypi datavia-weather
-```
-
-### Basic Setup
-
-1. **No database setup required** — a SQLite database is created automatically in your
-   data directory on first use.  No Docker, no credentials, no configuration needed.
-
-2. **Advanced configuration** (optional — most users can skip this):
-
-   Datavia stores data and logs in `.datavia/` inside your project directory by default.
-   A `.gitignore` is written there automatically so large GeoTIFF files are never
-   accidentally committed.
-
-   To switch to **global storage** (one shared `~/.datavia/` for all projects — avoids
-   re-downloading the same data in multiple projects):
-   ```bash
-   mkdir -p ~/.datavia
-   cat > ~/.datavia/datavia.conf << 'EOF'
-   [paths]
-   storage = global
-   EOF
-   ```
-   An annotated template with all available settings is in `datavia.conf` at the
-   repository root.
-
-   To use **PostgreSQL instead of SQLite**, add a `[database]` section to your
-   `datavia.conf`:
-   ```ini
-   [database]
-   url = postgresql://user:password@localhost:5432/gis
-   ```
-
-3. **Use in Python code**:
-   ```python
-   from datavia import Datavia
-   from datavia.elevation import ElevationPipeline
-   import numpy as np
-
-   # 1. Build the controller and register pipelines
-   dv = Datavia(pipelines=[ElevationPipeline()])
-
-   # 2. dv() initialises the SQLite metadata database and each pipeline's
-   #    Downloader / Saver / Getter components.  No data is downloaded.
-   dv()
-
-   # 3. Download data from the external source (BKG for elevation).
-   #    Only needed once; data is cached locally after the first run.
-   #    Returns True on success, False if the download failed.
-   #    First download: ~500 MB, may take several minutes.
-   success = dv.elevation.update_data()
-
-   # 4. Query values at coordinates [longitude, latitude] in WGS84.
-   #    Returns a numpy array of shape (N,) — one value per coordinate.
-   #    Other CRS are supported via crs_coords, e.g. "EPSG:25832".
-   coords = np.array([[10.0, 50.0]])  # [lon, lat]
-   elevation_data = dv.elevation.get_data(coords, crs_coords="EPSG:4326")
-   print(elevation_data)  # e.g. [471.3]
-   ```
-
-
-## Architecture
-
-Datavia follows a **three-component pipeline architecture**:
+Each data source is a **pipeline** built from three components:
 
 ```
 Pipeline = Downloader + Saver + Getter
 ```
 
-- **Downloader**: Fetches data from external sources (URLs, APIs)
-- **Saver**: Stores data locally and metadata in the SQLite database
-- **Getter**: Provides coordinate-based data access with interpolation
+- **Downloader**: fetches data from the external source (URL, WCS, API)
+- **Saver**: stores it locally and registers it in the metadata database
+- **Getter**: returns values at coordinates, with CRS transformation and interpolation
 
-### Project Structure
+The core package (`datavia`) contains no pipeline code. Each pipeline is a separate, optional package:
 
-```
-datavia/                          # Repository root
-├── pyproject.toml               # Main core package configuration
-├── datavia/                     # Core Python package
-│   ├── __init__.py              # Main namespace package
-│   ├── core/                    # Pipeline interfaces & implementations
-│   ├── library/                 # Shared utilities & database operations
-│   │   └── database/            # SQLite metadata database
-│   ├── cli.py                   # Command-line interface
-│   └── config.py                # Configuration management
-├── packages/                    # Separate pipeline packages
-│   ├── elevation/               # datavia-elevation package
-│   │   ├── pyproject.toml
-│   │   └── datavia/elevation/   # Elevation pipeline code
-│   ├── soil/                    # datavia-soil package
-│   │   ├── pyproject.toml
-│   │   └── datavia/soil/        # Soil pipeline code
-│   └── weather/                 # datavia-weather package
-│       ├── pyproject.toml
-│       └── datavia/weather/     # Weather pipeline code
-├── tests/                       # Test suite
-├── scripts/                     # Build and utility scripts
-└── docs/                        # Documentation
+| Pipeline | Install | Data |
+|---|---|---|
+| `ElevationPipeline` | `datavia[elevation]` | BKG DGM200 elevation model, 200 m |
+| `SoilPipeline` | `datavia[soil]` | SoilGrids 2.0 + HiHydroSoil v2.0 (texture, pH, carbon, hydraulic properties, …) |
+| `WeatherPipeline` | `datavia[weather]` | ERA5-Land (hourly), HYRAS (daily, 1 km), DWD station observations kriged onto the HYRAS grid. Temperature, precipitation, solar radiation (as PAR), relative humidity |
+
+For every variable, unit, and request parameter, see [Pipelines and Variables](docs/user_guide/variables.rst).
+
+## Installation
+
+```bash
+pip install datavia[elevation]        # core + one pipeline
+pip install datavia[elevation,soil]   # several pipelines
+pip install datavia[pipelines]        # all pipelines
+pip install datavia[all]              # all pipelines + vector support
+
+# Kriged DWD station data (source "DWD_stations") also needs Mojo/MAX,
+# see packages/kriging/README.md
+pip install datavia-weather[kriging]
 ```
 
-## Usage Examples
+From GitHub with pixi:
 
-### Python API
+```bash
+pixi add --git https://github.com/tree-d/datavia --branch main --pypi datavia
+pixi add --git https://github.com/tree-d/datavia --branch main --subdirectory packages/elevation --pypi datavia-elevation
+pixi add --git https://github.com/tree-d/datavia --branch main --subdirectory packages/soil --pypi datavia-soil
+pixi add --git https://github.com/tree-d/datavia --branch main --subdirectory packages/weather --pypi datavia-weather
+```
+
+**Vector data (shapefiles):** the `vector` extra uses Fiona, which needs GDAL. Install GDAL first (`conda install -c conda-forge gdal` or `pixi add gdal`), then `pip install datavia[vector]`. Without GDAL, Fiona fails to build with errors about `gdal-config`.
+
+**ERA5-Land** downloads need a Copernicus CDS API key in `~/.cdsapirc` ([how to](https://cds.climate.copernicus.eu/how-to-api)). The other sources need no credentials.
+
+## Quick Start
 
 ```python
-# Core is always available
-from datavia import Datavia
 import numpy as np
+from datavia import Datavia
+from datavia.elevation import ElevationPipeline
+from datavia.weather import WeatherPipeline
 
-# Pipelines are optional - handle missing installations gracefully
-pipelines = []
+hyras = WeatherPipeline(config={
+    "source": "HYRAS",
+    "variables": ["2m_temperature"],
+    "date_start": "2024-06-01",
+    "date_end": "2024-06-30",
+})
 
-try:
-    from datavia.elevation import ElevationPipeline
-
-    elevation = ElevationPipeline()
-    pipelines.append(elevation)
-    print("✅ Elevation pipeline loaded")
-except ImportError:
-    print(
-        "❌ Elevation pipeline not installed. Install: pip install datavia[elevation]"
-    )
-    elevation = None
-
-try:
-    from datavia.soil import SoilPipeline
-
-    soil = SoilPipeline()
-    pipelines.append(soil)
-    print("✅ Soil pipeline loaded")
-except ImportError:
-    print("❌ Soil pipeline not installed. Install: pip install datavia[soil]")
-    soil = None
-
-# Create controller with available pipelines
-dv = Datavia(pipelines=pipelines)
+# dv() sets up the metadata database; it downloads nothing.
+# Each pipeline is then available under its source name.
+dv = Datavia(pipelines=[ElevationPipeline(), hyras])
 dv()
 
-# update data
+# Download whatever is not stored yet (safe to call repeatedly).
 dv.elevation.update_data()
+dv.HYRAS.update_data()
 
-# Use available pipelines
-coordinates = np.array([[10.0, 50.0], [11.0, 51.0]])  # [longitude, latitude]
-elevations = dv.elevation.get_data(coords=coordinates, crs_coords="EPSG:4326")
+# Query at [longitude, latitude] pairs; other CRSs via crs_coords.
+coords = np.array([[13.405, 52.520], [11.582, 48.135]])  # Berlin, Munich
+heights = dv.elevation.get_data(coords, crs_coords="EPSG:4326")      # shape (N,)
+temps = dv.HYRAS.get_data(coords, variable="2m_temperature",
+                          datetime_utc="2024-06-15")                 # shape (N,)
 ```
 
-### Command Line Interface
+More in the [user guide](docs/user_guide/): [quick start](docs/user_guide/quick_start.rst), [basic usage](docs/user_guide/basic_usage.rst), [examples](docs/user_guide/examples.rst), [kriging](docs/user_guide/kriging.rst).
 
-```bash
-# Configuration management
-datavia config init --elevation --soil  # Initialize config with selected pipelines
-datavia config validate                  # Validate configuration file
-datavia config status                    # Show installation status
+## Configuration
 
-# Data updates
-datavia update elevation                 # Download / refresh elevation data
-datavia update soil                      # Download / refresh soil data
-datavia update weather                   # Update all configured weather pipelines
-datavia update weather --source HYRAS   # Update only the HYRAS source
-datavia update weather --source ERA5_land      # Update only ERA5
-datavia update weather --source DWD_stations   # Update only DWD stations
+No setup is required. A SQLite metadata database is created automatically on first use, and data and logs go to `.datavia/` in your project directory. A `.gitignore` is written there so downloaded rasters are never committed.
 
-# Development/Testing
-python -m datavia.cli update elevation   # Alternative CLI access
+Optional settings go in `~/.datavia/datavia.conf`, or in `datavia.conf` in the current directory. The annotated template [datavia.conf](datavia.conf) lists them all. For example:
+
+```ini
+# Share one ~/.datavia/ across all projects instead of one per project
+[paths]
+storage = global
+
+# Use PostgreSQL instead of SQLite
+[database]
+url = postgresql://user:password@localhost:5432/gis
 ```
 
-### Configuration
-
-Datavia creates configuration via CLI, but you can customize it.
-
-Just use this cmd in the terminal:
+## Command Line
 
 ```bash
-datavia config init --elevation #this will add datavia_config.py with elevation pipeline to your current dir
+datavia config init --elevation --soil --weather   # write datavia_config.py
+datavia config validate                            # check it
+datavia config status                              # show installed pipelines
+
+datavia update elevation
+datavia update soil
+datavia update weather                    # all configured weather sources
+datavia update weather --source HYRAS     # one source
+datavia update all                        # every configured pipeline
 ```
 
-## Installation for Development
+## Project Structure
 
-For contributors and advanced users:
+```
+datavia/
+├── datavia/            # core package: interfaces, controller, CLI, config, shared library
+├── packages/
+│   ├── elevation/      # datavia-elevation
+│   ├── soil/           # datavia-soil
+│   ├── weather/        # datavia-weather
+│   └── kriging/        # datavia-kriging (Mojo), used by the DWD_stations weather source
+├── tests/
+├── scripts/            # package build and docs test scripts
+└── docs/               # Sphinx documentation
+```
+
+## Development
 
 ```bash
-# Clone the repository
 git clone https://github.com/tree-d/datavia.git
 cd datavia
-
-# Install development environment with pixi (recommended)
-cd datavia/  # Enter package directory
 pixi install
-pixi shell
 
-# Or install with pip in development mode
-pip install -e .[dev]
-
-# Build all packages
-./build_all.sh
-
-# Run tests
-pytest
-
-# Format code
-black datavia/
+pixi run test          # test suite
+pixi run lint          # ruff check
+pixi run format        # ruff format
+pixi run type-check    # mypy
+pixi run docs          # build the Sphinx docs
+pixi run test-docs     # run the doctests in the docs
 ```
 
-## System Requirements
-
-- **Python**: 3.12+
-- **Operating System**: Linux (tested), Windows and macOS support planned
-- **Database**: SQLite (built into Python — no installation required).  PostgreSQL is supported as an opt-in via `datavia.conf`.
-- **Storage**: 
-  - Core system: <50MB
-  - Elevation pipeline: ~500MB per German state
-  - Soil pipeline: ~280MB (selective download strategy)
-- **Memory**: 4GB RAM recommended for data processing
-- **Network**: Required for initial data downloads
-
-## Documentation
-
-- [API Reference](docs/api/)
-- [User Guide](docs/user_guide/)
-- [Development Guide](docs/development/)
-- [Coding Standards](docs/development/coding-standards.md)
-
-## Contributing
-
-We welcome contributions! Please see our [Coding Standards](docs/development/coding-standards.md) for guidelines.
-
-### Development Workflow
-
-1. Fork the repository
-2. Read through documentation in docs/development/
-3. Create a feature branch
-4. Make your changes following our coding standards
-5. Add tests for new functionality
-6. Submit a pull request
+See [Local Development Setup](docs/development/local-setup.md) for editable installs of the pipeline packages. Follow the [Coding Standards](docs/development/coding-standards.md) for contributions.
 
 ### Adding New Pipelines
 
-Each pipeline is a separate package under `packages/<name>/` that adds `datavia.<name>` to the
-shared namespace. A single GeoTIFF at a URL may not need a new package at all:
-`ElevationPipeline({"source": ..., "url": ...})` handles it.
+Each pipeline is a separate package under `packages/<name>/` that adds `datavia.<name>` to the shared namespace. A single GeoTIFF at a URL may not need a new package at all: `ElevationPipeline({"source": ..., "url": ...})` handles it.
 
-See **[Adding a New Pipeline](docs/development/adding-a-pipeline.md)** for the component contract,
-worked examples, packaging, CLI wiring, tests, and a checklist of every file to touch.
-The existing pipelines ([elevation](packages/elevation/), [soil](packages/soil/),
-[weather](packages/weather/)) are the reference implementations.
+See **[Adding a New Pipeline](docs/development/adding-a-pipeline.md)** for the component contract, worked examples, packaging, CLI wiring, tests, and a checklist of every file to touch. The existing pipelines ([elevation](packages/elevation/), [soil](packages/soil/), [weather](packages/weather/)) are the reference implementations.
+
+## Requirements
+
+- Python 3.12+
+- Linux (tested); Windows and macOS are not yet supported
+- Network access for downloads
 
 ## License
 
-See the [LICENSE](LICENSE) file for details.
+The code is licensed under the terms in [LICENSE](LICENSE). Downloaded data is subject to each provider's own licence, and applications and publications using it must give the required attribution. *Data Licensing & Attribution* in [docs/index.rst](docs/index.rst) has the notices for the elevation and soil sources.
 
 ## Support
 
 - 📋 [Issue Tracker](https://github.com/tree-d/datavia/issues)
 - 💬 [Discussions](https://github.com/tree-d/datavia/discussions)
-- 📧 Email: michael.berg@ufz.de
+- 📧 Email: peter.mace@ufz.de
 
 ## Roadmap
 
-- [x] Soil data pipeline (SoilGrids + HiHydroSoil integration)
-- [x] Weather data pipeline (HYRAS + DWD station integration)
-- [ ] Radiation data pipeline  
+- [x] Soil data pipeline (SoilGrids + HiHydroSoil)
+- [x] Weather data pipeline (ERA5-Land, HYRAS, kriged DWD stations)
 - [ ] Vector data support (BÜK soil classification)
 - [ ] Multi-region support beyond Germany
 - [ ] Performance optimization for large-scale processing

@@ -497,6 +497,7 @@ restore the database coverage rows:
 Next Steps
 ----------
 
+* See :doc:`variables` for every pipeline and variable you can request
 * Explore :doc:`examples` for more complex use cases
 * Read the API documentation for complete interface references
 

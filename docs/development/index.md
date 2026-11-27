@@ -13,6 +13,7 @@ This section contains documentation for developers and contributors to the Datav
 ## Extending Datavia
 
 - [Adding a New Pipeline](adding-a-pipeline.md) — Component contract, worked examples, packaging, CLI wiring, tests, and a checklist for adding a data source
+- [Agent skills](../../skills/README.md) — Workflows for coding agents: `skills/develop/SKILL.md` (mandatory for every change: plan first, standards, scope guard, quality gates), `skills/add-data-source/SKILL.md` (integrate a source end to end) and `skills/research-data-source/SKILL.md` (find a source and probe its API)
 
 ## Weather Pipeline
 
