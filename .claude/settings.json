@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/skills/develop/scripts/checkpoint.py\" hook",
+            "timeout": 10,
+            "statusMessage": "Checkpointing file before edit"
+          }
+        ]
+      }
+    ]
+  }
+}

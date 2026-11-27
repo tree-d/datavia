@@ -89,7 +89,8 @@ complete inventory isn't ready for approval.
    `save` copies existing files and records new ones. It keeps the user's
    own uncommitted changes intact on restore, unlike `git checkout`. Files
    saved later are recorded the first time they are saved; later saves of
-   the same file are no-ops.
+   the same file are no-ops. `ruff format <files>` (quality gate 1) changes
+   files outside the edit tools, so it only touches files already saved.
 
 2. **Baseline gates**: run the gates on the untouched tree as described in
    `references/quality-gates.md` (*Baseline*) and save their output.
@@ -103,9 +104,14 @@ complete inventory isn't ready for approval.
 
 Rules while editing:
 
-- **Before the first edit of any file**, run
-  `checkpoint.py save <file>`; also for new files and for files added to the
-  plan later.
+- **Before the first edit of any file**, its original must be in the
+  checkpoint; this includes new files and files added to the plan later.
+  In Claude Code the `PreToolUse` hook in `.claude/settings.json` saves the
+  file automatically for Edit, Write and NotebookEdit, and its reminder on
+  the first edit of each file is your cue to check the file against the
+  inventory (scope guard). Files changed any other way (shell commands,
+  formatters, other agents) must be saved by hand with
+  `checkpoint.py save <file>` before the change.
 - Write code to the standards from step 1 as you go; write the tests with
   the code, not after.
 - Only touch what the inventory lists. Formatting changes from `ruff format`

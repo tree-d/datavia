@@ -18,6 +18,12 @@ Usage (from anywhere inside the repository)::
     python3 skills/develop/scripts/checkpoint.py restore [PATH ...]
     python3 skills/develop/scripts/checkpoint.py path
     python3 skills/develop/scripts/checkpoint.py clear
+    python3 skills/develop/scripts/checkpoint.py hook < event.json
+
+``hook`` is the Claude Code ``PreToolUse`` hook for file-editing tools (see
+``.claude/settings.json``): it saves the file automatically before its first
+edit and reminds the agent of the plan and scope rules.  It never blocks an
+edit.
 """
 
 import argparse
@@ -35,6 +41,25 @@ _CHECKPOINT_DIR_NAME: str = "dev-checkpoint"
 
 #: File in the checkpoint directory that records what was saved.
 _MANIFEST_NAME: str = "manifest.json"
+
+#: Hook reminder when a repository file is edited without an active checkpoint.
+_NO_CHECKPOINT_REMINDER: str = (
+    "datavia develop workflow: {file} is being edited but no checkpoint is "
+    "active, so this edit cannot be rolled back with checkpoint.py. Code may "
+    "only be written under an approved plan (skills/develop/SKILL.md, step 0); "
+    "once a plan is approved, run `python3 skills/develop/scripts/checkpoint.py "
+    "start` before the first edit (step 3). If the user waived planning, "
+    "ignore this."
+)
+
+#: Hook reminder on the first edit of a file while a checkpoint is active.
+_FIRST_EDIT_REMINDER: str = (
+    "datavia develop workflow: first edit of {file} under the current plan; "
+    "its original state was saved to the checkpoint ({state}). If {file}, or "
+    "the class / function you are about to change in it, is not in the plan's "
+    "change inventory, stop and apply the scope guard (skills/develop/SKILL.md, "
+    "step 4) before editing."
+)
 
 
 def _git(*args: str) -> str:
@@ -140,22 +165,85 @@ class Checkpoint:
         manifest = self._read_manifest()
         for raw in paths:
             relative = self._relative(raw)
-            key = relative.as_posix()
-            if key in manifest["files"]:
-                continue  # first save wins: it holds the pre-plan state
-            absolute = self.repo_root / relative
-            if absolute.is_file():
-                target = self.files_dir / relative
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(absolute, target)
-                manifest["files"][key] = "saved"
-            elif absolute.exists():
-                raise SystemExit(f"{key} is not a regular file")
-            else:
-                manifest["files"][key] = "new"
-                manifest["new_dirs"].extend(self._missing_parents(relative))
-            print(f"{manifest['files'][key]:>5}  {key}")
+            state = self._record(relative, manifest)
+            if state is not None:
+                print(f"{state:>5}  {relative.as_posix()}")
         self._write_manifest(manifest)
+
+    def hook(self, event: dict[str, Any]) -> dict[str, Any] | None:
+        """Handle a Claude Code ``PreToolUse`` event of a file-editing tool.
+
+        Saves the target file on its first edit while a checkpoint is active
+        and returns a reminder for the agent.  Files outside the repository or
+        inside the Git directory are ignored.
+
+        Parameters
+        ----------
+        event : dict[str, Any]
+            The hook input; ``tool_input.file_path`` (Edit, Write) or
+            ``tool_input.notebook_path`` (NotebookEdit) names the file.
+
+        Returns
+        -------
+        dict[str, Any] or None
+            Hook output with ``additionalContext`` for the agent, or ``None``
+            when there is nothing to say (file ignored or already saved).
+        """
+        tool_input = event.get("tool_input") or {}
+        raw = tool_input.get("file_path") or tool_input.get("notebook_path")
+        if not isinstance(raw, str) or not raw:
+            return None
+        relative = self._relative_or_none(raw)
+        if relative is None or relative.parts[:1] == (".git",):
+            return None
+        key = relative.as_posix()
+        if not self.exists():
+            return _hook_output(_NO_CHECKPOINT_REMINDER.format(file=key))
+        manifest = self._read_manifest()
+        state = self._record(relative, manifest)
+        if state is None:
+            return None  # saved before: the reminder was already given
+        self._write_manifest(manifest)
+        return _hook_output(_FIRST_EDIT_REMINDER.format(file=key, state=state))
+
+    def _record(self, relative: Path, manifest: dict[str, Any]) -> str | None:
+        """Record the original state of one file in *manifest*.
+
+        Parameters
+        ----------
+        relative : Path
+            File path relative to the repository root.
+        manifest : dict[str, Any]
+            Manifest to update in place (not written).
+
+        Returns
+        -------
+        str or None
+            ``"saved"`` (content copied), ``"new"`` (file doesn't exist yet),
+            or ``None`` if the file was recorded before; the first record
+            holds the pre-plan state and is never overwritten.
+
+        Raises
+        ------
+        SystemExit
+            If the path exists but is not a regular file.
+        """
+        key = relative.as_posix()
+        if key in manifest["files"]:
+            return None
+        absolute = self.repo_root / relative
+        if absolute.is_file():
+            target = self.files_dir / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(absolute, target)
+            manifest["files"][key] = "saved"
+        elif absolute.exists():
+            raise SystemExit(f"{key} is not a regular file")
+        else:
+            manifest["files"][key] = "new"
+            manifest["new_dirs"].extend(self._missing_parents(relative))
+        state: str = manifest["files"][key]
+        return state
 
     def list_files(self) -> None:
         """Print every recorded file and whether it was saved or is new."""
@@ -233,11 +321,18 @@ class Checkpoint:
         SystemExit
             If the path lies outside the repository.
         """
+        relative = self._relative_or_none(raw)
+        if relative is None:
+            raise SystemExit(f"{raw} is outside the repository")
+        return relative
+
+    def _relative_or_none(self, raw: str) -> Path | None:
+        """Return *raw* relative to the repository root, or ``None`` if outside."""
         absolute = (Path.cwd() / raw).resolve()
         try:
             return absolute.relative_to(self.repo_root.resolve())
         except ValueError:
-            raise SystemExit(f"{raw} is outside the repository") from None
+            return None
 
     def _missing_parents(self, relative: Path) -> list[str]:
         """Return the parent directories of *relative* that don't exist yet."""
@@ -265,6 +360,49 @@ class Checkpoint:
         self.manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
 
 
+def _hook_output(context: str) -> dict[str, Any]:
+    """Wrap *context* as ``PreToolUse`` hook output that allows the edit.
+
+    Parameters
+    ----------
+    context : str
+        Text added to the agent's context.
+
+    Returns
+    -------
+    dict[str, Any]
+        JSON-serialisable hook output.
+    """
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "additionalContext": context,
+        }
+    }
+
+
+def _run_hook() -> int:
+    """Run the ``PreToolUse`` hook on the event read from standard input.
+
+    Never blocks the edit: any problem (no repository, unreadable input) is
+    reported on standard error and the hook exits with 0.
+
+    Returns
+    -------
+    int
+        Always 0.
+    """
+    try:
+        event = json.load(sys.stdin)
+        output = Checkpoint.for_current_repo().hook(event)
+    except (SystemExit, ValueError, OSError) as exc:
+        print(f"checkpoint hook skipped: {exc}", file=sys.stderr)
+        return 0
+    if output is not None:
+        print(json.dumps(output))
+    return 0
+
+
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     """Parse the command line.
 
@@ -290,6 +428,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     restore.add_argument("paths", nargs="*")
     commands.add_parser("path", help="print the checkpoint directory")
     commands.add_parser("clear", help="delete the checkpoint")
+    commands.add_parser("hook", help="Claude Code PreToolUse hook (JSON on stdin)")
     return parser.parse_args(argv)
 
 
@@ -307,6 +446,8 @@ def main(argv: list[str]) -> int:
         Process exit code.
     """
     args = _parse_args(argv)
+    if args.command == "hook":
+        return _run_hook()
     checkpoint = Checkpoint.for_current_repo()
     if args.command == "start":
         checkpoint.start(args.force)

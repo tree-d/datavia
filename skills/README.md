@@ -13,7 +13,13 @@ the right step.
 
 `develop/scripts/checkpoint.py` saves the original of every file before the
 agent first edits it (in `.git/dev-checkpoint/`), so an unplanned change can
-be rolled back exactly, without losing your own uncommitted work:
+be rolled back exactly, without losing your own uncommitted work. In Claude
+Code a `PreToolUse` hook in `.claude/settings.json` (`checkpoint.py hook`)
+does this automatically for Edit, Write and NotebookEdit. On the first edit
+of each file it also reminds the agent to check the plan's change inventory,
+and with no active checkpoint it reminds the agent that code needs an
+approved plan. It never blocks an edit. Edits made through shell commands
+bypass the hook, so save those files by hand:
 
 ```bash
 python3 skills/develop/scripts/checkpoint.py list      # what the agent touched
