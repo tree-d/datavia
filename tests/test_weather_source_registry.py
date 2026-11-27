@@ -124,6 +124,7 @@ class TestDWDStationsEntry:
             "temperature_2m_min",
             "total_precipitation",
             "relative_humidity_2m",
+            "vapour_pressure",
             "vapour_pressure_deficit",
         }
 
@@ -179,3 +180,36 @@ class TestVapourPressureDeficitEntries:
         from datavia.weather.source_registry import get_grid_downloader_class
 
         assert get_grid_downloader_class("HYRAS") is HYRASDownloader
+
+
+class TestVapourPressureDeficitInputs:
+    """Inputs of the deficit that are user variables too."""
+
+    def test_era5_dewpoint_is_stored_as_d2m_and_returned_in_celsius(self) -> None:
+        from datavia.weather.source_registry import (
+            apply_conversion,
+            get_nc_variable_name,
+            get_valid_variables,
+        )
+
+        valid = get_valid_variables("ERA5_land")
+        assert valid is not None and "2m_dewpoint_temperature" in valid
+        assert get_nc_variable_name("ERA5_land", "2m_dewpoint_temperature") == "d2m"
+        assert apply_conversion(
+            "ERA5_land", "2m_dewpoint_temperature", 283.15
+        ) == pytest.approx(10.0)
+
+    def test_dwd_vapour_pressure_is_a_daily_mean_in_kpa(self) -> None:
+        from datavia.weather.source_registry import (
+            SOURCE_REGISTRY,
+            get_nc_variable_name,
+            get_station_aggregation,
+        )
+
+        assert get_nc_variable_name("DWD_stations", "vapour_pressure") == "vp"
+        assert SOURCE_REGISTRY["DWD_stations"]["native_units"]["vapour_pressure"] == (
+            "kPa"
+        )
+        aggregation = get_station_aggregation("vapour_pressure", "daily")
+        assert aggregation["daily_aggregation"] == "mean"
+        assert not aggregation["interval_end"]

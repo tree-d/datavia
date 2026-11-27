@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
+from typing import Literal, overload
 
 import dask.array as da
 import fasteners
@@ -172,7 +173,8 @@ class ZarrStoreManager:
         bool
             ``True`` when the source's native CRS is not ``EPSG:4326``.
         """
-        return self._grid.get("crs", "EPSG:4326") != "EPSG:4326"
+        crs: str = self._grid.get("crs", "EPSG:4326")
+        return crs != "EPSG:4326"
 
     def ensure_store(self, variable: str, year: int) -> None:
         """Create the Zarr store skeleton for *variable* / *year* if it does not exist.
@@ -390,7 +392,8 @@ class ZarrStoreManager:
                 f"Download {self._source_name}/{variable}/{year} first."
             )
         _check_sentinel(path)
-        return xr.open_zarr(str(path), consolidated=False)
+        dataset: xr.Dataset = xr.open_zarr(str(path), consolidated=False)
+        return dataset
 
     def open_multi_year(self, variable: str, years: list[int]) -> xr.Dataset:
         """Open and concatenate multiple year stores along the time axis.
@@ -526,7 +529,7 @@ class ZarrStoreManager:
                 has_data,
                 crs=self._grid.get("crs", "EPSG:3035"),
                 as_tuple=True,
-            )  # type: ignore[return-value]
+            )
 
         lat_mask = has_data.any(dim="longitude")
         lon_mask = has_data.any(dim="latitude")
@@ -769,6 +772,18 @@ class ZarrStoreManager:
 # ---------------------------------------------------------------------------
 # Module-level helpers
 # ---------------------------------------------------------------------------
+
+
+@overload
+def _projected_bbox_to_wgs84(
+    has_data: xr.DataArray, crs: str, as_tuple: Literal[True]
+) -> tuple[float, float, float, float]: ...
+
+
+@overload
+def _projected_bbox_to_wgs84(
+    has_data: xr.DataArray, crs: str, as_tuple: Literal[False]
+) -> str: ...
 
 
 def _projected_bbox_to_wgs84(

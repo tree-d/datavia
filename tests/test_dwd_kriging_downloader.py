@@ -14,11 +14,16 @@ import json
 from collections.abc import Iterator
 from datetime import date
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
 import pytest
 from cdc_fake import FakeCDC
+
+if TYPE_CHECKING:
+    # The runtime module comes from importorskip below.
+    from xarray import Dataset
 
 pytest.importorskip("datavia.kriging")
 xr = pytest.importorskip("xarray")
@@ -33,7 +38,7 @@ FIRST, LAST = date(2026, 1, 1), date(2026, 2, 10)
 
 
 @pytest.fixture(autouse=True)
-def small_grid(monkeypatch, tmp_path):
+def small_grid(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Shrink the grid, pin "today", and write temporary files to tmp_path."""
     import tempfile
 
@@ -86,7 +91,9 @@ def _fake_cdc() -> FakeCDC:
     return fake
 
 
-def _downloader(tmp_path, fake=None, **kwargs) -> dkd.DWDKrigingDownloader:
+def _downloader(
+    tmp_path: Path, fake: FakeCDC | None = None, **kwargs: Any
+) -> dkd.DWDKrigingDownloader:
     fake = fake or _fake_cdc()
     client = CDCClient(tmp_path / "cdc", session=fake.session())
     kwargs.setdefault("variables", ["2m_temperature"])
@@ -103,12 +110,12 @@ class TestNetCDF:
     """The year file: layout, time stamps, mask and values."""
 
     @pytest.fixture
-    def ds(self, tmp_path):
+    def ds(self, tmp_path: Path) -> Iterator[Dataset]:
         path = _downloader(tmp_path).krige_year("2m_temperature", 2026, _elevation())
         with xr.open_dataset(path) as ds:
             yield ds.load()
 
-    def test_layout_like_hyras(self, ds):
+    def test_layout_like_hyras(self, ds: Dataset) -> None:
         assert ds["tas"].dims == ("time", "y", "x")
         assert ds["tas"].attrs["grid_mapping"] == "crs"
         assert ds["tas"].attrs["units"] == "degree_Celsius"
@@ -116,24 +123,24 @@ class TestNetCDF:
         np.testing.assert_array_equal(ds["y"], GRID_Y)
         assert "lambert_azimuthal_equal_area" in ds["crs"].attrs["grid_mapping_name"]
 
-    def test_whole_year_up_to_last_published_day(self, ds):
+    def test_whole_year_up_to_last_published_day(self, ds: Dataset) -> None:
         times = pd.DatetimeIndex(ds["time"].values)
         assert times[0] == pd.Timestamp("2026-01-01 00:00")
         assert times[-1] == pd.Timestamp("2026-02-10 00:00")
         assert len(times) == (LAST - FIRST).days + 1
 
-    def test_cells_without_elevation_are_nan(self, ds):
+    def test_cells_without_elevation_are_nan(self, ds: Dataset) -> None:
         assert np.isnan(ds["tas"].values[:, :, 0]).all()
         assert np.isfinite(ds["tas"].values[:, :, 1:]).all()
 
-    def test_values_follow_stations_and_drift(self, ds):
+    def test_values_follow_stations_and_drift(self, ds: Dataset) -> None:
         tas = ds["tas"].values
         # Plausible values, and colder towards the higher (eastern) cells.
         assert np.nanmin(tas) > -10.0 and np.nanmax(tas) < 15.0
         west, east = np.nanmean(tas[:, :, 1]), np.nanmean(tas[:, :, -1])
         assert east < west
 
-    def test_provenance(self, ds):
+    def test_provenance(self, ds: Dataset) -> None:
         variograms = json.loads(ds.attrs["variograms"])
         assert set(variograms) == {"2026-01", "2026-02"}
         assert json.loads(ds.attrs["kriging_settings"])["max_dist"] == 1.5e5
@@ -143,7 +150,7 @@ class TestVapourPressureDeficit:
     """The kriged vapour pressure deficit: a HYRAS-like ``vpd`` file in kPa."""
 
     @pytest.fixture
-    def ds(self, tmp_path: Path) -> Iterator[xr.Dataset]:
+    def ds(self, tmp_path: Path) -> Iterator[Dataset]:
         """The kriged vapour pressure deficit of the fake stations."""
         path = _downloader(tmp_path, variables=["vapour_pressure_deficit"]).krige_year(
             "vapour_pressure_deficit", 2026, _elevation()
@@ -151,7 +158,7 @@ class TestVapourPressureDeficit:
         with xr.open_dataset(path) as ds:
             yield ds.load()
 
-    def test_variable_and_attributes(self, ds: xr.Dataset) -> None:
+    def test_variable_and_attributes(self, ds: Dataset) -> None:
         assert ds["vpd"].dims == ("time", "y", "x")
         assert ds["vpd"].attrs["units"] == "kPa"
         assert (
@@ -159,21 +166,39 @@ class TestVapourPressureDeficit:
         )
         assert ds["vpd"].attrs["grid_mapping"] == "crs"
 
-    def test_values_are_plausible_and_non_negative(self, ds: xr.Dataset) -> None:
+    def test_values_are_plausible_and_non_negative(self, ds: Dataset) -> None:
         land = ds["vpd"].values[:, :, 1:]
         assert np.isfinite(land).all()
         # TXK/TNK = TMK +- 5 degC, 70 % humidity, winter: a few tenths of a kPa.
         assert land.min() >= 0.0 and land.max() < 1.5
 
-    def test_provenance_names_the_input_columns(self, ds: xr.Dataset) -> None:
+    def test_provenance_names_the_input_columns(self, ds: Dataset) -> None:
         assert "kl/TXK+TNK+VPM" in ds.attrs["source"]
         assert json.loads(ds.attrs["kriging_settings"])["correct_negative"] is True
+
+
+class TestVapourPressure:
+    """The kriged actual vapour pressure: a ``vp`` file in kPa."""
+
+    def test_variable_attributes_and_values(self, tmp_path: Path) -> None:
+        path = _downloader(tmp_path, variables=["vapour_pressure"]).krige_year(
+            "vapour_pressure", 2026, _elevation()
+        )
+        with xr.open_dataset(path) as ds:
+            vp = ds["vp"].load()
+            assert "kl/VPM" in ds.attrs["source"]
+        assert vp.attrs["units"] == "kPa"
+        assert vp.attrs["standard_name"] == "water_vapor_partial_pressure_in_air"
+        land = vp.values[:, :, 1:]
+        # 70 % of saturation at about -3..11 degC: a few tenths of a kPa to ~1 kPa.
+        assert np.isfinite(land).all()
+        assert land.min() >= 0.0 and land.max() < 1.5
 
 
 class TestVariogramCache:
     """One variogram per month, cached and reused."""
 
-    def test_monthly_variograms_are_cached(self, tmp_path):
+    def test_monthly_variograms_are_cached(self, tmp_path: Path) -> None:
         _downloader(tmp_path).krige_year("2m_temperature", 2026, _elevation())
         files = sorted(
             (tmp_path / "DWD_stations" / "_variograms" / "2m_temperature").glob(
@@ -185,13 +210,15 @@ class TestVariogramCache:
         assert [m["complete"] for m in meta] == [True, False]
         assert meta[1]["n_days"] == 10
 
-    def test_second_run_reuses_the_variograms(self, tmp_path, monkeypatch):
+    def test_second_run_reuses_the_variograms(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         dl = _downloader(tmp_path)
         dl.krige_year("2m_temperature", 2026, _elevation())
         fits = []
         original = dl.variogram_cache.get_or_fit
 
-        def spy(*args, **kwargs):
+        def spy(*args: Any, **kwargs: Any) -> Any:
             result = original(*args, **kwargs)
             fits.append(result.from_cache)
             return result
@@ -204,7 +231,7 @@ class TestVariogramCache:
 class TestStore:
     """Ingestion into the Zarr store and reuse of complete months."""
 
-    def _ingest(self, tmp_path, path):
+    def _ingest(self, tmp_path: Path, path: Path) -> Path:
         from datavia.weather.saver_weather import SaverWeather
 
         saver = SaverWeather("DWD_stations")
@@ -212,7 +239,7 @@ class TestStore:
         assert saver.save(str(path))
         return tmp_path / "DWD_stations" / "2m_temperature" / "2026.zarr"
 
-    def test_ingests_like_hyras(self, tmp_path):
+    def test_ingests_like_hyras(self, tmp_path: Path) -> None:
         path = _downloader(tmp_path).krige_year("2m_temperature", 2026, _elevation())
         store = self._ingest(tmp_path, path)
         with xr.open_zarr(store, consolidated=False) as ds:
@@ -221,7 +248,9 @@ class TestStore:
             # Gaps (the column outside "Germany") are filled at write time.
             assert np.isfinite(ds["2m_temperature"].values).all()
 
-    def test_complete_months_are_copied_from_the_store(self, tmp_path, monkeypatch):
+    def test_complete_months_are_copied_from_the_store(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         dl = _downloader(tmp_path)
         store = self._ingest(
             tmp_path, dl.krige_year("2m_temperature", 2026, _elevation())
@@ -229,15 +258,14 @@ class TestStore:
         with xr.open_zarr(store, consolidated=False) as ds:
             january = ds["2m_temperature"].sel(time="2026-01").values
 
-        kriged = []
+        kriged: list[str] = []
         original = dl._krige_month
-        monkeypatch.setattr(
-            dl,
-            "_krige_month",
-            lambda variable, month, *a: (
-                kriged.append(str(month)) or original(variable, month, *a)
-            ),
-        )
+
+        def spy_krige_month(variable: str, month: pd.Period, *args: Any) -> Any:
+            kriged.append(str(month))
+            return original(variable, month, *args)
+
+        monkeypatch.setattr(dl, "_krige_month", spy_krige_month)
         path = dl.krige_year("2m_temperature", 2026, _elevation())
         assert kriged == ["2026-02"]  # January is complete in the store
         with xr.open_dataset(path) as ds:
@@ -247,21 +275,21 @@ class TestStore:
 class TestErrors:
     """Settings that are rejected."""
 
-    def test_hourly_is_rejected(self, tmp_path):
+    def test_hourly_is_rejected(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="daily values only"):
             _downloader(tmp_path, temporal_resolution="hourly")
 
-    def test_unknown_variable_is_rejected(self, tmp_path):
+    def test_unknown_variable_is_rejected(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="not available from DWD_stations"):
             _downloader(tmp_path, variables=["surface_solar_radiation_downwards"])
 
-    def test_future_year_gives_no_file(self, tmp_path):
+    def test_future_year_gives_no_file(self, tmp_path: Path) -> None:
         dl = _downloader(tmp_path)
         assert dl.krige_year("2m_temperature", 2027, _elevation()) is None
 
     def test_download_returns_one_file_per_variable_and_year(
-        self, tmp_path, monkeypatch
-    ):
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setattr(dkd, "grid_elevation", lambda cache_dir: _elevation())
         dl = _downloader(tmp_path, variables=["2m_temperature", "temperature_2m_max"])
         paths = dl.download().splitlines()

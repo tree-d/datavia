@@ -5,6 +5,8 @@ Tests the new methods added in the Zarr store integration:
 - ``_rebuild_year``, ``_bbox_from_notnull``, ``_insert_coverage_row``
 - Auto-rebuild triggered from ``_load_existing_cells``
 - ``__init__`` signature extension (``data_dir`` parameter)
+- ``_bbox_from_notnull`` for projected stores, skipping of incomplete and
+  malformed DB rows, and of store directories that are not years
 
 All database tests use the ``sqlite_db`` fixture from ``conftest.py``
 (in-memory SQLite).  All store I/O uses ``tmp_path`` so the real data
@@ -16,6 +18,7 @@ No CDS credentials or network access are required.
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -495,3 +498,65 @@ class TestMissingSpatiotemporalAfterRebuild:
         missing = mgr.missing_spatiotemporal(bbox, "2022-06-01", "2022-06-30")
         assert len(missing) >= 1
         assert all(isinstance(c, CoverageCell) for c in missing)
+
+
+# ---------------------------------------------------------------------------
+# Projected stores, malformed DB rows, unexpected store directories
+# ---------------------------------------------------------------------------
+
+
+class TestProjectedAndMalformedInputs:
+    """Inputs outside the geographic happy path are handled, not fatal."""
+
+    def test_projected_bbox_is_reprojected_to_wgs84(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        mock_registry: None,
+        sqlite_db: None,
+    ) -> None:
+        """Without a fixed coverage envelope, x/y corners are reprojected."""
+        monkeypatch.setitem(
+            SOURCE_REGISTRY[_MOCK_SOURCE], "zarr_grid", {"crs": "EPSG:3035"}
+        )
+        da = xr.DataArray(
+            np.ones((1, 2, 2), dtype=np.float32),
+            dims=["time", "y", "x"],
+            coords={
+                "time": [pd.Timestamp("2024-01-01")],
+                "y": [3120500.0, 3121500.0],
+                "x": [4500500.0, 4501500.0],
+            },
+        )
+        mgr = CoverageManager(_MOCK_SOURCE, ["temperature"], data_dir=str(tmp_path))
+        west, south, east, north = _parse_bbox_wkt(mgr._bbox_from_notnull(da))
+        # A patch of about 2 x 2 km near Leipzig.
+        assert 12.0 < west < east < 13.0
+        assert 51.0 < south < north < 51.6
+
+    def test_incomplete_and_malformed_rows_are_skipped(
+        self, tmp_path: Path, mock_registry: None, sqlite_db: None
+    ) -> None:
+        valid = {
+            "bbox": "POLYGON ((10 54, 11 54, 11 55, 10 55, 10 54))",
+            "valid_from": "2024-01-01T00:00:00",
+            "valid_until": "2024-01-31T23:00:00",
+        }
+        rows = [
+            {**valid, "bbox": None},  # incomplete
+            {**valid, "bbox": "not a polygon"},  # malformed
+            valid,
+        ]
+        with patch(
+            "datavia.weather.coverage_manager.get_weather_metadata", return_value=rows
+        ):
+            mgr = CoverageManager(_MOCK_SOURCE, ["temperature"], data_dir=str(tmp_path))
+            mgr._load_existing_cells()
+        assert len(mgr._cells_per_variable["temperature"]) == 1
+
+    def test_store_directory_that_is_not_a_year_is_skipped(
+        self, tmp_path: Path, mock_registry: None, sqlite_db: None
+    ) -> None:
+        (tmp_path / _MOCK_SOURCE / "temperature" / "latest.zarr").mkdir(parents=True)
+        mgr = CoverageManager(_MOCK_SOURCE, ["temperature"], data_dir=str(tmp_path))
+        assert mgr.rebuild_from_store("temperature") == 0

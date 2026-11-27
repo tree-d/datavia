@@ -14,8 +14,11 @@ Covers:
 - :meth:`~datavia.weather.zarr_store_manager.ZarrStoreManager.list_available_variables`
 - :meth:`~datavia.weather.zarr_store_manager.ZarrStoreManager.migrate_nc_file`
 - Private helpers: ``_build_time_index``, ``_normalise_time``, ``_select_variable``
+- :meth:`~datavia.weather.zarr_store_manager.ZarrStoreManager.covered_bbox_for_period`
+  (geographic and projected stores)
 - Module-level helpers: :func:`~datavia.weather.zarr_store_manager._snap_coords`,
-  :func:`~datavia.weather.zarr_store_manager._check_sentinel`
+  :func:`~datavia.weather.zarr_store_manager._check_sentinel`,
+  :func:`~datavia.weather.zarr_store_manager._projected_bbox_to_wgs84`
 """
 
 from __future__ import annotations
@@ -32,6 +35,7 @@ from datavia.weather.zarr_store_manager import (
     _SENTINEL,
     ZarrStoreManager,
     _check_sentinel,
+    _projected_bbox_to_wgs84,
     _sentinel_path,
     _snap_coords,
 )
@@ -819,3 +823,113 @@ class TestSaveNcToZarr:
         bad_path = str(tmp_path / "not_a_real_file.nc")
         result = saver.save_nc_to_zarr(bad_path)
         assert result is False
+
+
+# ---------------------------------------------------------------------------
+# Projected (EPSG:3035) stores and covered_bbox_for_period
+# ---------------------------------------------------------------------------
+
+#: x/y of a 3 x 3 km patch of the HYRAS grid near Leipzig (EPSG:3035).
+_X = np.array([4500500.0, 4501500.0, 4502500.0])
+_Y = np.array([3120500.0, 3121500.0, 3122500.0])
+
+
+def _hyras_manager(tmp_path: Path) -> ZarrStoreManager:
+    """A manager for the real projected ``HYRAS`` source under *tmp_path*."""
+    return ZarrStoreManager(
+        data_dir=str(tmp_path), source_name="HYRAS", store_root=tmp_path / "HYRAS"
+    )
+
+
+def _projected_dataset(values: float = 1.0) -> xr.Dataset:
+    """Three days of ``relative_humidity_2m`` on the projected patch."""
+    data = np.full((3, len(_Y), len(_X)), values, dtype=np.float32)
+    return xr.Dataset(
+        {"relative_humidity_2m": (("time", "y", "x"), data)},
+        coords={
+            "time": pd.date_range("2024-07-01", periods=3, freq="D"),
+            "y": _Y,
+            "x": _X,
+        },
+    )
+
+
+class TestCoveredBboxForPeriod:
+    """The WGS84 bbox of the cells with data in a time window."""
+
+    def test_geographic_store(self, manager: ZarrStoreManager) -> None:
+        manager.write_dataset(_make_synthetic_dataset(n_hours=24), "temperature")
+        bbox = manager.covered_bbox_for_period(
+            "temperature", "2024-01-01", "2024-01-01"
+        )
+        assert bbox == (10.0, 54.8, 10.2, 55.0)
+
+    def test_missing_store_gives_none(self, manager: ZarrStoreManager) -> None:
+        assert (
+            manager.covered_bbox_for_period("temperature", "2024-01-01", "2024-01-31")
+            is None
+        )
+
+    def test_window_without_data_gives_none(self, manager: ZarrStoreManager) -> None:
+        manager.write_dataset(_make_synthetic_dataset(n_hours=24), "temperature")
+        assert (
+            manager.covered_bbox_for_period("temperature", "2024-03-01", "2024-03-31")
+            is None
+        )
+
+    def test_projected_store_is_reprojected(self, tmp_path: Path) -> None:
+        manager = _hyras_manager(tmp_path)
+        manager.write_dataset(_projected_dataset(), "relative_humidity_2m")
+        bbox = manager.covered_bbox_for_period(
+            "relative_humidity_2m", "2024-07-01", "2024-07-03"
+        )
+        assert bbox is not None
+        west, south, east, north = bbox
+        # A few km near Leipzig (about 12.4 E, 51.3 N).
+        assert 12.0 < west < east < 13.0
+        assert 51.0 < south < north < 51.6
+
+
+class TestProjectedBboxToWgs84:
+    """Corner reprojection of a projected extent."""
+
+    def test_wkt_string_and_tuple_agree(self) -> None:
+        from datavia.weather.coverage_manager import _parse_bbox_wkt
+
+        has_data = xr.DataArray(
+            np.ones((len(_Y), len(_X)), dtype=bool),
+            dims=("y", "x"),
+            coords={"y": _Y, "x": _X},
+        )
+        bbox = _projected_bbox_to_wgs84(has_data, crs="EPSG:3035", as_tuple=True)
+        wkt = _projected_bbox_to_wgs84(has_data, crs="EPSG:3035", as_tuple=False)
+        assert wkt.startswith("POLYGON ((")
+        assert _parse_bbox_wkt(wkt) == pytest.approx(bbox)
+
+    def test_no_data_falls_back_to_the_full_extent(self) -> None:
+        dims, coords = ("y", "x"), {"y": _Y, "x": _X}
+        empty = xr.DataArray(np.zeros((3, 3), dtype=bool), dims=dims, coords=coords)
+        full = xr.DataArray(np.ones((3, 3), dtype=bool), dims=dims, coords=coords)
+        assert _projected_bbox_to_wgs84(
+            empty, crs="EPSG:3035", as_tuple=True
+        ) == _projected_bbox_to_wgs84(full, crs="EPSG:3035", as_tuple=True)
+
+
+class TestProjectedStores:
+    """Projected sources have no pre-built skeleton and keep their own coords."""
+
+    def test_ensure_store_creates_no_skeleton(self, tmp_path: Path) -> None:
+        manager = _hyras_manager(tmp_path)
+        manager.ensure_store("relative_humidity_2m", 2024)
+        assert not manager.store_path("relative_humidity_2m", 2024).exists()
+
+    def test_geographic_store_drops_download_artefacts(
+        self, manager: ZarrStoreManager
+    ) -> None:
+        """CDS coordinates such as ``number`` and ``expver`` are dropped."""
+        ds = _make_synthetic_dataset(n_hours=2).assign_coords(
+            number=0, expver=("time", ["0001", "0001"])
+        )
+        selected = manager._select_variable(ds, "temperature")
+        assert "number" not in selected.coords
+        assert "expver" not in selected.coords

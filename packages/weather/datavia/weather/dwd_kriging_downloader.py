@@ -63,6 +63,7 @@ from .dwd_cdc import CDC_PRODUCTS, CDCClient, StationData
 from .dwd_grid import CELL_SIZE, GRID_CRS, GRID_X, GRID_Y, grid_elevation
 from .vapour_pressure import CF_ATTRIBUTES as VPD_CF_ATTRIBUTES
 from .vapour_pressure import NC_NAME as VPD_NC_NAME
+from .vapour_pressure import VAPOUR_PRESSURE_CF_ATTRIBUTES, VAPOUR_PRESSURE_NC_NAME
 from .variogram_cache import CachedVariogram, VariogramCache
 
 logger = logging.getLogger(__name__)
@@ -142,7 +143,8 @@ class KrigingSettings:
 #: Kriging settings per variable: those of the operational German Drought
 #: Monitor (precipitation and mean temperature), and the temperature settings
 #: for the other temperature and humidity fields.  The vapour pressure deficit
-#: is non-negative, so negative estimates are set to 0 as for precipitation.
+#: and the vapour pressure are non-negative, so negative estimates are set to
+#: 0 as for precipitation.
 KRIGING_SETTINGS: dict[str, KrigingSettings] = {
     "total_precipitation": KrigingSettings(
         max_dist=1.0e5, correct_negative=True, dist_zero=True
@@ -151,6 +153,7 @@ KRIGING_SETTINGS: dict[str, KrigingSettings] = {
     "temperature_2m_max": KrigingSettings(max_dist=1.5e5),
     "temperature_2m_min": KrigingSettings(max_dist=1.5e5),
     "relative_humidity_2m": KrigingSettings(max_dist=1.5e5),
+    "vapour_pressure": KrigingSettings(max_dist=1.5e5, correct_negative=True),
     "vapour_pressure_deficit": KrigingSettings(max_dist=1.5e5, correct_negative=True),
 }
 
@@ -205,6 +208,11 @@ NC_VARIABLES: dict[str, dict[str, Any]] = {
             "units": "%",
             "cell_methods": "time: mean",
         },
+    },
+    "vapour_pressure": {
+        "name": VAPOUR_PRESSURE_NC_NAME,
+        "hour": 0,
+        "attrs": {**VAPOUR_PRESSURE_CF_ATTRIBUTES, "cell_methods": "time: mean"},
     },
     "vapour_pressure_deficit": {
         "name": VPD_NC_NAME,

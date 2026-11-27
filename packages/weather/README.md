@@ -267,6 +267,7 @@ Unit conversions (K→°C, m→mm, SSRD→PAR) are applied automatically in
 | Pipeline variable name | Raw ERA5 unit | Returned unit |
 |---|---|---|
 | `2m_temperature` | Kelvin | °C |
+| `2m_dewpoint_temperature` | Kelvin | °C |
 | `total_precipitation` | m water equiv. | mm |
 | `surface_solar_radiation_downwards` | J m⁻² | µmol(photons) m⁻² s⁻¹ PAR |
 | `vapour_pressure_deficit` | derived hourly from `t2m` and `d2m` (FAO-56) | kPa |
@@ -286,6 +287,7 @@ stamps.
 | `temperature_2m_min` | `kl` / `TNK` | `tasmin` | °C | 00-24 UTC minimum |
 | `total_precipitation` | `more_precip` / `RS` | `pr` | mm | 06-06 UTC sum |
 | `relative_humidity_2m` | `kl` / `UPM` | `hurs` | % | 00-24 UTC mean |
+| `vapour_pressure` | `kl` / `VPM` (hPa, returned in kPa) | `vp` | kPa | 00-24 UTC mean |
 | `vapour_pressure_deficit` | `kl` / `TXK`, `TNK`, `VPM` (FAO-56) | `vpd` | kPa | 00-24 UTC |
 
 The station Parquet (`dwd_stations`) holds one row per station and day;

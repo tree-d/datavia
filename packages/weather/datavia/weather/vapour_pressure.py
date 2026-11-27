@@ -52,6 +52,18 @@ CF_ATTRIBUTES: Mapping[str, str] = MappingProxyType(
     }
 )
 
+#: NetCDF variable name of the actual vapour pressure (DWD station ``VPM``).
+VAPOUR_PRESSURE_NC_NAME: str = "vp"
+
+#: CF attributes of the stored actual vapour pressure (kPa, like the deficit).
+VAPOUR_PRESSURE_CF_ATTRIBUTES: Mapping[str, str] = MappingProxyType(
+    {
+        "standard_name": "water_vapor_partial_pressure_in_air",
+        "long_name": "Vapour Pressure",
+        "units": "kPa",
+    }
+)
+
 #: Saturation vapour pressure at 0 °C [kPa] (FAO-56 eq. 11).
 _FAO56_PRESSURE_AT_0C_KPA: float = 0.6108
 
@@ -188,6 +200,8 @@ def _clip_negative[Values: (float, np.ndarray, xr.DataArray)](
 __all__ = [
     "CF_ATTRIBUTES",
     "NC_NAME",
+    "VAPOUR_PRESSURE_CF_ATTRIBUTES",
+    "VAPOUR_PRESSURE_NC_NAME",
     "VARIABLE",
     "saturation_vapour_pressure",
     "vapour_pressure_deficit",

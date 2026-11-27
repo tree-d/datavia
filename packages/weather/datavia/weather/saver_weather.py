@@ -84,8 +84,9 @@ class SaverWeather(Saver):
         data_path: str,
         reproject: bool = False,
         resolution_m: int | None = None,
-        variable: str | None = None,
         register_only: bool = False,
+        *,
+        variable: str | None = None,
     ) -> bool:
         """Copy a weather file to the data directory and register it in the DB.
 
@@ -122,13 +123,14 @@ class SaverWeather(Saver):
             Defaults to ``False``.
         resolution_m : int, optional
             Ignored for weather files. Defaults to ``None``.
-        variable : str, optional
-            Explicit variable name for Parquet DB registration.  Not used for
-            Zarr-enabled sources (variables are read from the dataset).
         register_only : bool, optional
             When ``True`` skip the file-copy step.  For Zarr store paths this
             triggers :meth:`_rebuild_zarr_registration` instead.
             Defaults to ``False``.
+        variable : str, optional
+            Keyword-only.  Explicit variable name for Parquet DB registration.
+            Not used for Zarr-enabled sources (variables are read from the
+            dataset).
 
         Returns
         -------

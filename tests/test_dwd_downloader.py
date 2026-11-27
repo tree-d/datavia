@@ -7,7 +7,10 @@ daily selection of the station blend can use.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import date
+from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -23,7 +26,7 @@ TODAY = date(2026, 11, 20)
 
 
 @pytest.fixture(autouse=True)
-def fixed_today(monkeypatch, tmp_path):
+def fixed_today(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Pin "today" and write the temporary parquet into *tmp_path*."""
     import tempfile
 
@@ -36,7 +39,7 @@ def fixed_today(monkeypatch, tmp_path):
 def fake() -> FakeCDC:
     """Two climate stations and one rain gauge, June 1-3 2026."""
     fake = FakeCDC()
-    kl = {
+    kl: dict[str, Iterable[float]] = {
         "TMK": [10.0, 11.0, 12.0],
         "TXK": [15.0, 16.0, 17.0],
         "TNK": [5.0, 6.0, 7.0],
@@ -56,7 +59,7 @@ def fake() -> FakeCDC:
     return fake
 
 
-def _downloader(fake: FakeCDC, tmp_path, **kwargs) -> DWDStationDownloader:
+def _downloader(fake: FakeCDC, tmp_path: Path, **kwargs: Any) -> DWDStationDownloader:
     kwargs.setdefault("date_start", "2026-06-01")
     kwargs.setdefault("date_end", "2026-06-03")
     client = CDCClient(tmp_path / "cdc", session=fake.session())
@@ -66,7 +69,7 @@ def _downloader(fake: FakeCDC, tmp_path, **kwargs) -> DWDStationDownloader:
 class TestParquet:
     """Layout and time stamps of the written Parquet."""
 
-    def test_columns_and_rows(self, fake, tmp_path):
+    def test_columns_and_rows(self, fake: FakeCDC, tmp_path: Path) -> None:
         path = _downloader(fake, tmp_path, variables=["2m_temperature"]).download()
         df = pd.read_parquet(path)
         assert list(df.columns) == [
@@ -80,13 +83,17 @@ class TestParquet:
         assert len(df) == 6  # two stations x three days
         assert set(df["station_id"]) == {"00044", "00073"}
 
-    def test_temperature_stamped_at_day_start(self, fake, tmp_path):
+    def test_temperature_stamped_at_day_start(
+        self, fake: FakeCDC, tmp_path: Path
+    ) -> None:
         path = _downloader(fake, tmp_path, variables=["2m_temperature"]).download()
         df = pd.read_parquet(path)
         row = df[(df.station_id == "00044") & (df["2m_temperature"] == 11.0)]
         assert row["datetime"].item() == pd.Timestamp("2026-06-02 00:00")
 
-    def test_precipitation_stamped_at_window_end(self, fake, tmp_path):
+    def test_precipitation_stamped_at_window_end(
+        self, fake: FakeCDC, tmp_path: Path
+    ) -> None:
         path = _downloader(fake, tmp_path, variables=["total_precipitation"]).download()
         df = pd.read_parquet(path)
         # Day June 2 (06 UTC June 2 to 06 UTC June 3) -> stamped June 3 06:00;
@@ -97,7 +104,9 @@ class TestParquet:
         ]
         assert df["total_precipitation"].tolist() == [0.0, 4.2]
 
-    def test_mixed_variables_keep_their_own_stamps(self, fake, tmp_path):
+    def test_mixed_variables_keep_their_own_stamps(
+        self, fake: FakeCDC, tmp_path: Path
+    ) -> None:
         dl = _downloader(
             fake, tmp_path, variables=["2m_temperature", "total_precipitation"]
         )
@@ -114,17 +123,19 @@ class TestParquet:
             ("total_precipitation", "2026-06-02", 4.2),
             # FAO-56: mean of e(16 degC) and e(6 degC) minus VPM 12 hPa.
             ("vapour_pressure_deficit", "2026-06-02", (1.8182 + 0.9351) / 2 - 1.2),
+            ("vapour_pressure", "2026-06-02", 1.2),  # VPM 12 hPa in kPa
         ],
     )
     def test_daily_selection_finds_each_day(
-        self, fake, tmp_path, variable, day, expected
-    ):
+        self, fake: FakeCDC, tmp_path: Path, variable: str, day: str, expected: Any
+    ) -> None:
         """The registry's daily selection reads exactly the value of the day."""
         path = _downloader(fake, tmp_path, variables=[variable]).download()
         station = {
             "2m_temperature": (52.9, 8.2),
             "total_precipitation": (48.8, 10.1),
             "vapour_pressure_deficit": (52.9, 8.2),
+            "vapour_pressure": (52.9, 8.2),
         }
         lat, lon = station[variable]
         got = interpolate_station_parquet(
@@ -138,7 +149,7 @@ class TestParquet:
         )
         assert got == pytest.approx(expected, abs=1e-3)
 
-    def test_station_filter(self, fake, tmp_path):
+    def test_station_filter(self, fake: FakeCDC, tmp_path: Path) -> None:
         dl = _downloader(fake, tmp_path, variables=["2m_temperature"], stations=["73"])
         df = pd.read_parquet(dl.download())
         assert set(df["station_id"]) == {"00073"}
@@ -147,13 +158,13 @@ class TestParquet:
 class TestSettings:
     """Variables, dates and the station setting."""
 
-    def test_unsupported_variable_raises(self, tmp_path):
+    def test_unsupported_variable_raises(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="Unsupported DWD station variables"):
             DWDStationDownloader(
                 variables=["surface_solar_radiation_downwards"], data_dir=tmp_path
             )
 
-    def test_split_supported_keeps_order(self):
+    def test_split_supported_keeps_order(self) -> None:
         supported, unsupported = DWDStationDownloader.split_supported(
             [
                 "total_precipitation",
@@ -164,13 +175,13 @@ class TestSettings:
         assert supported == ["total_precipitation", "temperature_2m_max"]
         assert unsupported == ["surface_solar_radiation_downwards"]
 
-    def test_end_clamped_to_yesterday(self, tmp_path):
+    def test_end_clamped_to_yesterday(self, tmp_path: Path) -> None:
         dl = DWDStationDownloader(
             date_start="2026-11-01", date_end="2026-12-31", data_dir=tmp_path
         )
         assert dl.date_end == date(2026, 11, 19)
 
-    def test_default_dates_are_yesterday(self, tmp_path):
+    def test_default_dates_are_yesterday(self, tmp_path: Path) -> None:
         dl = DWDStationDownloader(data_dir=tmp_path)
         assert dl.date_start == dl.date_end == date(2026, 11, 19)
 
@@ -178,21 +189,21 @@ class TestSettings:
         ("stations", "expected"),
         [(None, None), (True, None), ([], None), (["44", 73], ["00044", "00073"])],
     )
-    def test_normalise_station_ids(self, stations, expected):
+    def test_normalise_station_ids(self, stations: Any, expected: Any) -> None:
         assert normalise_station_ids(stations) == expected
 
     @pytest.mark.parametrize(
         "stations", [[{"id": "S1", "latitude": 52.5, "longitude": 13.4}], False, "44"]
     )
-    def test_invalid_station_setting_raises(self, stations):
+    def test_invalid_station_setting_raises(self, stations: Any) -> None:
         with pytest.raises(ValueError, match="dwd_stations must be"):
             normalise_station_ids(stations)
 
-    def test_no_published_day_raises(self, fake, tmp_path):
+    def test_no_published_day_raises(self, fake: FakeCDC, tmp_path: Path) -> None:
         dl = _downloader(fake, tmp_path, date_start="2026-11-20", date_end="2026-11-25")
         with pytest.raises(RuntimeError, match="No published DWD station day"):
             dl.download()
 
-    def test_values_are_floats(self, fake, tmp_path):
+    def test_values_are_floats(self, fake: FakeCDC, tmp_path: Path) -> None:
         df = pd.read_parquet(_downloader(fake, tmp_path).download())
         assert np.issubdtype(df["2m_temperature"].dtype, np.floating)

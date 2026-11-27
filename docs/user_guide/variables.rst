@@ -244,6 +244,20 @@ to ``get_data()``.
      - %
      - Daily mean
      - – / ``hurs``
+   * - ``2m_dewpoint_temperature``
+     - ✓
+     - –
+     - –
+     - °C
+     - Daily mean
+     - ``d2m`` / –
+   * - ``vapour_pressure``
+     - –
+     - –
+     - ✓
+     - kPa
+     - Daily mean (measured, CDC ``VPM``)
+     - stored as ``vp``
    * - ``vapour_pressure_deficit``
      - ✓
      - ✓
@@ -282,15 +296,16 @@ The variable lists come from the source registry:
 
     >>> from datavia.weather.source_registry import get_valid_variables
     >>> sorted(get_valid_variables("ERA5_land"))  # doctest: +NORMALIZE_WHITESPACE
-    ['2m_temperature', 'surface_solar_radiation_downwards', 'total_precipitation',
-     'vapour_pressure_deficit']
+    ['2m_dewpoint_temperature', '2m_temperature', 'surface_solar_radiation_downwards',
+     'total_precipitation', 'vapour_pressure_deficit']
     >>> sorted(get_valid_variables("HYRAS"))  # doctest: +NORMALIZE_WHITESPACE
     ['2m_temperature', 'relative_humidity_2m', 'surface_solar_radiation_downwards',
      'temperature_2m_max', 'temperature_2m_min', 'total_precipitation',
      'vapour_pressure_deficit']
     >>> sorted(get_valid_variables("DWD_stations"))  # doctest: +NORMALIZE_WHITESPACE
     ['2m_temperature', 'relative_humidity_2m', 'temperature_2m_max',
-     'temperature_2m_min', 'total_precipitation', 'vapour_pressure_deficit']
+     'temperature_2m_min', 'total_precipitation', 'vapour_pressure',
+     'vapour_pressure_deficit']
 
 Soil
 ~~~~

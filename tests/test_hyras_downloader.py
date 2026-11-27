@@ -351,7 +351,7 @@ class TestDownload:
         """self.url contains the full file URL when the parent download is called."""
         captured_urls: list[str] = []
 
-        def capture_url(self_inner: HYRASDownloader) -> str:  # type: ignore[override]
+        def capture_url(self_inner: HYRASDownloader) -> str:
             captured_urls.append(self_inner.url)
             return "/tmp/captured.nc"
 

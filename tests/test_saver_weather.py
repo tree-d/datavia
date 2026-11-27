@@ -1,8 +1,10 @@
 """Unit tests for :class:`~datavia.weather.saver_weather.SaverWeather`.
 
 Covers save(), check_data_exists(), list_managed_files(),
-delete_registration(), register_only mode, and the ingestion of derived
-``vpd`` files as ``vapour_pressure_deficit``.
+delete_registration(), register_only mode, the ingestion of derived
+``vpd`` files as ``vapour_pressure_deficit``, the file listing of Zarr
+sources, rebuilding DB rows from an orphan Zarr store, and the fallbacks for
+unreadable Parquet files and unknown extensions.
 """
 
 from pathlib import Path
@@ -1171,6 +1173,20 @@ class TestSaverWeatherVapourPressureDeficit:
             )
         assert variables == ["vapour_pressure_deficit"]
 
+    def test_save_matches_the_saver_interface(self) -> None:
+        """``register_only`` is the 4th parameter as in ``Saver.save``;
+        ``variable`` is keyword-only."""
+        import inspect
+
+        from datavia.weather.saver_weather import SaverWeather
+
+        from datavia.core.interfaces import Saver
+
+        base = list(inspect.signature(Saver.save).parameters)
+        params = inspect.signature(SaverWeather.save).parameters
+        assert list(params)[: len(base)] == base
+        assert params["variable"].kind is inspect.Parameter.KEYWORD_ONLY
+
     def test_hyras_vpd_file_is_ingested_into_its_own_store(
         self, tmp_path: Path
     ) -> None:
@@ -1203,3 +1219,161 @@ class TestSaverWeatherVapourPressureDeficit:
         store = tmp_path / "HYRAS" / "vapour_pressure_deficit" / "2024.zarr"
         with xr.open_zarr(store, consolidated=False) as ds:
             np.testing.assert_allclose(ds["vapour_pressure_deficit"].values, 0.8)
+
+
+# ---------------------------------------------------------------------------
+# File listing, orphan Zarr stores, DB reads and unreadable-file fallbacks
+# ---------------------------------------------------------------------------
+
+
+def _write_hyras_store(data_dir: Path) -> Path:
+    """Write a small projected ``relative_humidity_2m`` store for HYRAS."""
+    import numpy as np
+    import pandas as pd
+    import xarray as xr
+    from datavia.weather.zarr_store_manager import ZarrStoreManager
+
+    data = np.full((3, 2, 2), 70.0, dtype=np.float32)
+    dataset = xr.Dataset(
+        {"relative_humidity_2m": (("time", "y", "x"), data)},
+        coords={
+            "time": pd.date_range("2024-07-01", periods=3, freq="D"),
+            "y": [3120500.0, 3121500.0],
+            "x": [4500500.0, 4501500.0],
+        },
+    )
+    manager = ZarrStoreManager(str(data_dir), "HYRAS")
+    manager.write_dataset(dataset, "relative_humidity_2m")
+    return manager.store_path("relative_humidity_2m", 2024)
+
+
+def _saver(source_name: str, data_dir: Path) -> object:
+    """A SaverWeather for *source_name* writing to *data_dir*."""
+    from datavia.weather.saver_weather import SaverWeather
+
+    saver = SaverWeather(source_name)
+    saver.data_dir = str(data_dir)
+    return saver
+
+
+class TestSaverWeatherFileListing:
+    """``list_managed_files``: Zarr stores and Parquet, never legacy ``.nc``."""
+
+    def test_zarr_source_lists_stores_and_parquet(self, tmp_path: Path) -> None:
+        for name in ("HYRAS_old.nc", "HYRAS_stations.parquet", "ERA5_land_x.nc"):
+            (tmp_path / name).write_bytes(b"x")
+        store = tmp_path / "HYRAS" / "relative_humidity_2m" / "2024.zarr"
+        store.mkdir(parents=True)
+        (tmp_path / "HYRAS" / "notes.txt").write_text("not a variable directory")
+        listed = _saver("HYRAS", tmp_path).list_managed_files()
+        assert sorted(listed) == sorted(
+            [str(tmp_path / "HYRAS_stations.parquet"), str(store)]
+        )
+
+    def test_non_zarr_source_lists_netcdf_and_parquet(self, tmp_path: Path) -> None:
+        for name in ("weather_a.nc", "weather_b.parquet", "weather_c.txt"):
+            (tmp_path / name).write_bytes(b"x")
+        listed = _saver("weather", tmp_path).list_managed_files()
+        assert sorted(Path(p).name for p in listed) == [
+            "weather_a.nc",
+            "weather_b.parquet",
+        ]
+
+    def test_missing_data_directory_lists_nothing(self, tmp_path: Path) -> None:
+        assert _saver("HYRAS", tmp_path / "missing").list_managed_files() == []
+
+
+class TestSaverWeatherOrphanZarrStore:
+    """A ``.zarr`` path passed to ``save`` rebuilds its DB rows."""
+
+    def test_rows_are_rebuilt_from_the_store(
+        self, tmp_path: Path, sqlite_db: None
+    ) -> None:
+        from datavia.library.database.query import get_weather_metadata
+
+        store = _write_hyras_store(tmp_path)
+        assert _saver("HYRAS", tmp_path).save(str(store))
+        assert get_weather_metadata("HYRAS", "relative_humidity_2m")
+
+    def test_failed_rebuild_returns_false(
+        self, tmp_path: Path, sqlite_db: None
+    ) -> None:
+        store = _write_hyras_store(tmp_path)
+        with patch(
+            "datavia.weather.coverage_manager.CoverageManager.rebuild_from_store",
+            side_effect=RuntimeError("broken store"),
+        ):
+            assert not _saver("HYRAS", tmp_path).save(str(store))
+
+
+class TestSaverWeatherDatabaseRows:
+    """``_get_all_db_rows`` reads this source's rows and survives DB errors."""
+
+    def test_rows_of_this_source(self, tmp_path: Path, sqlite_db: None) -> None:
+        _insert_weather_layer(
+            "weather",
+            "weather_a",
+            "2m_temperature",
+            "netcdf",
+            "2024-01-01T00:00:00",
+            "2024-01-31T23:00:00",
+            str(tmp_path / "weather_a.nc"),
+        )
+        _insert_weather_layer(
+            "other",
+            "other_a",
+            "2m_temperature",
+            "netcdf",
+            "2024-01-01T00:00:00",
+            "2024-01-31T23:00:00",
+            str(tmp_path / "other_a.nc"),
+        )
+        rows = _saver("weather", tmp_path)._get_all_db_rows()
+        assert rows == [
+            {"layer_name": "weather_a", "uri": str(tmp_path / "weather_a.nc")}
+        ]
+
+    def test_database_error_gives_no_rows(self, tmp_path: Path) -> None:
+        from sqlalchemy.exc import OperationalError
+
+        with patch("datavia.weather.saver_weather.session_local") as session_local:
+            session_local.return_value.execute.side_effect = OperationalError(
+                "SELECT", {}, Exception("no such table")
+            )
+            assert _saver("weather", tmp_path)._get_all_db_rows() == []
+
+
+class TestSaverWeatherFallbacks:
+    """Unknown extensions raise; unreadable Parquet files fall back."""
+
+    def test_unknown_extension_raises(self) -> None:
+        from datavia.weather.saver_weather import _infer_file_format
+
+        with pytest.raises(ValueError, match="Unsupported weather file extension"):
+            _infer_file_format(".tif")
+
+    def test_parquet_without_station_ids_is_named_by_year(self, tmp_path: Path) -> None:
+        import pandas as pd
+        from datavia.weather.saver_weather import _build_dest_stem
+
+        path = tmp_path / "upload.parquet"
+        pd.DataFrame(
+            {"datetime": pd.to_datetime(["2023-05-01"]), "2m_temperature": [1.0]}
+        ).to_parquet(path)
+        assert _build_dest_stem(str(path), "parquet", "weather") == "weather_2023"
+
+    def test_unreadable_parquet_falls_back_everywhere(self, tmp_path: Path) -> None:
+        from datavia.weather.saver_weather import (
+            _build_dest_stem,
+            _read_station_ids,
+            _read_temporal_metadata,
+            _resolve_variables,
+        )
+
+        path = tmp_path / "broken.parquet"
+        path.write_bytes(b"not parquet")
+        assert _build_dest_stem(str(path), "parquet", "weather") == "weather_broken"
+        assert _resolve_variables(str(path), "parquet", None, "weather") == ["weather"]
+        assert _read_temporal_metadata(str(path), "parquet", "x")[:2] == (None, None)
+        assert _read_station_ids(str(path), "parquet") is None
+        assert _read_station_ids(str(path), "netcdf") is None

@@ -185,8 +185,9 @@ class WeatherPipeline(Pipeline):
          - Credentials
        * - ``"ERA5_land"``
          - Copernicus ERA5-Land hourly reanalysis, 0.1° grid (EPSG:4326).
-         - ``2m_temperature``, ``total_precipitation``,
-           ``surface_solar_radiation_downwards``, ``vapour_pressure_deficit``
+         - ``2m_temperature``, ``2m_dewpoint_temperature``,
+           ``total_precipitation``, ``surface_solar_radiation_downwards``,
+           ``vapour_pressure_deficit``
          - ``~/.cdsapirc`` with a CDS API key
            (https://cds.climate.copernicus.eu/how-to-api).
        * - ``"HYRAS"``
@@ -204,7 +205,8 @@ class WeatherPipeline(Pipeline):
            :mod:`~datavia.weather.dwd_kriging_downloader`.
          - ``2m_temperature``, ``temperature_2m_max``,
            ``temperature_2m_min``, ``total_precipitation``,
-           ``relative_humidity_2m``, ``vapour_pressure_deficit``
+           ``relative_humidity_2m``, ``vapour_pressure``,
+           ``vapour_pressure_deficit``
          - None (DWD OpenData).
 
     Variables are checked at construction.
@@ -218,9 +220,10 @@ class WeatherPipeline(Pipeline):
        * - Variable
          - Unit
          - ``"daily"`` value
-       * - ``2m_temperature``, ``temperature_2m_max``, ``temperature_2m_min``
+       * - ``2m_temperature``, ``temperature_2m_max``, ``temperature_2m_min``,
+           ``2m_dewpoint_temperature``
          - °C
-         - Daily mean (max / min for the HYRAS extremes)
+         - Daily mean (max / min for the extremes)
        * - ``total_precipitation``
          - mm
          - Total over the 06-06 UTC precipitation day
@@ -230,6 +233,9 @@ class WeatherPipeline(Pipeline):
        * - ``relative_humidity_2m``
          - %
          - Daily mean
+       * - ``vapour_pressure``
+         - kPa
+         - Daily mean (``DWD_stations``: measured, CDC ``VPM``)
        * - ``vapour_pressure_deficit``
          - kPa (FAO-56)
          - Daily value: from the daily extremes of temperature and the
@@ -780,14 +786,10 @@ class WeatherPipeline(Pipeline):
         if not self.getter:
             self()
 
-        if self.getter is None:
-            raise RuntimeError(
-                "WeatherPipeline.get_weather_data: getter was not initialised."
-            )
         if not isinstance(self.getter, GetterWeather):
             raise RuntimeError(
-                "WeatherPipeline.get_weather_data: getter is not a "
-                "GetterWeather instance."
+                "WeatherPipeline.get_weather_data: getter was not initialised "
+                "as a GetterWeather."
             )
 
         return self.getter.get_weather_data(

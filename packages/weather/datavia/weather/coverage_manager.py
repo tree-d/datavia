@@ -708,7 +708,7 @@ def _compute_missing(
     """
     # Each pending piece is a 6-tuple: (west, south, east, north, t_start, t_end)
     pending: list[tuple[float, float, float, float, datetime.date, datetime.date]] = [
-        (*bbox, date_start, date_end)  # type: ignore[misc]
+        (*bbox, date_start, date_end)
     ]
 
     for existing in existing_cells:
@@ -767,7 +767,7 @@ def _compute_missing(
 
             xi1, yi1, xi2, yi2 = intersection.bounds
             for strip in _four_strip_bboxes(p_w, p_s, p_e, p_n, xi1, yi1, xi2, yi2):
-                new_pending.append((*strip, t_overlap_start, t_overlap_end))  # type: ignore[misc]
+                new_pending.append((*strip, t_overlap_start, t_overlap_end))
 
         pending = new_pending
 

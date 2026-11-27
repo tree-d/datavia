@@ -181,6 +181,11 @@ class DerivedCDCProduct:
         return tuple(product.column for product in self.inputs)
 
 
+def _hectopascal_to_kilopascal(pressure_hpa: np.ndarray) -> np.ndarray:
+    """Return *pressure_hpa* in kPa (CDC pressures are hPa; datavia uses kPa)."""
+    return pressure_hpa / 10.0
+
+
 def _station_vapour_pressure_deficit(
     temperature_max_c: np.ndarray,
     temperature_min_c: np.ndarray,
@@ -193,7 +198,9 @@ def _station_vapour_pressure_deficit(
     """
     # VPM is in hPa; the FAO-56 formulas work in kPa.
     return vapour_pressure_deficit(
-        temperature_max_c, temperature_min_c, vapour_pressure_hpa / 10.0
+        temperature_max_c,
+        temperature_min_c,
+        _hectopascal_to_kilopascal(vapour_pressure_hpa),
     )
 
 
@@ -207,7 +214,7 @@ _TEMPERATURE_MIN: CDCProduct = CDCProduct(
     "kl", "TNK", -45.0, 45.0, "degC", "Daily minimum air temperature, 00-24 UTC"
 )
 
-#: Daily mean vapour pressure.  Saturation at the highest German
+#: Daily mean vapour pressure, read in hPa.  Saturation at the highest German
 #: temperatures is about 60 hPa, so larger values are errors.
 _VAPOUR_PRESSURE: CDCProduct = CDCProduct(
     "kl", "VPM", 0.0, 60.0, "hPa", "Daily mean vapour pressure, 00-24 UTC"
@@ -230,6 +237,16 @@ CDC_PRODUCTS: dict[str, CDCProduct | DerivedCDCProduct] = {
     "temperature_2m_min": _TEMPERATURE_MIN,
     "relative_humidity_2m": CDCProduct(
         "kl", "UPM", 0.0, 100.0, "%", "Daily mean relative humidity, 00-24 UTC"
+    ),
+    # Returned in kPa, like the vapour pressure deficit.
+    "vapour_pressure": DerivedCDCProduct(
+        "kl",
+        (_VAPOUR_PRESSURE,),
+        _hectopascal_to_kilopascal,
+        0.0,
+        6.0,
+        "kPa",
+        "Daily mean vapour pressure (VPM), 00-24 UTC",
     ),
     # A German heat-wave day stays below about 5 kPa; 10 kPa leaves a margin.
     "vapour_pressure_deficit": DerivedCDCProduct(

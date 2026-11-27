@@ -7,6 +7,7 @@ requested in its place, the ``vpd`` variable added to each downloaded file).
 """
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -246,7 +247,7 @@ class TestERA5DownloaderDownloadMocked:
     """
 
     @staticmethod
-    def _make_mock_client(tmp_path) -> MagicMock:
+    def _make_mock_client(tmp_path: Path) -> MagicMock:
         """Return a ``cdsapi.Client`` mock whose ``retrieve`` writes a stub file.
 
         The mock's ``retrieve`` side-effect creates a real temporary file so
@@ -267,7 +268,7 @@ class TestERA5DownloaderDownloadMocked:
 
         client_mock = MagicMock()
 
-        def fake_retrieve(dataset, request):
+        def fake_retrieve(dataset: str, request: dict) -> MagicMock:
             fd, path = tempfile.mkstemp(suffix=".nc", dir=str(tmp_path), prefix="era5_")
             import os
 
@@ -284,7 +285,7 @@ class TestERA5DownloaderDownloadMocked:
         client_mock.retrieve = MagicMock(side_effect=fake_retrieve)
         return client_mock
 
-    def test_three_month_range_submits_three_jobs(self, tmp_path) -> None:
+    def test_three_month_range_submits_three_jobs(self, tmp_path: Path) -> None:
         """A three-month range triggers exactly three CDS retrieve() calls.
 
         Parameters
@@ -314,7 +315,7 @@ class TestERA5DownloaderDownloadMocked:
         paths = result.splitlines()
         assert len(paths) == 3
 
-    def test_single_month_submits_one_job(self, tmp_path) -> None:
+    def test_single_month_submits_one_job(self, tmp_path: Path) -> None:
         """A range within one calendar month triggers exactly one retrieve() call.
 
         Parameters
@@ -339,7 +340,9 @@ class TestERA5DownloaderDownloadMocked:
         assert client_mock.retrieve.call_count == 1
         assert len(result.splitlines()) == 1
 
-    def _run(self, tmp_path, client_mock=None, **kwargs):
+    def _run(
+        self, tmp_path: Path, client_mock: MagicMock | None = None, **kwargs: Any
+    ) -> tuple[list[dict], list[str]]:
         """Run ``download()`` with a mocked CDS client; return (requests, paths)."""
         from datavia.weather.era5_downloader import ERA5Downloader
 
@@ -354,7 +357,7 @@ class TestERA5DownloaderDownloadMocked:
         requests = [c.args[1] for c in client_mock.retrieve.call_args_list]
         return requests, result.splitlines()
 
-    def test_buffer_requests_for_accumulated_variables(self, tmp_path) -> None:
+    def test_buffer_requests_for_accumulated_variables(self, tmp_path: Path) -> None:
         """Accumulated variables add a 23:00 lead day and a 00-06 trailing day.
 
         Each buffer is its own one-day request, so no chunk spans a month
@@ -374,7 +377,7 @@ class TestERA5DownloaderDownloadMocked:
         assert (trail["month"], trail["day"]) == (["03"], ["01"])
         assert trail["time"] == [f"{h:02d}:00" for h in range(7)]
 
-    def test_no_buffers_without_accumulated_variables(self, tmp_path) -> None:
+    def test_no_buffers_without_accumulated_variables(self, tmp_path: Path) -> None:
         """Instantaneous variables never need stamps outside the range."""
         requests, _ = self._run(
             tmp_path,
@@ -385,7 +388,7 @@ class TestERA5DownloaderDownloadMocked:
         )
         assert len(requests) == 1
 
-    def test_buffer_days_zero_disables_buffers(self, tmp_path) -> None:
+    def test_buffer_days_zero_disables_buffers(self, tmp_path: Path) -> None:
         requests, _ = self._run(
             tmp_path,
             variables=["total_precipitation"],
@@ -395,7 +398,7 @@ class TestERA5DownloaderDownloadMocked:
         )
         assert len(requests) == 1
 
-    def test_trailing_buffer_skipped_near_real_time(self, tmp_path) -> None:
+    def test_trailing_buffer_skipped_near_real_time(self, tmp_path: Path) -> None:
         """A trailing day inside the ERA5-Land publication delay is not requested."""
         import datetime
 
@@ -411,12 +414,13 @@ class TestERA5DownloaderDownloadMocked:
         assert requests[0]["time"] == ["23:00"]
         assert len(requests) == 2  # lead buffer + main, no trailing buffer
 
-    def test_failed_buffer_request_does_not_abort(self, tmp_path) -> None:
+    def test_failed_buffer_request_does_not_abort(self, tmp_path: Path) -> None:
         """A buffer failure is logged; the main chunk is still returned."""
         good = self._make_mock_client(tmp_path).retrieve.side_effect
         client_mock = MagicMock()
 
-        def retrieve(dataset, request):
+        # Returns whatever the stub client returns (a job mock).
+        def retrieve(dataset: str, request: dict) -> Any:
             if request["time"] == ["23:00"]:
                 raise RuntimeError("buffer day unavailable")
             return good(dataset, request)
@@ -432,7 +436,7 @@ class TestERA5DownloaderDownloadMocked:
         assert len(requests) == 3
         assert len(paths) == 2
 
-    def test_failed_main_request_still_raises(self, tmp_path) -> None:
+    def test_failed_main_request_still_raises(self, tmp_path: Path) -> None:
         client_mock = MagicMock()
         client_mock.retrieve = MagicMock(side_effect=RuntimeError("boom"))
         with pytest.raises(RuntimeError, match="CDS retrieval failed"):
@@ -444,7 +448,7 @@ class TestERA5DownloaderDownloadMocked:
                 date_end="2024-02-29",
             )
 
-    def test_cds_queue_timeout_raises_timeout_error(self, tmp_path) -> None:
+    def test_cds_queue_timeout_raises_timeout_error(self, tmp_path: Path) -> None:
         """TimeoutError is raised when a queued job exceeds cds_queue_timeout.
 
         The mock job stays in ``"queued"`` state indefinitely.  With
@@ -467,7 +471,7 @@ class TestERA5DownloaderDownloadMocked:
 
         client_mock = MagicMock()
 
-        def fake_retrieve_queued(dataset, request):
+        def fake_retrieve_queued(dataset: str, request: dict) -> MagicMock:
             job = MagicMock()
             job.reply = {"status": "queued", "request_id": "timeout-job"}
             job.update = MagicMock()
@@ -485,7 +489,7 @@ class TestERA5DownloaderDownloadMocked:
                 downloader.download()
 
     def test_composite_downloader_collects_multi_path_era5_result(
-        self, tmp_path
+        self, tmp_path: Path
     ) -> None:
         """CompositeWeatherDownloader.download() flattens multi-path ERA5 results.
 
@@ -1252,13 +1256,28 @@ class TestERA5VapourPressureDeficit:
             assert set(ds.data_vars) == {"t2m", "vpd"}
             np.testing.assert_allclose(ds["t2m"].values, _T2M_KELVIN)
 
+    def test_requested_dewpoint_is_kept(self, tmp_path: Path) -> None:
+        _, paths = self._run(
+            tmp_path, ["2m_dewpoint_temperature", "vapour_pressure_deficit"]
+        )
+        with xr.open_dataset(paths[0]) as ds:
+            assert set(ds.data_vars) == {"d2m", "vpd"}
+
+    def test_dewpoint_alone_is_a_plain_cds_variable(self, tmp_path: Path) -> None:
+        requests, paths = self._run(tmp_path, ["2m_dewpoint_temperature"])
+        assert requests[0]["variable"] == ["2m_dewpoint_temperature"]
+        # No vapour pressure deficit requested: the file is left as downloaded.
+        with xr.open_dataset(paths[0]) as ds:
+            assert {"t2m", "d2m"} <= set(ds.data_vars)
+            assert "vpd" not in ds
+
     def test_file_without_dewpoint_raises(self, tmp_path: Path) -> None:
         from datavia.weather.era5_downloader import _add_vapour_pressure_deficit
 
         path = str(tmp_path / "era5.nc")
         _write_cds_file(path, {"t2m": _T2M_KELVIN})
         with pytest.raises(RuntimeError, match="d2m"):
-            _add_vapour_pressure_deficit(path, keep_temperature=False)
+            _add_vapour_pressure_deficit(path, requested=["vapour_pressure_deficit"])
 
     def test_failed_rewrite_keeps_the_original_and_cleans_up(
         self, tmp_path: Path
@@ -1271,7 +1290,9 @@ class TestERA5VapourPressureDeficit:
             patch.object(xr.Dataset, "to_netcdf", side_effect=OSError("disk full")),
             pytest.raises(OSError, match="disk full"),
         ):
-            _add_vapour_pressure_deficit(str(path), keep_temperature=False)
+            _add_vapour_pressure_deficit(
+                str(path), requested=["vapour_pressure_deficit"]
+            )
         assert [p.name for p in tmp_path.iterdir()] == ["era5.nc"]
         with xr.open_dataset(path) as ds:
             assert "d2m" in ds

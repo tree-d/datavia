@@ -1034,9 +1034,9 @@ class TestQueryDelegationAndGuards:
         pipe = WeatherPipeline(config=_HYRAS_CONFIG)
         with (
             patch.object(WeatherPipeline, "__call__", return_value=pipe),
-            pytest.raises(RuntimeError, match="getter was not initialised"),
+            pytest.raises(RuntimeError, match="not initialised as a GetterWeather"),
         ):
             pipe.get_weather_data(lat=52.5, lon=13.4, variable="x", datetime_utc="x")
         pipe.getter = MagicMock()
-        with pytest.raises(RuntimeError, match="not a GetterWeather"):
+        with pytest.raises(RuntimeError, match="not initialised as a GetterWeather"):
             pipe.get_weather_data(lat=52.5, lon=13.4, variable="x", datetime_utc="x")

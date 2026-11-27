@@ -118,6 +118,7 @@ SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
         "grid_downloader": ERA5Downloader,
         "conversions": {
             "2m_temperature": {"from": "K", "to": "degC"},
+            "2m_dewpoint_temperature": {"from": "K", "to": "degC"},
             "total_precipitation": {"from": "m", "to": "mm"},
             "surface_solar_radiation_downwards": {"from": "J_m2", "to": "PAR"},
         },
@@ -129,6 +130,7 @@ SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
         # to the pipeline variable names used throughout the datavia API.
         "nc_variable_map": {
             "t2m": "2m_temperature",
+            "d2m": "2m_dewpoint_temperature",
             "tp": "total_precipitation",
             "ssrd": "surface_solar_radiation_downwards",
             # Derived hourly by ERA5Downloader from t2m and d2m (kPa).
@@ -227,6 +229,7 @@ SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
             "temperature_2m_min": "degC",
             "total_precipitation": "mm",
             "relative_humidity_2m": "%",
+            "vapour_pressure": "kPa",
             "vapour_pressure_deficit": "kPa",
         },
         # One record per station and day: the daily selection takes that
@@ -236,6 +239,7 @@ SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
             "temperature_2m_max": "mean",
             "temperature_2m_min": "mean",
             "relative_humidity_2m": "mean",
+            "vapour_pressure": "mean",
             "vapour_pressure_deficit": "mean",
             "total_precipitation": "sum",
         },

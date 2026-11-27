@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import os
 import time
+from collections.abc import Iterable
 from datetime import date, timedelta
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -21,17 +23,17 @@ TODAY = date(2026, 11, 20)
 
 
 @pytest.fixture(autouse=True)
-def fixed_today(monkeypatch):
+def fixed_today(monkeypatch: pytest.MonkeyPatch) -> None:
     """Pin "today" so the choice of archive branches is deterministic."""
     monkeypatch.setattr("datavia.weather.dwd_cdc._utc_today", lambda: TODAY)
     monkeypatch.setattr("datavia.weather.dwd_cdc.time.sleep", lambda s: None)
 
 
-def _client(fake: FakeCDC, tmp_path, **kwargs) -> CDCClient:
+def _client(fake: FakeCDC, tmp_path: Path, **kwargs: Any) -> CDCClient:
     return CDCClient(tmp_path / "cdc", session=fake.session(), **kwargs)
 
 
-def _tmk(values):
+def _tmk(values: list[float]) -> dict[str, Iterable[float]]:
     """kl product columns with the given TMK values (others plausible)."""
     n = len(values)
     return {
@@ -46,7 +48,7 @@ def _tmk(values):
 class TestReading:
     """Values, missing values and positions."""
 
-    def test_values_missing_and_implausible(self, tmp_path):
+    def test_values_missing_and_implausible(self, tmp_path: Path) -> None:
         fake = FakeCDC()
         fake.add(
             "kl", "recent", "00044", date(2026, 1, 1), _tmk([1.5, -999, 99.0, -2.0])
@@ -61,7 +63,7 @@ class TestReading:
         )
         assert len(data.dates) == 5
 
-    def test_position_is_the_last_geography_row(self, tmp_path):
+    def test_position_is_the_last_geography_row(self, tmp_path: Path) -> None:
         fake = FakeCDC()
         fake.add(
             "kl",
@@ -80,7 +82,7 @@ class TestReading:
             44.0,
         )
 
-    def test_other_columns(self, tmp_path):
+    def test_other_columns(self, tmp_path: Path) -> None:
         fake = FakeCDC()
         fake.add("kl", "recent", "00044", date(2026, 1, 1), _tmk([1.0]))
         client = _client(fake, tmp_path)
@@ -91,7 +93,7 @@ class TestReading:
             client.station_data("relative_humidity_2m", day, day).values[0, 0] == 80.0
         )
 
-    def test_precipitation_comes_from_more_precip(self, tmp_path):
+    def test_precipitation_comes_from_more_precip(self, tmp_path: Path) -> None:
         fake = FakeCDC()
         fake.add(
             "more_precip",
@@ -105,7 +107,7 @@ class TestReading:
         )
         np.testing.assert_array_equal(data.values[0], [0.0, 12.4])
 
-    def test_stations_without_data_in_range_are_dropped(self, tmp_path):
+    def test_stations_without_data_in_range_are_dropped(self, tmp_path: Path) -> None:
         fake = FakeCDC()
         fake.add("kl", "recent", "00044", date(2026, 1, 1), _tmk([1.0]))
         fake.add(
@@ -121,7 +123,9 @@ class TestReading:
         )
         assert list(data.station_id) == ["00044"]
 
-    def test_duplicate_positions_keep_the_station_with_more_data(self, tmp_path):
+    def test_duplicate_positions_keep_the_station_with_more_data(
+        self, tmp_path: Path
+    ) -> None:
         fake = FakeCDC()
         same = [(100.0, 51.0, 12.0)]
         fake.add("kl", "recent", "00001", date(2026, 1, 1), _tmk([1.0, -999]), same)
@@ -131,7 +135,7 @@ class TestReading:
         )
         assert list(data.station_id) == ["00002"]
 
-    def test_corrupt_station_is_skipped(self, tmp_path):
+    def test_corrupt_station_is_skipped(self, tmp_path: Path) -> None:
         fake = FakeCDC()
         fake.add("more_precip", "recent", "05127", date(2026, 6, 1), {"RS": [1.0]})
         fake.add(
@@ -149,7 +153,7 @@ class TestReading:
         assert list(data.station_id) == ["00006"]
         assert not any("05127" in u for u in fake.archive_requests())
 
-    def test_station_filter_downloads_only_those_archives(self, tmp_path):
+    def test_station_filter_downloads_only_those_archives(self, tmp_path: Path) -> None:
         fake = FakeCDC()
         fake.add("kl", "recent", "00044", date(2026, 1, 1), _tmk([1.0]))
         fake.add(
@@ -166,7 +170,7 @@ class TestReading:
         assert list(data.station_id) == ["00073"]
         assert len(fake.archive_requests()) == 1
 
-    def test_unknown_variable_and_reversed_range_raise(self, tmp_path):
+    def test_unknown_variable_and_reversed_range_raise(self, tmp_path: Path) -> None:
         client = _client(FakeCDC(), tmp_path)
         with pytest.raises(ValueError, match="not available"):
             client.station_data("surface_solar_radiation_downwards", TODAY, TODAY)
@@ -176,7 +180,7 @@ class TestReading:
 
 def _kl_vapour(
     txk: list[float], tnk: list[float], vpm: list[float]
-) -> dict[str, list[float]]:
+) -> dict[str, Iterable[float]]:
     """kl product columns with the given TXK, TNK and VPM values."""
     n = len(vpm)
     return {
@@ -242,6 +246,21 @@ class TestVapourPressureDeficit:
         )
         assert data.n_stations == 0
 
+    def test_vapour_pressure_is_read_in_kilopascal(self, tmp_path: Path) -> None:
+        fake = FakeCDC()
+        fake.add(
+            "kl",
+            "recent",
+            "00044",
+            date(2026, 7, 1),
+            _kl_vapour([20.0] * 3, [0.0] * 3, [12.5, -999, 70.0]),
+        )
+        data = _client(fake, tmp_path).station_data(
+            "vapour_pressure", date(2026, 7, 1), date(2026, 7, 3)
+        )
+        # 12.5 hPa = 1.25 kPa; -999 is missing; 70 hPa is above the 60 hPa limit.
+        np.testing.assert_array_equal(data.values[0], [1.25, np.nan, np.nan])
+
     def test_archive_without_vapour_pressure_column_is_skipped(
         self, tmp_path: Path
     ) -> None:
@@ -256,7 +275,7 @@ class TestVapourPressureDeficit:
 class TestBranches:
     """Historical and recent archives."""
 
-    def test_historical_wins_and_recent_fills_the_rest(self, tmp_path):
+    def test_historical_wins_and_recent_fills_the_rest(self, tmp_path: Path) -> None:
         fake = FakeCDC()
         # Historical: Dec 30 - Dec 31 2025; recent: Dec 31 2025 - Jan 2 2026.
         fake.add(
@@ -281,7 +300,7 @@ class TestBranches:
         np.testing.assert_array_equal(data.values[0], [1.0, 2.0, 3.0, 4.0])
         assert data.elevation[0] == 44.0  # position from the (newer) recent archive
 
-    def test_current_year_reads_no_historical_branch(self, tmp_path):
+    def test_current_year_reads_no_historical_branch(self, tmp_path: Path) -> None:
         fake = FakeCDC()
         fake.add("kl", "recent", "00044", date(2026, 3, 1), _tmk([1.0]))
         _client(fake, tmp_path).station_data(
@@ -289,7 +308,7 @@ class TestBranches:
         )
         assert not any("/historical/" in u for u in fake.requests)
 
-    def test_old_years_read_no_recent_branch(self, tmp_path):
+    def test_old_years_read_no_recent_branch(self, tmp_path: Path) -> None:
         fake = FakeCDC()
         fake.add("kl", "historical", "00044", date(2010, 1, 1), _tmk([1.0]))
         data = _client(fake, tmp_path).station_data(
@@ -298,7 +317,9 @@ class TestBranches:
         assert data.values[0, 0] == 1.0
         assert not any("/recent/" in u for u in fake.requests)
 
-    def test_only_overlapping_historical_archives_are_downloaded(self, tmp_path):
+    def test_only_overlapping_historical_archives_are_downloaded(
+        self, tmp_path: Path
+    ) -> None:
         fake = FakeCDC()
         fake.add("kl", "historical", "00044", date(2010, 1, 1), _tmk([1.0]))
         fake.add(
@@ -320,7 +341,7 @@ class TestBranches:
 class TestCache:
     """Archives are cached; recent ones expire, replaced historical ones go."""
 
-    def test_second_read_uses_the_cache(self, tmp_path):
+    def test_second_read_uses_the_cache(self, tmp_path: Path) -> None:
         fake = FakeCDC()
         fake.add("kl", "recent", "00044", date(2026, 1, 1), _tmk([1.0]))
         client = _client(fake, tmp_path)
@@ -328,7 +349,7 @@ class TestCache:
         client.station_data("2m_temperature", date(2026, 1, 1), date(2026, 1, 1))
         assert len(fake.archive_requests()) == 1
 
-    def test_stale_recent_archive_is_downloaded_again(self, tmp_path):
+    def test_stale_recent_archive_is_downloaded_again(self, tmp_path: Path) -> None:
         fake = FakeCDC()
         name = fake.add("kl", "recent", "00044", date(2026, 1, 1), _tmk([1.0]))
         client = _client(fake, tmp_path, recent_max_age=timedelta(hours=1))
@@ -340,7 +361,7 @@ class TestCache:
         assert len(fake.archive_requests()) == 2
         assert data.values[0, 0] == 5.0
 
-    def test_replaced_historical_archive_is_removed(self, tmp_path):
+    def test_replaced_historical_archive_is_removed(self, tmp_path: Path) -> None:
         fake = FakeCDC()
         old = fake.add("kl", "historical", "00044", date(2010, 1, 1), _tmk([1.0]))
         client = _client(fake, tmp_path)
@@ -357,7 +378,7 @@ class TestCache:
 class TestHTTP:
     """Retries and errors."""
 
-    def test_server_error_is_retried(self, tmp_path):
+    def test_server_error_is_retried(self, tmp_path: Path) -> None:
         fake = FakeCDC()
         name = fake.add("kl", "recent", "00044", date(2026, 1, 1), _tmk([1.0]))
         url = f"https://opendata.dwd.de/climate_environment/CDC/observations_germany/climate/daily/kl/recent/{name}"
@@ -368,7 +389,7 @@ class TestHTTP:
         assert data.values[0, 0] == 1.0
         assert fake.requests.count(url) == 3
 
-    def test_client_error_raises(self, tmp_path):
+    def test_client_error_raises(self, tmp_path: Path) -> None:
         fake = FakeCDC()
         name = fake.add("kl", "recent", "00044", date(2026, 1, 1), _tmk([1.0]))
         url = f"https://opendata.dwd.de/climate_environment/CDC/observations_germany/climate/daily/kl/recent/{name}"
@@ -379,7 +400,7 @@ class TestHTTP:
             )
         assert not (tmp_path / "cdc" / "kl" / "recent" / name).exists()
 
-    def test_empty_listing_raises(self, tmp_path):
+    def test_empty_listing_raises(self, tmp_path: Path) -> None:
         with pytest.raises(RuntimeError, match="No station archives"):
             _client(FakeCDC(), tmp_path).station_data(
                 "2m_temperature", date(2026, 1, 1), date(2026, 1, 1)

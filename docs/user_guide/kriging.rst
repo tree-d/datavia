@@ -58,6 +58,7 @@ Pipeline variable           DWD product (group / column)          Unit
 ``temperature_2m_max``      ``kl`` / ``TXK``                      °C
 ``temperature_2m_min``      ``kl`` / ``TNK``                      °C
 ``relative_humidity_2m``    ``kl`` / ``UPM`` (daily mean)         %
+``vapour_pressure``         ``kl`` / ``VPM`` (daily mean)         kPa
 ``vapour_pressure_deficit`` ``kl`` / ``TXK``, ``TNK``, ``VPM``    kPa
 =========================== ===================================== ============
 

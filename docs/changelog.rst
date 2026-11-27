@@ -36,7 +36,9 @@ Added
   ``ERA5_land``, ``HYRAS`` and ``DWD_stations``, and for the DWD station
   supplement.  It is derived at download time from the variables each source
   measures (``datavia.weather.vapour_pressure``) and stored like any other
-  variable.
+  variable.  Its inputs are user variables too, including the new
+  ``2m_dewpoint_temperature`` (``ERA5_land``, °C) and ``vapour_pressure``
+  (``DWD_stations`` and the station supplement, kPa).
 - ``datavia-kriging`` package (``packages/kriging``, ``datavia.kriging``):
   external drift and ordinary kriging with empirical variogram and variogram
   fit, computed in Mojo; self-contained so it can move to its own repository.

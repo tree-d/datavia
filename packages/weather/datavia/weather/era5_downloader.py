@@ -52,6 +52,7 @@ import math
 import os
 import tempfile
 import time
+from collections.abc import Collection
 from datetime import date, timedelta
 from types import MappingProxyType
 from typing import Any, NamedTuple
@@ -116,11 +117,12 @@ _DERIVED_INPUTS: MappingProxyType[str, tuple[str, ...]] = MappingProxyType(
     {_VAPOUR_PRESSURE_DEFICIT: ("2m_temperature", "2m_dewpoint_temperature")}
 )
 
-#: NetCDF name of the 2 m temperature in CDS ERA5-Land files (Kelvin).
-_TEMPERATURE_NC_NAME: str = "t2m"
-
-#: NetCDF name of the 2 m dewpoint temperature in CDS ERA5-Land files (Kelvin).
-_DEWPOINT_NC_NAME: str = "d2m"
+#: NetCDF names (Kelvin) of the vapour pressure deficit's inputs in CDS
+#: ERA5-Land files, by pipeline name.  Both are user variables too, so each is
+#: kept in the file when it was requested itself.
+_INPUT_NC_NAMES: MappingProxyType[str, str] = MappingProxyType(
+    {"2m_temperature": "t2m", "2m_dewpoint_temperature": "d2m"}
+)
 
 #: All hours of a day, as accepted by the CDS ``time`` field.
 _ALL_TIMES: list[str] = [f"{h:02d}:00" for h in range(24)]
@@ -820,10 +822,7 @@ class ERA5Downloader(APIDownloader):
                 ) from exc
 
             if _VAPOUR_PRESSURE_DEFICIT in self.variables:
-                _add_vapour_pressure_deficit(
-                    output_path,
-                    keep_temperature="2m_temperature" in self.variables,
-                )
+                _add_vapour_pressure_deficit(output_path, requested=self.variables)
             job_elapsed = time.monotonic() - job_wall_start
             logger.info(
                 "ERA5Downloader: chunk %d/%d complete in %.1f s -> %s",
@@ -837,21 +836,22 @@ class ERA5Downloader(APIDownloader):
         return "\n".join(output_paths)
 
 
-def _add_vapour_pressure_deficit(path: str, keep_temperature: bool) -> None:
+def _add_vapour_pressure_deficit(path: str, requested: Collection[str]) -> None:
     """Add the hourly vapour pressure deficit to a downloaded ERA5-Land file.
 
     ``vpd`` (kPa) is computed from 2 m temperature and dewpoint (FAO-56, see
     :func:`~datavia.weather.vapour_pressure.vapour_pressure_deficit_from_dewpoint`)
-    for every hour and cell.  The dewpoint is then dropped, and so is the
-    temperature unless *keep_temperature*, so only requested variables are
-    ingested.  The file is replaced atomically.
+    for every hour and cell.  The inputs that are not in *requested* are then
+    dropped, so only requested variables are ingested.  The file is replaced
+    atomically.
 
     Parameters
     ----------
     path : str
         A downloaded CDS NetCDF file holding ``t2m`` and ``d2m`` (Kelvin).
-    keep_temperature : bool
-        Keep ``t2m`` (``2m_temperature`` was requested too).
+    requested : Collection[str]
+        The pipeline variables requested by the user; ``2m_temperature`` and
+        ``2m_dewpoint_temperature`` stay in the file if listed.
 
     Raises
     ------
@@ -862,16 +862,17 @@ def _add_vapour_pressure_deficit(path: str, keep_temperature: bool) -> None:
 
     with xr.open_dataset(path) as opened:
         dataset = opened.load()
-    missing = {_TEMPERATURE_NC_NAME, _DEWPOINT_NC_NAME} - set(dataset.data_vars)
+    missing = set(_INPUT_NC_NAMES.values()) - set(dataset.data_vars)
     if missing:
         raise RuntimeError(
             f"ERA5 file {path} lacks {sorted(missing)}, needed for the vapour "
             "pressure deficit."
         )
-    temperature = dataset[_TEMPERATURE_NC_NAME]
+    temperature = dataset[_INPUT_NC_NAMES["2m_temperature"]]
+    dewpoint = dataset[_INPUT_NC_NAMES["2m_dewpoint_temperature"]]
     deficit = vapour_pressure_deficit_from_dewpoint(
         np.asarray(kelvin_to_celsius(temperature.values)),
-        np.asarray(kelvin_to_celsius(dataset[_DEWPOINT_NC_NAME].values)),
+        np.asarray(kelvin_to_celsius(dewpoint.values)),
     )
     # A fresh variable: copying t2m would inherit its attrs and packing.
     dataset[NC_NAME] = xr.DataArray(
@@ -880,7 +881,7 @@ def _add_vapour_pressure_deficit(path: str, keep_temperature: bool) -> None:
         dims=temperature.dims,
         attrs={**CF_ATTRIBUTES, "cell_methods": "time: point"},
     )
-    dropped = [_DEWPOINT_NC_NAME] + ([] if keep_temperature else [_TEMPERATURE_NC_NAME])
+    dropped = [nc for name, nc in _INPUT_NC_NAMES.items() if name not in requested]
     dataset = dataset.drop_vars(dropped)
     directory = os.path.dirname(path)
     fd, tmp_path = tempfile.mkstemp(suffix=".nc", prefix="era5_vpd_", dir=directory)
