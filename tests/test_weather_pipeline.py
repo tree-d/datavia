@@ -1,12 +1,16 @@
 """Unit tests for :class:`~datavia.weather.pipeline.WeatherPipeline`.
 
 Covers __call__(), update_data(), get_config(), reconfigure(),
-coverage-aware skipping, cds_queue_timeout, and chunk_by config.
+coverage-aware skipping, cds_queue_timeout, chunk_by config, the era5_bbox
+grid check, the migration of legacy NetCDF files, and the delegation of
+get_data() / get_weather_data() to GetterWeather with its guards.
 """
 
+from pathlib import Path
 from typing import ClassVar
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 
 
@@ -860,3 +864,179 @@ class TestWeatherPipelineChunkByConfig:
 
 # ---------------------------------------------------------------------------
 # SaverWeather — delete_registration()
+
+
+# ---------------------------------------------------------------------------
+# era5_bbox grid check, legacy NetCDF migration, query delegation and guards
+# ---------------------------------------------------------------------------
+
+_HYRAS_CONFIG: dict = {
+    "source": "HYRAS",
+    "variables": ["vapour_pressure_deficit"],
+    "date_start": "2024-01-01",
+    "date_end": "2024-12-31",
+}
+
+
+class TestERA5BboxGridCheck:
+    """``era5_bbox`` must lie inside the ERA5-Land Zarr skeleton grid."""
+
+    def test_every_edge_outside_the_grid_is_named(self) -> None:
+        from datavia.weather.pipeline import WeatherPipeline
+
+        with pytest.raises(ValueError) as error:
+            WeatherPipeline(
+                config={
+                    "source": "ERA5_land",
+                    "variables": ["2m_temperature"],
+                    "date_start": "2024-01-01",
+                    "date_end": "2024-01-31",
+                    "era5_bbox": [60.0, 0.0, 40.0, 20.0],  # [north, west, south, east]
+                }
+            )
+        message = str(error.value)
+        for edge in ("north=60.0", "south=40.0", "west=0.0", "east=20.0"):
+            assert edge in message
+
+
+class TestMigrateLegacyNetCDF:
+    """``_migrate_legacy_nc_files`` ingests leftover ``.nc`` files into Zarr."""
+
+    @staticmethod
+    def _pipeline(tmp_path: Path) -> object:
+        """A HYRAS pipeline whose saver writes to *tmp_path*."""
+        from datavia.weather.pipeline import WeatherPipeline
+        from datavia.weather.saver_weather import SaverWeather
+
+        pipe = WeatherPipeline(config=_HYRAS_CONFIG)
+        pipe.saver = SaverWeather("HYRAS")
+        pipe.saver.data_dir = str(tmp_path)
+        return pipe
+
+    def test_migrated_file_is_removed_and_failed_file_kept(
+        self, tmp_path: Path
+    ) -> None:
+        pipe = self._pipeline(tmp_path)
+        done, failed = tmp_path / "HYRAS_done.nc", tmp_path / "HYRAS_failed.nc"
+        other = tmp_path / "ERA5_land_x.nc"
+        for path in (done, failed, other):
+            path.write_bytes(b"nc")
+        with patch.object(
+            pipe.saver, "save_nc_to_zarr", side_effect=lambda p: p == str(done)
+        ) as save:
+            pipe._migrate_legacy_nc_files()
+        assert save.call_count == 2  # only this source's files
+        assert not done.exists()
+        assert failed.exists() and other.exists()
+
+    def test_file_that_cannot_be_removed_is_kept(self, tmp_path: Path) -> None:
+        pipe = self._pipeline(tmp_path)
+        legacy = tmp_path / "HYRAS_locked.nc"
+        legacy.write_bytes(b"nc")
+        with (
+            patch.object(pipe.saver, "save_nc_to_zarr", return_value=True),
+            patch.object(Path, "unlink", side_effect=PermissionError("locked")),
+        ):
+            pipe._migrate_legacy_nc_files()
+        assert legacy.exists()
+
+    def test_missing_data_directory_is_a_no_op(self, tmp_path: Path) -> None:
+        pipe = self._pipeline(tmp_path / "missing")
+        with patch.object(pipe.saver, "save_nc_to_zarr") as save:
+            pipe._migrate_legacy_nc_files()
+        save.assert_not_called()
+
+    def test_other_savers_and_sources_without_zarr_are_skipped(
+        self, tmp_path: Path
+    ) -> None:
+        pipe = self._pipeline(tmp_path)
+        (tmp_path / "HYRAS_x.nc").write_bytes(b"nc")
+        with (
+            patch.object(pipe.saver, "save_nc_to_zarr") as save,
+            patch("datavia.weather.saver_weather._has_zarr_grid", return_value=False),
+        ):
+            pipe._migrate_legacy_nc_files()
+        save.assert_not_called()
+        pipe.saver = MagicMock()
+        pipe._migrate_legacy_nc_files()
+        pipe.saver.save_nc_to_zarr.assert_not_called()
+
+
+class TestQueryDelegationAndGuards:
+    """Queries go to :class:`GetterWeather`; missing components raise."""
+
+    def test_update_data_initialises_missing_components(self) -> None:
+        from datavia.weather.pipeline import WeatherPipeline
+
+        pipe = WeatherPipeline(config=_HYRAS_CONFIG)
+        with (
+            patch("datavia.weather.pipeline.CoverageManager") as coverage,
+            patch.object(pipe, "sync_files_and_database"),
+            patch.object(pipe, "_migrate_legacy_nc_files"),
+        ):
+            coverage.return_value.missing_spatiotemporal.return_value = []
+            assert pipe.update_data() is True
+        assert pipe.downloader is not None and pipe.saver is not None
+
+    def test_update_data_without_saver_raises(self) -> None:
+        from datavia.weather.pipeline import WeatherPipeline
+
+        pipe = WeatherPipeline(config=_HYRAS_CONFIG)
+        with (
+            patch.object(WeatherPipeline, "__call__", return_value=pipe),
+            pytest.raises(RuntimeError, match="saver was not initialised"),
+        ):
+            pipe.update_data()
+
+    def test_get_data_delegates_to_the_getter(self) -> None:
+        from datavia.weather.getter_weather import GetterWeather
+        from datavia.weather.pipeline import WeatherPipeline
+
+        pipe = WeatherPipeline(config=_HYRAS_CONFIG)
+        coords = np.array([[13.4, 52.5]])
+        with patch.object(
+            GetterWeather, "get_data", return_value=np.array([0.7])
+        ) as get_data:
+            result = pipe.get_data(
+                coords, variable="vapour_pressure_deficit", datetime_utc="2024-06-15"
+            )
+        np.testing.assert_array_equal(result, [0.7])
+        assert get_data.call_args.kwargs["variable"] == "vapour_pressure_deficit"
+
+    def test_get_data_with_another_getter_raises(self) -> None:
+        from datavia.weather.pipeline import WeatherPipeline
+
+        pipe = WeatherPipeline(config=_HYRAS_CONFIG)
+        pipe.getter = MagicMock()
+        with pytest.raises(RuntimeError, match="not initialised as a GetterWeather"):
+            pipe.get_data(np.array([[13.4, 52.5]]), variable="x", datetime_utc="x")
+
+    def test_get_weather_data_delegates_to_the_getter(self) -> None:
+        from datavia.weather.getter_weather import GetterWeather
+        from datavia.weather.pipeline import WeatherPipeline
+
+        pipe = WeatherPipeline(config=_HYRAS_CONFIG)
+        with patch.object(
+            GetterWeather, "get_weather_data", return_value=0.7
+        ) as get_weather_data:
+            value = pipe.get_weather_data(
+                lat=52.5,
+                lon=13.4,
+                variable="vapour_pressure_deficit",
+                datetime_utc="2024-06-15",
+            )
+        assert value == 0.7
+        assert get_weather_data.call_args.kwargs["radius_km"] == 50.0
+
+    def test_get_weather_data_guards(self) -> None:
+        from datavia.weather.pipeline import WeatherPipeline
+
+        pipe = WeatherPipeline(config=_HYRAS_CONFIG)
+        with (
+            patch.object(WeatherPipeline, "__call__", return_value=pipe),
+            pytest.raises(RuntimeError, match="getter was not initialised"),
+        ):
+            pipe.get_weather_data(lat=52.5, lon=13.4, variable="x", datetime_utc="x")
+        pipe.getter = MagicMock()
+        with pytest.raises(RuntimeError, match="not a GetterWeather"):
+            pipe.get_weather_data(lat=52.5, lon=13.4, variable="x", datetime_utc="x")

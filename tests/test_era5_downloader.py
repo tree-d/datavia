@@ -1,13 +1,18 @@
 """Unit tests for :class:`~datavia.weather.era5_downloader.ERA5Downloader`.
 
 Covers _build_request_date_fields(), _split_calendar_safe(), _snap_bbox(),
-monthly/quarterly/yearly chunking, chunk_by dispatch, and download() with a
-mocked CDS client.
+monthly/quarterly/yearly chunking, chunk_by dispatch, download() with a
+mocked CDS client, and the derived vapour pressure deficit (CDS variables
+requested in its place, the ``vpd`` variable added to each downloaded file).
 """
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import numpy as np
+import pandas as pd
 import pytest
+import xarray as xr
 
 # ---------------------------------------------------------------------------
 
@@ -1152,3 +1157,121 @@ class TestChunkInvariants:
         chunks = ERA5Downloader._iter_yearly_chunks(date_start, date_end)
         assert chunks[0][0] == date_start
         assert chunks[-1][1] == date_end
+
+
+# ---------------------------------------------------------------------------
+# vapour_pressure_deficit (derived from t2m and d2m)
+# ---------------------------------------------------------------------------
+
+
+#: 2 m temperature and dewpoint of the fake CDS files: 20 degC and 10 degC.
+_T2M_KELVIN: float = 293.15
+_D2M_KELVIN: float = 283.15
+
+
+def _write_cds_file(path: str, variables: dict[str, float]) -> None:
+    """Write a CDS-like ERA5-Land file: each variable constant (Kelvin)."""
+    shape = (3, 2, 2)
+    dataset = xr.Dataset(
+        {
+            name: (("valid_time", "latitude", "longitude"), np.full(shape, value))
+            for name, value in variables.items()
+        },
+        coords={
+            "valid_time": pd.date_range("2024-06-01", periods=3, freq="h"),
+            "latitude": [52.1, 52.0],
+            "longitude": [13.0, 13.1],
+        },
+    )
+    dataset.to_netcdf(path)
+
+
+class TestERA5VapourPressureDeficit:
+    """``vapour_pressure_deficit`` is requested as t2m + d2m and added as ``vpd``."""
+
+    def _run(
+        self, tmp_path: Path, variables: list[str], buffer_days: int = 0
+    ) -> tuple[list[dict], list[str]]:
+        """Run download() against a CDS mock writing t2m and d2m files."""
+        from datavia.weather.era5_downloader import ERA5Downloader
+
+        client_mock = MagicMock()
+
+        def fake_retrieve(dataset: str, request: dict) -> MagicMock:
+            job = MagicMock()
+            job.reply = {"status": "completed", "request_id": "test-job"}
+            job.download = MagicMock(
+                side_effect=lambda path: _write_cds_file(
+                    path, {"t2m": _T2M_KELVIN, "d2m": _D2M_KELVIN}
+                )
+            )
+            return job
+
+        client_mock.retrieve = MagicMock(side_effect=fake_retrieve)
+        downloader = ERA5Downloader(
+            variables=variables,
+            date_start="2024-06-01",
+            date_end="2024-06-30",
+            buffer_days=buffer_days,
+        )
+        with (
+            patch("datavia.weather.era5_downloader.cdsapi") as mock_cdsapi,
+            patch("datavia.weather.era5_downloader.time.sleep"),
+            patch("tempfile.tempdir", str(tmp_path)),
+        ):
+            mock_cdsapi.Client.return_value = client_mock
+            paths = downloader.download().splitlines()
+        requests = [c.args[1] for c in client_mock.retrieve.call_args_list]
+        return requests, paths
+
+    def test_cds_request_has_the_inputs_not_the_derived_name(
+        self, tmp_path: Path
+    ) -> None:
+        requests, _ = self._run(tmp_path, ["vapour_pressure_deficit"], buffer_days=1)
+        # Not accumulated: no buffer requests.
+        assert len(requests) == 1
+        assert requests[0]["variable"] == ["2m_temperature", "2m_dewpoint_temperature"]
+
+    def test_inputs_are_requested_once(self, tmp_path: Path) -> None:
+        requests, _ = self._run(tmp_path, ["2m_temperature", "vapour_pressure_deficit"])
+        assert requests[0]["variable"] == ["2m_temperature", "2m_dewpoint_temperature"]
+
+    def test_file_gets_vpd_and_loses_the_inputs(self, tmp_path: Path) -> None:
+        _, paths = self._run(tmp_path, ["vapour_pressure_deficit"])
+        with xr.open_dataset(paths[0]) as ds:
+            assert set(ds.data_vars) == {"vpd"}
+            vpd = ds["vpd"].load()
+        assert vpd.dims == ("valid_time", "latitude", "longitude")
+        assert vpd.attrs["units"] == "kPa"
+        # FAO-56: e(20 degC) - e(10 degC).
+        np.testing.assert_allclose(vpd.values, 2.3383 - 1.2282, atol=1e-3)
+
+    def test_requested_temperature_is_kept(self, tmp_path: Path) -> None:
+        _, paths = self._run(tmp_path, ["2m_temperature", "vapour_pressure_deficit"])
+        with xr.open_dataset(paths[0]) as ds:
+            assert set(ds.data_vars) == {"t2m", "vpd"}
+            np.testing.assert_allclose(ds["t2m"].values, _T2M_KELVIN)
+
+    def test_file_without_dewpoint_raises(self, tmp_path: Path) -> None:
+        from datavia.weather.era5_downloader import _add_vapour_pressure_deficit
+
+        path = str(tmp_path / "era5.nc")
+        _write_cds_file(path, {"t2m": _T2M_KELVIN})
+        with pytest.raises(RuntimeError, match="d2m"):
+            _add_vapour_pressure_deficit(path, keep_temperature=False)
+
+    def test_failed_rewrite_keeps_the_original_and_cleans_up(
+        self, tmp_path: Path
+    ) -> None:
+        from datavia.weather.era5_downloader import _add_vapour_pressure_deficit
+
+        path = tmp_path / "era5.nc"
+        _write_cds_file(str(path), {"t2m": _T2M_KELVIN, "d2m": _D2M_KELVIN})
+        with (
+            patch.object(xr.Dataset, "to_netcdf", side_effect=OSError("disk full")),
+            pytest.raises(OSError, match="disk full"),
+        ):
+            _add_vapour_pressure_deficit(str(path), keep_temperature=False)
+        assert [p.name for p in tmp_path.iterdir()] == ["era5.nc"]
+        with xr.open_dataset(path) as ds:
+            assert "d2m" in ds

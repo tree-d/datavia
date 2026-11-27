@@ -16,13 +16,35 @@ code changes.
 HYRAS data is already in target units (°C, mm/day, %), except radiation,
 which is converted from W/m² to PAR at query time.  See
 :data:`~datavia.weather.source_registry.SOURCE_REGISTRY`.
+
+HYRAS has no humidity grid besides relative humidity, so the vapour pressure
+deficit (kPa) is derived here: from each year's ``tasmax``, ``tasmin`` and
+``hurs`` files a ``vpd`` file is written (FAO-56, see
+:mod:`datavia.weather.vapour_pressure`) and ingested like a HYRAS file.
 """
+
+from __future__ import annotations
 
 import logging
 import re
+import tempfile
 from datetime import date
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+import numpy as np
 
 from datavia.core.downloader_url import URLDownloader
+
+from .vapour_pressure import (
+    CF_ATTRIBUTES,
+    NC_NAME,
+    vapour_pressure_deficit_from_relative_humidity,
+)
+from .vapour_pressure import VARIABLE as _VAPOUR_PRESSURE_DEFICIT
+
+if TYPE_CHECKING:
+    import xarray as xr
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +91,20 @@ _VARIABLE_MAP: dict[str, dict[str, str]] = {
     },
 }
 
+#: HYRAS variables the vapour pressure deficit is computed from (FAO-56 with
+#: the daily mean relative humidity), in the order the formula takes them.
+_VAPOUR_PRESSURE_DEFICIT_INPUTS: tuple[str, str, str] = (
+    "temperature_2m_max",
+    "temperature_2m_min",
+    "relative_humidity_2m",
+)
+
+#: Variables computed from downloaded HYRAS files instead of downloaded.
+_DERIVED_VARIABLES: frozenset[str] = frozenset({_VAPOUR_PRESSURE_DEFICIT})
+
+#: Days per dask chunk when deriving a variable from whole-year files.
+_TIME_CHUNK_DAYS: int = 31
+
 
 class HYRASDownloader(URLDownloader):
     """Download daily HYRAS grids from the DWD OpenData server.
@@ -102,7 +138,8 @@ class HYRASDownloader(URLDownloader):
             Pipeline variable names to download, e.g.
             ``["2m_temperature", "total_precipitation"]``.
             Defaults to ``["2m_temperature"]``.  Each name must be a key in
-            :data:`_VARIABLE_MAP`; requesting a variable not available from
+            :data:`_VARIABLE_MAP` or ``"vapour_pressure_deficit"`` (derived,
+            see :meth:`download`); requesting a variable not available from
             HYRAS (such as ``et0_fao_evapotranspiration``) raises
             :exc:`ValueError` at download time.
         date_start : date or str, optional
@@ -267,76 +304,271 @@ class HYRASDownloader(URLDownloader):
 
         For each ``(variable, year)`` pair the method:
 
-        1. Validates the variable name against :data:`_VARIABLE_MAP`.
+        1. Validates the variable name against :data:`_VARIABLE_MAP` and
+           :data:`_DERIVED_VARIABLES`.
         2. Auto-discovers the exact filename via
            :meth:`_discover_latest_filename`.
         3. Downloads the file using the inherited retry-and-resume logic from
            :class:`~datavia.core.downloader_url.URLDownloader`.
 
+        ``vapour_pressure_deficit`` is not a HYRAS file: the ``tasmax``,
+        ``tasmin`` and ``hurs`` files of each year are downloaded and combined
+        into one ``vpd`` file by :func:`_write_vapour_pressure_deficit`.
+        Input files of variables that were not requested themselves are
+        deleted afterwards.
+
         Returns
         -------
         str
-            Newline-joined absolute paths of all successfully downloaded
-            ``.nc`` files.  An empty string is returned if every download
-            failed.
+            Newline-joined absolute paths of all successfully downloaded or
+            derived ``.nc`` files.  An empty string is returned if every
+            download failed.
 
         Raises
         ------
         ValueError
             If any requested variable is not available from HYRAS (e.g.
-            ``et0_fao_evapotranspiration``).
+            ``et0_fao_evapotranspiration``), or the inputs of the vapour
+            pressure deficit do not share one grid and one set of days.
         RuntimeError
             If version auto-discovery fails for any ``(variable, year)`` pair.
         """
-        unknown = [v for v in self.variables if v not in _VARIABLE_MAP]
+        available = set(_VARIABLE_MAP) | _DERIVED_VARIABLES
+        unknown = [v for v in self.variables if v not in available]
         if unknown:
             raise ValueError(
                 f"Variable(s) not available from HYRAS: {unknown}. "
-                f"Available: {sorted(_VARIABLE_MAP)}."
+                f"Available: {sorted(available)}."
             )
 
         years = self._years_in_range(self.date_start, self.date_end)
-        downloaded_paths: list[str] = []
+        files = self._files_to_download()
+        downloaded: dict[tuple[str, int], str] = {}
 
-        total_files = len(self.variables) * len(years)
         try:
-            from tqdm import tqdm  # type: ignore[import]
+            from tqdm import tqdm
 
-            progress = tqdm(total=total_files, desc="HYRAS", unit="file")
+            progress = tqdm(total=len(files) * len(years), desc="HYRAS", unit="file")
         except ImportError:
             progress = None
 
         try:
-            for variable in self.variables:
-                mapping = _VARIABLE_MAP[variable]
-                subdir = mapping["subdir"]
-                prefix = mapping["prefix"]
-                subdir_url = f"{_HYRAS_BASE_URL}{subdir}/"
-
+            for variable in files:
                 for year in years:
-                    filename = self._discover_latest_filename(subdir_url, year, prefix)
-                    self.url = f"{subdir_url}{filename}"
-                    logger.info(
-                        "Downloading HYRAS file: variable=%s, year=%d, url=%s",
-                        variable,
-                        year,
-                        self.url,
-                    )
-                    path = super().download()
-                    if path != "failed":
-                        downloaded_paths.append(path)
-                        logger.info("HYRAS download complete: %s", path)
-                    else:
-                        logger.warning(
-                            "HYRAS download failed: variable=%s, year=%d, url=%s",
-                            variable,
-                            year,
-                            self.url,
-                        )
+                    path = self._download_file(variable, year)
+                    if path is not None:
+                        downloaded[(variable, year)] = path
                     if progress is not None:
                         progress.update(1)
+            result = [
+                path
+                for (variable, _), path in downloaded.items()
+                if variable in self.variables
+            ]
+            if _VAPOUR_PRESSURE_DEFICIT in self.variables:
+                result.extend(self._derive_vapour_pressure_deficit(years, downloaded))
         finally:
             if progress is not None:
                 progress.close()
+            # Helper inputs are removed even when a download or the
+            # derivation fails, so no temporary file is left behind.
+            for (variable, _), path in downloaded.items():
+                if variable not in self.variables:
+                    Path(path).unlink(missing_ok=True)
+        return "\n".join(result)
 
-        return "\n".join(downloaded_paths)
+    def _files_to_download(self) -> list[str]:
+        """Return the HYRAS files to fetch: requested ones plus derived inputs.
+
+        Returns
+        -------
+        list[str]
+            Pipeline names of :data:`_VARIABLE_MAP`, requested order first,
+            each once.
+        """
+        files = [v for v in self.variables if v in _VARIABLE_MAP]
+        if _VAPOUR_PRESSURE_DEFICIT in self.variables:
+            files += [v for v in _VAPOUR_PRESSURE_DEFICIT_INPUTS if v not in files]
+        return files
+
+    def _download_file(self, variable: str, year: int) -> str | None:
+        """Download the latest version of one ``(variable, year)`` HYRAS file.
+
+        Parameters
+        ----------
+        variable : str
+            Pipeline variable name, a key of :data:`_VARIABLE_MAP`.
+        year : int
+            Calendar year.
+
+        Returns
+        -------
+        str or None
+            Path of the downloaded ``.nc`` file, or ``None`` if the download
+            failed.
+
+        Raises
+        ------
+        RuntimeError
+            If version auto-discovery fails.
+        """
+        mapping = _VARIABLE_MAP[variable]
+        subdir_url = f"{_HYRAS_BASE_URL}{mapping['subdir']}/"
+        filename = self._discover_latest_filename(subdir_url, year, mapping["prefix"])
+        self.url = f"{subdir_url}{filename}"
+        logger.info(
+            "Downloading HYRAS file: variable=%s, year=%d, url=%s",
+            variable,
+            year,
+            self.url,
+        )
+        path = super().download()
+        if path == "failed":
+            logger.warning(
+                "HYRAS download failed: variable=%s, year=%d, url=%s",
+                variable,
+                year,
+                self.url,
+            )
+            return None
+        logger.info("HYRAS download complete: %s", path)
+        return path
+
+    @staticmethod
+    def _derive_vapour_pressure_deficit(
+        years: list[int], downloaded: dict[tuple[str, int], str]
+    ) -> list[str]:
+        """Write one vapour pressure deficit file per year whose inputs arrived.
+
+        Parameters
+        ----------
+        years : list[int]
+            The requested calendar years.
+        downloaded : dict[tuple[str, int], str]
+            Downloaded file per ``(variable, year)``.
+
+        Returns
+        -------
+        list[str]
+            Paths of the ``vpd`` files; years with a failed input download
+            are skipped with a warning.
+
+        Raises
+        ------
+        ValueError
+            If the inputs of a year do not share one grid and one set of days.
+        """
+        paths = []
+        for year in years:
+            inputs = [
+                downloaded.get((v, year)) for v in _VAPOUR_PRESSURE_DEFICIT_INPUTS
+            ]
+            if any(path is None for path in inputs):
+                logger.warning(
+                    "HYRAS %d: an input of the vapour pressure deficit failed to "
+                    "download; skipping that year.",
+                    year,
+                )
+                continue
+            temperature_max, temperature_min, humidity = (str(p) for p in inputs)
+            paths.append(
+                _write_vapour_pressure_deficit(
+                    temperature_max, temperature_min, humidity, year
+                )
+            )
+        return paths
+
+
+def _write_vapour_pressure_deficit(
+    temperature_max_path: str,
+    temperature_min_path: str,
+    humidity_path: str,
+    year: int,
+) -> str:
+    """Compute the daily vapour pressure deficit of one HYRAS year.
+
+    FAO-56 with the daily mean relative humidity (see
+    :func:`~datavia.weather.vapour_pressure.vapour_pressure_deficit_from_relative_humidity`),
+    per grid cell and day.  The arrays are processed in dask chunks of
+    :data:`_TIME_CHUNK_DAYS` days, so the three inputs are never all in
+    memory at once.
+
+    Parameters
+    ----------
+    temperature_max_path, temperature_min_path, humidity_path : str
+        The year's HYRAS ``tasmax``, ``tasmin`` and ``hurs`` files.
+    year : int
+        Calendar year, used in the temporary file name.
+
+    Returns
+    -------
+    str
+        Path of a temporary NetCDF file with the variable ``vpd`` (kPa) on
+        the HYRAS grid (``time, y, x``, EPSG:3035), the grid mapping and the
+        time stamps of the ``tasmax`` file.
+
+    Raises
+    ------
+    ValueError
+        If the three files differ in grid or days.
+    """
+    import xarray as xr
+
+    chunks = {"time": _TIME_CHUNK_DAYS}
+    with (
+        xr.open_dataset(temperature_max_path, chunks=chunks) as tasmax_ds,
+        xr.open_dataset(temperature_min_path, chunks=chunks) as tasmin_ds,
+        xr.open_dataset(humidity_path, chunks=chunks) as hurs_ds,
+    ):
+        temperature_max = tasmax_ds[_VARIABLE_MAP["temperature_2m_max"]["nc_variable"]]
+        stamps = temperature_max["time"]
+        arrays = [
+            _by_day(ds[_VARIABLE_MAP[variable]["nc_variable"]])
+            for ds, variable in zip(
+                (tasmax_ds, tasmin_ds, hurs_ds),
+                _VAPOUR_PRESSURE_DEFICIT_INPUTS,
+                strict=True,
+            )
+        ]
+        try:
+            aligned = xr.align(*arrays, join="exact")
+        except ValueError as exc:
+            raise ValueError(
+                f"HYRAS {year}: tasmax, tasmin and hurs differ in grid or days, "
+                f"so no vapour pressure deficit can be computed: {exc}"
+            ) from exc
+        deficit = vapour_pressure_deficit_from_relative_humidity(*aligned)
+        # Store the day under the tasmax stamp, as HYRAS does for its files.
+        deficit = deficit.assign_coords(time=stamps.values)
+        deficit.attrs = {**CF_ATTRIBUTES, "cell_methods": "time: mean"}
+        dataset = deficit.to_dataset(name=NC_NAME)
+        grid_mapping = temperature_max.attrs.get("grid_mapping")
+        if grid_mapping is not None and grid_mapping in tasmax_ds:
+            dataset[NC_NAME].attrs["grid_mapping"] = grid_mapping
+            dataset[grid_mapping] = tasmax_ds[grid_mapping]
+        with tempfile.NamedTemporaryFile(
+            suffix=".nc", prefix=f"hyras_{NC_NAME}_{year}_", delete=False
+        ) as tmp:
+            path = tmp.name
+        dataset.to_netcdf(
+            path,
+            encoding={
+                NC_NAME: {
+                    "dtype": "float32",
+                    "zlib": True,
+                    "complevel": 3,
+                    "_FillValue": np.float32(np.nan),
+                }
+            },
+        )
+    logger.info("HYRAS %d: vapour pressure deficit written to %s", year, path)
+    return path
+
+
+def _by_day(values: xr.DataArray) -> xr.DataArray:
+    """Return *values* with each time stamp floored to its day.
+
+    The HYRAS variables stamp their days at different hours; flooring lets
+    them be aligned by day.
+    """
+    return values.assign_coords(time=values["time"].dt.floor("D"))

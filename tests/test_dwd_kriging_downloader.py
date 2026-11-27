@@ -1,6 +1,9 @@
 """Tests of :class:`~datavia.weather.dwd_kriging_downloader.DWDKrigingDownloader`.
 
-Station data come from the fake CDC of :mod:`cdc_fake`; the 1 km grid is
+Covers the year file (layout, stamps, mask, values, provenance), the
+variogram cache, reuse of stored months, rejected settings, and the kriged
+vapour pressure deficit.  Station data come from the fake CDC of
+:mod:`cdc_fake`; the 1 km grid is
 shrunk to a 21 x 16 km patch near Leipzig with a synthetic terrain, so the
 real Mojo kriging runs in well under a second.
 """
@@ -8,7 +11,9 @@ real Mojo kriging runs in well under a second.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from datetime import date
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -46,7 +51,11 @@ def _elevation() -> np.ndarray:
 
 
 def _fake_cdc() -> FakeCDC:
-    """30 climate stations around the patch: temperature = 5 - 0.0065 * h + noise."""
+    """30 climate stations around the patch: temperature = 5 - 0.0065 * h + noise.
+
+    The vapour pressure is that of 70 % relative humidity at the mean
+    temperature.
+    """
     from datavia.library.coordinate_transforms import get_transformer
 
     rng = np.random.default_rng(3)
@@ -69,6 +78,8 @@ def _fake_cdc() -> FakeCDC:
                 "TXK": np.round(tmk + 5, 1),
                 "TNK": np.round(tmk - 5, 1),
                 "UPM": [80.0] * n_days,
+                # 70 % of the saturation vapour pressure (FAO-56 eq. 11) in hPa.
+                "VPM": np.round(7.0 * 0.6108 * np.exp(17.27 * tmk / (tmk + 237.3)), 1),
             },
             [(round(h[i], 1), round(lat[i], 4), round(lon[i], 4))],
         )
@@ -126,6 +137,37 @@ class TestNetCDF:
         variograms = json.loads(ds.attrs["variograms"])
         assert set(variograms) == {"2026-01", "2026-02"}
         assert json.loads(ds.attrs["kriging_settings"])["max_dist"] == 1.5e5
+
+
+class TestVapourPressureDeficit:
+    """The kriged vapour pressure deficit: a HYRAS-like ``vpd`` file in kPa."""
+
+    @pytest.fixture
+    def ds(self, tmp_path: Path) -> Iterator[xr.Dataset]:
+        """The kriged vapour pressure deficit of the fake stations."""
+        path = _downloader(tmp_path, variables=["vapour_pressure_deficit"]).krige_year(
+            "vapour_pressure_deficit", 2026, _elevation()
+        )
+        with xr.open_dataset(path) as ds:
+            yield ds.load()
+
+    def test_variable_and_attributes(self, ds: xr.Dataset) -> None:
+        assert ds["vpd"].dims == ("time", "y", "x")
+        assert ds["vpd"].attrs["units"] == "kPa"
+        assert (
+            ds["vpd"].attrs["standard_name"] == "water_vapor_saturation_deficit_in_air"
+        )
+        assert ds["vpd"].attrs["grid_mapping"] == "crs"
+
+    def test_values_are_plausible_and_non_negative(self, ds: xr.Dataset) -> None:
+        land = ds["vpd"].values[:, :, 1:]
+        assert np.isfinite(land).all()
+        # TXK/TNK = TMK +- 5 degC, 70 % humidity, winter: a few tenths of a kPa.
+        assert land.min() >= 0.0 and land.max() < 1.5
+
+    def test_provenance_names_the_input_columns(self, ds: xr.Dataset) -> None:
+        assert "kl/TXK+TNK+VPM" in ds.attrs["source"]
+        assert json.loads(ds.attrs["kriging_settings"])["correct_negative"] is True
 
 
 class TestVariogramCache:

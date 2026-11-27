@@ -61,6 +61,8 @@ from datavia.core.interfaces import Downloader
 
 from .dwd_cdc import CDC_PRODUCTS, CDCClient, StationData
 from .dwd_grid import CELL_SIZE, GRID_CRS, GRID_X, GRID_Y, grid_elevation
+from .vapour_pressure import CF_ATTRIBUTES as VPD_CF_ATTRIBUTES
+from .vapour_pressure import NC_NAME as VPD_NC_NAME
 from .variogram_cache import CachedVariogram, VariogramCache
 
 logger = logging.getLogger(__name__)
@@ -139,7 +141,8 @@ class KrigingSettings:
 
 #: Kriging settings per variable: those of the operational German Drought
 #: Monitor (precipitation and mean temperature), and the temperature settings
-#: for the other temperature and humidity fields.
+#: for the other temperature and humidity fields.  The vapour pressure deficit
+#: is non-negative, so negative estimates are set to 0 as for precipitation.
 KRIGING_SETTINGS: dict[str, KrigingSettings] = {
     "total_precipitation": KrigingSettings(
         max_dist=1.0e5, correct_negative=True, dist_zero=True
@@ -148,6 +151,7 @@ KRIGING_SETTINGS: dict[str, KrigingSettings] = {
     "temperature_2m_max": KrigingSettings(max_dist=1.5e5),
     "temperature_2m_min": KrigingSettings(max_dist=1.5e5),
     "relative_humidity_2m": KrigingSettings(max_dist=1.5e5),
+    "vapour_pressure_deficit": KrigingSettings(max_dist=1.5e5, correct_negative=True),
 }
 
 #: HYRAS short variable name, CF attributes and time-stamp hour per variable.
@@ -201,6 +205,11 @@ NC_VARIABLES: dict[str, dict[str, Any]] = {
             "units": "%",
             "cell_methods": "time: mean",
         },
+    },
+    "vapour_pressure_deficit": {
+        "name": VPD_NC_NAME,
+        "hour": 0,
+        "attrs": {**VPD_CF_ATTRIBUTES, "cell_methods": "time: mean"},
     },
 }
 
@@ -322,6 +331,12 @@ class DWDKrigingDownloader(Downloader):
         -------
         Path or None
             The NetCDF file, or ``None`` if no day of *year* is published yet.
+
+        Raises
+        ------
+        RuntimeError
+            If the station data cannot be downloaded, or (an internal error)
+            a month is to be kriged without station data.
         """
         if elevation is None:
             elevation = grid_elevation(self.source_dir / "_grid")
@@ -365,7 +380,8 @@ class DWDKrigingDownloader(Downloader):
             if month in reusable:
                 block = reusable[month]
             else:
-                assert stations is not None  # stations are read when kriging
+                if stations is None:  # read above whenever a month is kriged
+                    raise RuntimeError(f"No station data read for {month}")
                 month_data = stations.between(
                     dates[day_index[0]].date(), dates[day_index[-1]].date()
                 )
@@ -638,7 +654,8 @@ def _set_global_attrs(
                 "Conventions": "CF-1.8",
                 "title": f"DWD station {variable}, external drift kriging, 1 km",
                 "source": "DWD Climate Data Center daily station observations "
-                f"({CDC_PRODUCTS[variable].group}/{CDC_PRODUCTS[variable].column})",
+                f"({CDC_PRODUCTS[variable].group}/"
+                f"{'+'.join(CDC_PRODUCTS[variable].columns)})",
                 "institution": "Deutscher Wetterdienst (data); datavia (kriging)",
                 "method": "external drift kriging with DGM200 cell-mean elevation "
                 "as drift"

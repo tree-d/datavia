@@ -123,8 +123,6 @@ def _validate_era5_bbox_within_grid(config: dict) -> None:
     if not era5_bbox:
         return
 
-    from .source_registry import SOURCE_REGISTRY
-
     grid = SOURCE_REGISTRY["ERA5_land"]["zarr_grid"]
     lat = grid["latitude"]
     lon = grid["longitude"]
@@ -188,7 +186,7 @@ class WeatherPipeline(Pipeline):
        * - ``"ERA5_land"``
          - Copernicus ERA5-Land hourly reanalysis, 0.1° grid (EPSG:4326).
          - ``2m_temperature``, ``total_precipitation``,
-           ``surface_solar_radiation_downwards``
+           ``surface_solar_radiation_downwards``, ``vapour_pressure_deficit``
          - ``~/.cdsapirc`` with a CDS API key
            (https://cds.climate.copernicus.eu/how-to-api).
        * - ``"HYRAS"``
@@ -196,7 +194,8 @@ class WeatherPipeline(Pipeline):
            Daily only.
          - ``2m_temperature``, ``temperature_2m_max``,
            ``temperature_2m_min``, ``total_precipitation``,
-           ``surface_solar_radiation_downwards``, ``relative_humidity_2m``
+           ``surface_solar_radiation_downwards``, ``relative_humidity_2m``,
+           ``vapour_pressure_deficit``
          - None (DWD OpenData).
        * - ``"DWD_stations"``
          - Daily DWD station observations (Climate Data Center), interpolated
@@ -205,7 +204,7 @@ class WeatherPipeline(Pipeline):
            :mod:`~datavia.weather.dwd_kriging_downloader`.
          - ``2m_temperature``, ``temperature_2m_max``,
            ``temperature_2m_min``, ``total_precipitation``,
-           ``relative_humidity_2m``
+           ``relative_humidity_2m``, ``vapour_pressure_deficit``
          - None (DWD OpenData).
 
     Variables are checked at construction.
@@ -231,6 +230,11 @@ class WeatherPipeline(Pipeline):
        * - ``relative_humidity_2m``
          - %
          - Daily mean
+       * - ``vapour_pressure_deficit``
+         - kPa (FAO-56)
+         - Daily value: from the daily extremes of temperature and the
+           measured vapour pressure (``DWD_stations``) or mean relative
+           humidity (``HYRAS``); mean of the hourly values (``ERA5_land``)
 
     In ``"hourly"`` mode each value is the one at that hour; precipitation
     is the amount (mm) that fell during the hour.
@@ -343,8 +347,8 @@ class WeatherPipeline(Pipeline):
         # Validate before any attribute assignment so errors surface immediately.
         Pipeline.validate_pipeline_config(
             config,
-            required_keys=_REQUIRED_CONFIG_KEYS,
-            known_keys=_KNOWN_CONFIG_KEYS,
+            required_keys=set(_REQUIRED_CONFIG_KEYS),
+            known_keys=set(_KNOWN_CONFIG_KEYS),
             pipeline_name="WeatherPipeline",
         )
         source_name: str = config["source"]
@@ -471,8 +475,8 @@ class WeatherPipeline(Pipeline):
 
         Pipeline.validate_pipeline_config(
             candidate,
-            required_keys=_REQUIRED_CONFIG_KEYS,
-            known_keys=_KNOWN_CONFIG_KEYS,
+            required_keys=set(_REQUIRED_CONFIG_KEYS),
+            known_keys=set(_KNOWN_CONFIG_KEYS),
             pipeline_name="WeatherPipeline.reconfigure",
         )
 
@@ -535,6 +539,10 @@ class WeatherPipeline(Pipeline):
         """
         if not self.downloader or not self.saver:
             self()
+        if self.saver is None:
+            raise RuntimeError(
+                "WeatherPipeline.update_data: saver was not initialised."
+            )
 
         # Reconcile disk with DB before checking what to download.
         self.sync_files_and_database()
@@ -842,8 +850,11 @@ class WeatherPipeline(Pipeline):
         if not self.getter:
             self()
 
-        if self.getter is None:
-            raise RuntimeError("WeatherPipeline.get_data: getter was not initialised.")
+        if not isinstance(self.getter, GetterWeather):
+            raise RuntimeError(
+                "WeatherPipeline.get_data: getter was not initialised as a "
+                "GetterWeather."
+            )
 
         return self.getter.get_data(
             coords=coords,

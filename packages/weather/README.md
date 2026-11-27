@@ -257,6 +257,7 @@ NetCDF files (e.g. `tas`) and the descriptive pipeline API names (e.g.
 | `total_precipitation` | `pr` | mm/day | Daily precipitation sum |
 | `surface_solar_radiation_downwards` | `rsds` | W/m² (returned as µmol m⁻² s⁻¹ PAR) | Daily mean global solar radiation |
 | `relative_humidity_2m` | `hurs` | % | Daily mean 2-m relative humidity |
+| `vapour_pressure_deficit` | `vpd` (derived) | kPa | FAO-56 from `tasmax`, `tasmin` and `hurs` (downloaded for it) |
 
 ### ERA5-Land variables (commonly used)
 
@@ -268,6 +269,7 @@ Unit conversions (K→°C, m→mm, SSRD→PAR) are applied automatically in
 | `2m_temperature` | Kelvin | °C |
 | `total_precipitation` | m water equiv. | mm |
 | `surface_solar_radiation_downwards` | J m⁻² | µmol(photons) m⁻² s⁻¹ PAR |
+| `vapour_pressure_deficit` | derived hourly from `t2m` and `d2m` (FAO-56) | kPa |
 
 ### DWD station variables
 
@@ -284,6 +286,7 @@ stamps.
 | `temperature_2m_min` | `kl` / `TNK` | `tasmin` | °C | 00-24 UTC minimum |
 | `total_precipitation` | `more_precip` / `RS` | `pr` | mm | 06-06 UTC sum |
 | `relative_humidity_2m` | `kl` / `UPM` | `hurs` | % | 00-24 UTC mean |
+| `vapour_pressure_deficit` | `kl` / `TXK`, `TNK`, `VPM` (FAO-56) | `vpd` | kPa | 00-24 UTC |
 
 The station Parquet (`dwd_stations`) holds one row per station and day;
 precipitation is stamped at the end of its day (D+1 06:00 UTC), the other

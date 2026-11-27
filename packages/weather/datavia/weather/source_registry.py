@@ -38,15 +38,10 @@ from datavia.library.unit_conversions import (
     w_m2_to_par,
 )
 
-# HYRASDownloader is introduced in Phase D.  Import it lazily so that the
-# registry is fully usable before that file exists.
-try:
-    from .hyras_downloader import HYRASDownloader as _HYRASDownloader
-except ImportError:
-    _HYRASDownloader = None  # type: ignore[assignment,misc]
-
 from .dwd_kriging_downloader import NC_VARIABLES, DWDKrigingDownloader
 from .era5_downloader import ACCUMULATED_VARIABLES, ERA5Downloader
+from .hyras_downloader import HYRASDownloader
+from .vapour_pressure import NC_NAME as VPD_NC_NAME
 
 if TYPE_CHECKING:
     from datavia.core.interfaces import Downloader
@@ -136,6 +131,8 @@ SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
             "t2m": "2m_temperature",
             "tp": "total_precipitation",
             "ssrd": "surface_solar_radiation_downwards",
+            # Derived hourly by ERA5Downloader from t2m and d2m (kPa).
+            VPD_NC_NAME: "vapour_pressure_deficit",
         },
         # Fixed Germany-extent grid for ZarrStoreManager.  Bounds are extended
         # by one cell beyond the pipeline bbox so bilinear interpolation does
@@ -158,8 +155,7 @@ SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
         },
     },
     "HYRAS": {
-        # Populated with HYRASDownloader once Phase D is implemented.
-        "grid_downloader": _HYRASDownloader,
+        "grid_downloader": HYRASDownloader,
         # HYRAS files are already in target units (°C, mm/day) except radiation:
         # rsds is W/m², converted to PAR to match every other source.
         "conversions": {
@@ -179,6 +175,8 @@ SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
             "pr": "total_precipitation",
             "rsds": "surface_solar_radiation_downwards",
             "hurs": "relative_humidity_2m",
+            # Derived by HYRASDownloader from tasmax, tasmin and hurs (kPa).
+            VPD_NC_NAME: "vapour_pressure_deficit",
         },
         # Fixed WGS84 envelope of the national EPSG:3035 grid.  HYRAS does
         # not support bbox-subset downloads, so coverage checks must use this
@@ -229,6 +227,7 @@ SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
             "temperature_2m_min": "degC",
             "total_precipitation": "mm",
             "relative_humidity_2m": "%",
+            "vapour_pressure_deficit": "kPa",
         },
         # One record per station and day: the daily selection takes that
         # single value ("hours_required": 1), so mean and sum are the same.
@@ -237,6 +236,7 @@ SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
             "temperature_2m_max": "mean",
             "temperature_2m_min": "mean",
             "relative_humidity_2m": "mean",
+            "vapour_pressure_deficit": "mean",
             "total_precipitation": "sum",
         },
         "station_records_per_day": 1,
@@ -286,14 +286,27 @@ def get_grid_downloader_class(source_name: str) -> type[Downloader] | None:
             f"Unknown weather source '{source_name}'. "
             f"Valid sources: {sorted(SOURCE_REGISTRY)}"
         )
-    return SOURCE_REGISTRY[source_name]["grid_downloader"]
+    downloader_class: type[Downloader] | None = SOURCE_REGISTRY[source_name][
+        "grid_downloader"
+    ]
+    return downloader_class
 
 
 def get_day_start_hour(source_name: str, variable: str) -> int:
     """Return the UTC hour at which *variable*'s daily window starts.
 
-    0 (the 00-24 UTC day) unless the source registry lists the variable under
-    ``"day_start_hour"`` (precipitation: 6).
+    Parameters
+    ----------
+    source_name : str
+        A key in :data:`SOURCE_REGISTRY`; unknown sources give 0.
+    variable : str
+        Pipeline variable name.
+
+    Returns
+    -------
+    int
+        0 (the 00-24 UTC day) unless the source registry lists the variable
+        under ``"day_start_hour"`` (precipitation: 6).
     """
     return int(
         SOURCE_REGISTRY.get(source_name, {}).get("day_start_hour", {}).get(variable, 0)
@@ -301,9 +314,24 @@ def get_day_start_hour(source_name: str, variable: str) -> int:
 
 
 def is_accumulated(source_name: str, variable: str) -> bool:
-    """Return whether *variable* is stored as a running total since 00 UTC."""
+    """Return whether *variable* is stored as a running total since 00 UTC.
+
+    Parameters
+    ----------
+    source_name : str
+        A key in :data:`SOURCE_REGISTRY`; unknown sources give ``False``.
+    variable : str
+        Pipeline variable name.
+
+    Returns
+    -------
+    bool
+        ``True`` if the source lists *variable* under
+        ``"accumulated_variables"`` (ERA5-Land precipitation and radiation).
+    """
     entry = SOURCE_REGISTRY.get(source_name, {})
-    return variable in entry.get("accumulated_variables", ())
+    accumulated: frozenset[str] = entry.get("accumulated_variables", frozenset())
+    return variable in accumulated
 
 
 def get_station_aggregation(variable: str, temporal_resolution: str) -> dict[str, Any]:
@@ -355,10 +383,10 @@ def station_data_supports(temporal_resolution: str) -> bool:
         ``True`` when the station records have this resolution (the station
         Parquet is daily, so only ``"daily"``).
     """
-    return (
-        SOURCE_REGISTRY["DWD_stations"]["station_temporal_resolution"]
-        == temporal_resolution
-    )
+    station_resolution: str = SOURCE_REGISTRY["DWD_stations"][
+        "station_temporal_resolution"
+    ]
+    return station_resolution == temporal_resolution
 
 
 def get_target_unit(
@@ -368,8 +396,21 @@ def get_target_unit(
 ) -> str | None:
     """Return the unit :func:`apply_conversion` produces for *variable*.
 
-    ``None`` means no conversion applies, so the value stays in the source's
-    native unit.
+    Parameters
+    ----------
+    source_name : str
+        A key in :data:`SOURCE_REGISTRY`; unknown sources have no conversions.
+    variable : str
+        Pipeline variable name.
+    user_overrides : dict[str, dict[str, str]], optional
+        Per-variable ``{"from": ..., "to": ...}`` overrides, as in
+        :func:`apply_conversion`; they take precedence over the registry.
+
+    Returns
+    -------
+    str or None
+        The target unit, or ``None`` when no conversion applies, so the value
+        stays in the source's native unit.
     """
     spec = {
         **SOURCE_REGISTRY.get(source_name, {}).get("conversions", {}),

@@ -58,7 +58,14 @@ Pipeline variable           DWD product (group / column)          Unit
 ``temperature_2m_max``      ``kl`` / ``TXK``                      °C
 ``temperature_2m_min``      ``kl`` / ``TNK``                      °C
 ``relative_humidity_2m``    ``kl`` / ``UPM`` (daily mean)         %
+``vapour_pressure_deficit`` ``kl`` / ``TXK``, ``TNK``, ``VPM``    kPa
 =========================== ===================================== ============
+
+The vapour pressure deficit is computed at each station before kriging,
+after FAO-56: the mean of the saturation vapour pressures at ``TXK`` and
+``TNK`` minus the measured daily mean vapour pressure ``VPM`` (see
+:mod:`datavia.weather.vapour_pressure`). A day is missing at a station if
+any of the three columns is. Negative kriging estimates are set to 0.
 
 Radiation is not available: the DWD daily solar network has only about 40
 stations.

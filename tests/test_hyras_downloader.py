@@ -13,11 +13,19 @@ Covers (all without network access or real files):
 - Validation: unknown variable raises :exc:`ValueError`,
   reversed date range raises :exc:`ValueError`, no HTML match raises
   :exc:`RuntimeError`.
+- The derived ``vapour_pressure_deficit``: inputs downloaded and combined
+  into a ``vpd`` file (values, grid mapping, stamps), helper files deleted,
+  requested inputs kept, failed inputs and mismatched grids handled (small
+  synthetic NetCDF files in ``tmp_path``).
 """
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import numpy as np
+import pandas as pd
 import pytest
+import xarray as xr
 from datavia.weather.hyras_downloader import (
     _HYRAS_BASE_URL,
     _VARIABLE_MAP,
@@ -418,3 +426,122 @@ class TestGetFinalFilename:
         )
 
         assert result == "/var/tmp/some_temp_file.nc"
+
+
+# ---------------------------------------------------------------------------
+# vapour_pressure_deficit (derived from tasmax, tasmin and hurs)
+# ---------------------------------------------------------------------------
+
+#: Synthetic HYRAS inputs: 3 days on a 2 x 3 cell grid.
+_DAYS = pd.date_range("2024-07-01", periods=3, freq="D")
+_X = np.array([4000500.0, 4001500.0, 4002500.0])
+_Y = np.array([3000500.0, 3001500.0])
+
+
+def _hyras_file(
+    path: Path, name: str, value: float, hour: int = 0, x: np.ndarray = _X
+) -> str:
+    """Write a HYRAS-like file: *name* = *value* everywhere, days at *hour*."""
+    data = np.full((len(_DAYS), len(_Y), len(x)), value, dtype=np.float32)
+    dataset = xr.Dataset(
+        {
+            name: (("time", "y", "x"), data, {"grid_mapping": "crs"}),
+            "crs": (
+                (),
+                np.int32(0),
+                {"grid_mapping_name": "lambert_azimuthal_equal_area"},
+            ),
+        },
+        coords={"time": _DAYS + pd.Timedelta(hours=hour), "y": _Y, "x": x},
+    )
+    dataset.to_netcdf(path)
+    return str(path)
+
+
+class TestVapourPressureDeficit:
+    """``vapour_pressure_deficit`` is computed from tasmax, tasmin and hurs."""
+
+    @pytest.fixture
+    def inputs(self, tmp_path: Path) -> dict[str, str]:
+        """Input file per HYRAS prefix; hurs is stamped at noon, the others at 0."""
+        return {
+            "tasmax_hyras_1": _hyras_file(tmp_path / "tasmax.nc", "tasmax", 20.0),
+            "tasmin_hyras_1": _hyras_file(tmp_path / "tasmin.nc", "tasmin", 0.0),
+            "hurs_hyras_1": _hyras_file(tmp_path / "hurs.nc", "hurs", 60.0, hour=12),
+        }
+
+    @staticmethod
+    def _download(
+        inputs: dict[str, str], variables: list[str], tmp_path: Path
+    ) -> tuple[list[str], MagicMock]:
+        """Run download() with the network replaced by *inputs*."""
+
+        def fake_parent_download(self_inner: HYRASDownloader) -> str:
+            prefix = self_inner.url.rsplit("/", 1)[1].rsplit("_2024", 1)[0]
+            return inputs.get(prefix, "failed")
+
+        with (
+            patch.object(
+                HYRASDownloader,
+                "_discover_latest_filename",
+                side_effect=lambda url, year, prefix: f"{prefix}_{year}_v6-1_de.nc",
+            ),
+            patch(
+                "datavia.weather.hyras_downloader.URLDownloader.download",
+                autospec=True,
+                side_effect=fake_parent_download,
+            ) as parent,
+            patch("tempfile.tempdir", str(tmp_path)),
+        ):
+            result = HYRASDownloader(
+                variables=variables, date_start="2024-07-01", date_end="2024-07-03"
+            ).download()
+        return result.splitlines(), parent
+
+    def test_derived_file_alone(self, inputs: dict[str, str], tmp_path: Path) -> None:
+        paths, parent = self._download(inputs, ["vapour_pressure_deficit"], tmp_path)
+        assert parent.call_count == 3
+        assert len(paths) == 1
+        with xr.open_dataset(paths[0]) as ds:
+            vpd = ds["vpd"].load()
+            assert vpd.attrs["units"] == "kPa"
+            assert vpd.attrs["grid_mapping"] == "crs"
+            assert "crs" in ds
+            # Stamps of tasmax (00:00), although hurs is stamped at noon.
+            assert list(pd.DatetimeIndex(ds["time"].values)) == list(_DAYS)
+        # FAO-56 eq. 19: mean of e(20 degC) and e(0 degC), times 1 - 60 %.
+        expected = (2.3383 + 0.6108) / 2 * 0.4
+        np.testing.assert_allclose(vpd.values, expected, atol=1e-3)
+        # Inputs that were not requested are deleted.
+        assert not any(Path(p).exists() for p in inputs.values())
+
+    def test_requested_input_is_kept_and_returned(
+        self, inputs: dict[str, str], tmp_path: Path
+    ) -> None:
+        paths, parent = self._download(
+            inputs, ["temperature_2m_max", "vapour_pressure_deficit"], tmp_path
+        )
+        assert parent.call_count == 3  # tasmax is downloaded once
+        assert paths[0] == inputs["tasmax_hyras_1"]
+        assert Path(paths[0]).exists()
+        assert not Path(inputs["hurs_hyras_1"]).exists()
+        with xr.open_dataset(paths[1]) as ds:
+            assert "vpd" in ds
+
+    def test_failed_input_skips_the_year(
+        self, inputs: dict[str, str], tmp_path: Path
+    ) -> None:
+        del inputs["hurs_hyras_1"]
+        paths, _ = self._download(inputs, ["vapour_pressure_deficit"], tmp_path)
+        assert paths == []
+        assert not any(Path(p).exists() for p in inputs.values())
+
+    def test_mismatched_grids_raise_and_clean_up(
+        self, inputs: dict[str, str], tmp_path: Path
+    ) -> None:
+        inputs["hurs_hyras_1"] = _hyras_file(
+            tmp_path / "hurs_shifted.nc", "hurs", 60.0, x=_X + 1000.0
+        )
+        with pytest.raises(ValueError, match="differ in grid or days"):
+            self._download(inputs, ["vapour_pressure_deficit"], tmp_path)
+        assert not any(Path(p).exists() for p in inputs.values())

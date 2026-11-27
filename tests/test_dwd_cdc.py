@@ -1,5 +1,6 @@
 """Tests of :mod:`datavia.weather.dwd_cdc`: download, cache and read of DWD
-Climate Data Center daily station archives.
+Climate Data Center daily station archives, including derived products (the
+vapour pressure deficit from ``TXK``, ``TNK`` and ``VPM``).
 
 All network access goes to the in-memory :class:`cdc_fake.FakeCDC`.
 """
@@ -9,6 +10,7 @@ from __future__ import annotations
 import os
 import time
 from datetime import date, timedelta
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -170,6 +172,85 @@ class TestReading:
             client.station_data("surface_solar_radiation_downwards", TODAY, TODAY)
         with pytest.raises(ValueError, match="must not be before"):
             client.station_data("2m_temperature", TODAY, TODAY - timedelta(days=1))
+
+
+def _kl_vapour(
+    txk: list[float], tnk: list[float], vpm: list[float]
+) -> dict[str, list[float]]:
+    """kl product columns with the given TXK, TNK and VPM values."""
+    n = len(vpm)
+    return {
+        "QN_4": [10] * n,
+        "TMK": [10.0] * n,
+        "TXK": txk,
+        "TNK": tnk,
+        "UPM": [80.0] * n,
+        "VPM": vpm,
+    }
+
+
+#: FAO-56 eq. 11 at 20 °C [kPa].
+_E_SAT_20C: float = 2.3383
+
+#: FAO-56 eq. 11 at 0 °C [kPa].
+_E_SAT_0C: float = 0.6108
+
+
+class TestVapourPressureDeficit:
+    """The derived product: FAO-56 es from TXK/TNK minus the measured VPM."""
+
+    def test_deficit_from_extremes_and_vapour_pressure(self, tmp_path: Path) -> None:
+        fake = FakeCDC()
+        fake.add(
+            "kl", "recent", "00044", date(2026, 7, 1), _kl_vapour([20.0], [0.0], [10.0])
+        )
+        data = _client(fake, tmp_path).station_data(
+            "vapour_pressure_deficit", date(2026, 7, 1), date(2026, 7, 1)
+        )
+        # es = mean of e(20 degC) and e(0 degC); VPM 10 hPa = 1 kPa.
+        expected = (_E_SAT_20C + _E_SAT_0C) / 2 - 1.0
+        assert data.values[0, 0] == pytest.approx(expected, abs=1e-3)
+
+    def test_a_missing_or_implausible_input_makes_the_day_missing(
+        self, tmp_path: Path
+    ) -> None:
+        fake = FakeCDC()
+        fake.add(
+            "kl",
+            "recent",
+            "00044",
+            date(2026, 7, 1),
+            _kl_vapour(
+                [20.0, -999, 20.0, 20.0], [0.0, 0.0, 0.0, 0.0], [10.0] * 3 + [99.0]
+            ),
+        )
+        data = _client(fake, tmp_path).station_data(
+            "vapour_pressure_deficit", date(2026, 7, 1), date(2026, 7, 4)
+        )
+        # Day 2: TXK missing; day 4: VPM above its 60 hPa plausible maximum.
+        assert np.isfinite(data.values[0, [0, 2]]).all()
+        assert np.isnan(data.values[0, [1, 3]]).all()
+
+    def test_implausible_result_is_missing(self, tmp_path: Path) -> None:
+        fake = FakeCDC()
+        # Plausible inputs, but es - ea is about 11 kPa, above the 10 kPa limit.
+        fake.add(
+            "kl", "recent", "00044", date(2026, 7, 1), _kl_vapour([50.0], [45.0], [0.0])
+        )
+        data = _client(fake, tmp_path).station_data(
+            "vapour_pressure_deficit", date(2026, 7, 1), date(2026, 7, 1)
+        )
+        assert data.n_stations == 0
+
+    def test_archive_without_vapour_pressure_column_is_skipped(
+        self, tmp_path: Path
+    ) -> None:
+        fake = FakeCDC()
+        fake.add("kl", "recent", "00044", date(2026, 7, 1), _tmk([10.0]))
+        client = _client(fake, tmp_path)
+        day = date(2026, 7, 1)
+        assert client.station_data("vapour_pressure_deficit", day, day).n_stations == 0
+        assert client.station_data("2m_temperature", day, day).n_stations == 1
 
 
 class TestBranches:

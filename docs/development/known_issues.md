@@ -172,6 +172,16 @@ reported missing (`MissingWeatherDataError`), never approximated.
   days followed the local climate-day definition).  ERA5 hourly snapshots are
   averaged over the 24 stamps `D 00:00 .. D 23:00`.  *Assumption, not verified:* HYRAS daily means use
   the 00-24 UTC day.
+- **Vapour pressure deficit:** derived at download time after FAO-56, and the
+  method differs per source, so the sources are not strictly comparable.
+  DWD stations use the measured daily mean vapour pressure (CDC `VPM`) and
+  HYRAS the daily mean relative humidity (FAO-56 eq. 19), both with the
+  saturation vapour pressure from the daily extremes (00-24 UTC, stamped
+  like `tas`).  ERA5 uses the hourly temperature and dewpoint, and the daily
+  value is the mean of the 24 hourly deficits, which is generally larger
+  than a value from daily aggregates.  *Assumption, not verified:* HYRAS
+  `tasmax`/`tasmin`/`hurs` share the 00-24 UTC day; the files are aligned
+  by date.
 - **Radiation:** the mean flux of 00:00-24:00 UTC.  HYRAS `rsds` is a 00-24 UTC
   daily mean (stamp 12:00, bounds 00:00-00:00; verified in
   `rsds_hyras_5_2020_v3-1_de.nc`).  The DWD stations provide no radiation.

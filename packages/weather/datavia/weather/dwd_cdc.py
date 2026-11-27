@@ -20,14 +20,18 @@ with the station's position history.
 
 :class:`CDCClient` downloads the archives a date range needs, caches them,
 and reads one variable into a :class:`StationData` block of shape
-``(n_stations, n_days)``.  This is step 1 of the kriged ``DWD_stations``
-source; step 2 (interpolation onto a grid) is
+``(n_stations, n_days)``.  Most variables are one table column
+(:class:`CDCProduct`); a few are computed per station and day from several
+columns of the same archive (:class:`DerivedCDCProduct`, e.g. the vapour
+pressure deficit from ``TXK``, ``TNK`` and ``VPM``).  This is step 1 of the
+kriged ``DWD_stations`` source; step 2 (interpolation onto a grid) is
 :mod:`datavia.weather.dwd_kriging_downloader`.
 
 Reading rules (those of the operational German Drought Monitor):
 
 - Values outside a plausible range (:class:`CDCProduct`) are treated as
-  missing, as is ``-999``.  Quality flags (``QN_*``) are not used.
+  missing, as is ``-999``.  A derived value is missing if any of its inputs
+  is, and its result is range-checked again.  Quality flags (``QN_*``) are not used.
 - A station's position and elevation are its *current* ones (the last row of
   the geography metadata), for the whole period.
 - Where the historical and the recent archive both have a value for a day,
@@ -54,7 +58,7 @@ import logging
 import re
 import time
 import zipfile
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -63,6 +67,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import requests
+
+from .vapour_pressure import vapour_pressure_deficit
 
 logger = logging.getLogger(__name__)
 
@@ -130,9 +136,85 @@ class CDCProduct:
     units: str
     description: str
 
+    @property
+    def columns(self) -> tuple[str, ...]:
+        """The table columns read: just :attr:`column`."""
+        return (self.column,)
+
+
+@dataclass(frozen=True)
+class DerivedCDCProduct:
+    """A pipeline variable computed from several columns of one archive.
+
+    Each input column is read and range-checked like a :class:`CDCProduct`;
+    *compute* then combines them, and its result is range-checked again.
+
+    Attributes
+    ----------
+    group : str
+        Product group directory of all inputs, e.g. ``"kl"``.
+    inputs : tuple[CDCProduct, ...]
+        The input columns, in the order *compute* takes them.
+    compute : Callable[..., np.ndarray]
+        Takes one ``(n_days,)`` array per input (physical units, NaN where
+        missing) and returns the ``(n_days,)`` values of the variable.
+    low, high : float
+        Plausible range of the result; values outside it are treated as
+        missing.
+    units : str
+        Units of the result, e.g. ``"kPa"``.
+    description : str
+        What the daily value is, including its time window.
+    """
+
+    group: str
+    inputs: tuple[CDCProduct, ...]
+    compute: Callable[..., np.ndarray]
+    low: float
+    high: float
+    units: str
+    description: str
+
+    @property
+    def columns(self) -> tuple[str, ...]:
+        """The table columns read: those of the inputs, in order."""
+        return tuple(product.column for product in self.inputs)
+
+
+def _station_vapour_pressure_deficit(
+    temperature_max_c: np.ndarray,
+    temperature_min_c: np.ndarray,
+    vapour_pressure_hpa: np.ndarray,
+) -> np.ndarray:
+    """Return the FAO-56 vapour pressure deficit [kPa] of station days.
+
+    ``es`` from the daily extremes, ``ea`` the measured daily mean vapour
+    pressure; see :func:`~datavia.weather.vapour_pressure.vapour_pressure_deficit`.
+    """
+    # VPM is in hPa; the FAO-56 formulas work in kPa.
+    return vapour_pressure_deficit(
+        temperature_max_c, temperature_min_c, vapour_pressure_hpa / 10.0
+    )
+
+
+#: Daily maximum temperature (an input of the vapour pressure deficit too).
+_TEMPERATURE_MAX: CDCProduct = CDCProduct(
+    "kl", "TXK", -40.0, 50.0, "degC", "Daily maximum air temperature, 00-24 UTC"
+)
+
+#: Daily minimum temperature (an input of the vapour pressure deficit too).
+_TEMPERATURE_MIN: CDCProduct = CDCProduct(
+    "kl", "TNK", -45.0, 45.0, "degC", "Daily minimum air temperature, 00-24 UTC"
+)
+
+#: Daily mean vapour pressure.  Saturation at the highest German
+#: temperatures is about 60 hPa, so larger values are errors.
+_VAPOUR_PRESSURE: CDCProduct = CDCProduct(
+    "kl", "VPM", 0.0, 60.0, "hPa", "Daily mean vapour pressure, 00-24 UTC"
+)
 
 #: The CDC product of each supported pipeline variable.
-CDC_PRODUCTS: dict[str, CDCProduct] = {
+CDC_PRODUCTS: dict[str, CDCProduct | DerivedCDCProduct] = {
     "total_precipitation": CDCProduct(
         "more_precip",
         "RS",
@@ -144,14 +226,21 @@ CDC_PRODUCTS: dict[str, CDCProduct] = {
     "2m_temperature": CDCProduct(
         "kl", "TMK", -38.0, 45.0, "degC", "Daily mean air temperature, 00-24 UTC"
     ),
-    "temperature_2m_max": CDCProduct(
-        "kl", "TXK", -40.0, 50.0, "degC", "Daily maximum air temperature, 00-24 UTC"
-    ),
-    "temperature_2m_min": CDCProduct(
-        "kl", "TNK", -45.0, 45.0, "degC", "Daily minimum air temperature, 00-24 UTC"
-    ),
+    "temperature_2m_max": _TEMPERATURE_MAX,
+    "temperature_2m_min": _TEMPERATURE_MIN,
     "relative_humidity_2m": CDCProduct(
         "kl", "UPM", 0.0, 100.0, "%", "Daily mean relative humidity, 00-24 UTC"
+    ),
+    # A German heat-wave day stays below about 5 kPa; 10 kPa leaves a margin.
+    "vapour_pressure_deficit": DerivedCDCProduct(
+        "kl",
+        (_TEMPERATURE_MAX, _TEMPERATURE_MIN, _VAPOUR_PRESSURE),
+        _station_vapour_pressure_deficit,
+        0.0,
+        10.0,
+        "kPa",
+        "Daily vapour pressure deficit (FAO-56): es from TXK and TNK minus the "
+        "mean vapour pressure VPM, 00-24 UTC",
     ),
 }
 
@@ -351,7 +440,7 @@ class CDCClient:
         logger.info(
             "DWD CDC %s/%s: %d station archives (%s) for %s .. %s",
             product.group,
-            product.column,
+            "+".join(product.columns),
             len(archives),
             "+".join(branches),
             start,
@@ -545,23 +634,25 @@ class _StationSeries:
 
 
 def _read_archive(
-    path: Path, product: CDCProduct, dates: pd.DatetimeIndex
+    path: Path, product: CDCProduct | DerivedCDCProduct, dates: pd.DatetimeIndex
 ) -> _StationSeries | None:
-    """Read one station archive; ``None`` if it has no product or geography table.
+    """Read one station archive.
 
     Parameters
     ----------
     path : Path
         A ``tageswerte_*.zip`` archive.
-    product : CDCProduct
-        Which column to read and its plausible range.
+    product : CDCProduct or DerivedCDCProduct
+        Which column(s) to read and the plausible range.
     dates : pd.DatetimeIndex
         The requested days.
 
     Returns
     -------
     _StationSeries or None
-        Position, elevation and values on *dates* (NaN where missing).
+        Position, elevation and values on *dates* (NaN where missing);
+        ``None`` if the archive has no product or geography table, or its
+        table lacks a column the product needs.
     """
     with zipfile.ZipFile(path) as archive:
         names = archive.namelist()
@@ -582,12 +673,10 @@ def _read_archive(
         dtype={"MESS_DATUM": str},
     )
     table.columns = [c.strip() for c in table.columns]
-    if product.column not in table.columns:
+    raw = _read_product_values(table, product)
+    if raw is None:
         return None
     days = pd.to_datetime(table["MESS_DATUM"], format="%Y%m%d")
-    raw = pd.to_numeric(table[product.column], errors="coerce").to_numpy(float)
-    invalid = (raw == _CDC_MISSING) | (raw < product.low) | (raw > product.high)
-    raw = np.where(invalid, np.nan, raw)  # a new array: never write into pandas
 
     # Day offsets by integer arithmetic: archives are read in threads, and the
     # lazily built lookup engine of a shared pandas index is not thread-safe.
@@ -600,6 +689,46 @@ def _read_archive(
 
     longitude, latitude, elevation = _current_position(geo_bytes)
     return _StationSeries(longitude, latitude, elevation, values)
+
+
+def _read_product_values(
+    table: pd.DataFrame, product: CDCProduct | DerivedCDCProduct
+) -> np.ndarray | None:
+    """Return the product's value on each row of a product table.
+
+    Parameters
+    ----------
+    table : pd.DataFrame
+        The ``produkt_*.txt`` table, column names stripped.
+    product : CDCProduct or DerivedCDCProduct
+        A single column, or several combined by ``product.compute``.
+
+    Returns
+    -------
+    np.ndarray or None
+        float64 values, one per row, NaN where missing or implausible;
+        ``None`` if a needed column is absent.
+    """
+    if isinstance(product, CDCProduct):
+        return _read_column(table, product)
+    inputs = [_read_column(table, column) for column in product.inputs]
+    if any(values is None for values in inputs):
+        return None
+    values = np.asarray(product.compute(*inputs), dtype=float)
+    implausible = (values < product.low) | (values > product.high)
+    return np.where(implausible, np.nan, values)
+
+
+def _read_column(table: pd.DataFrame, product: CDCProduct) -> np.ndarray | None:
+    """Return one column as float64, NaN where missing (``-999``) or implausible.
+
+    ``None`` if the table has no such column.
+    """
+    if product.column not in table.columns:
+        return None
+    raw = pd.to_numeric(table[product.column], errors="coerce").to_numpy(float)
+    invalid = (raw == _CDC_MISSING) | (raw < product.low) | (raw > product.high)
+    return np.where(invalid, np.nan, raw)  # a new array: never write into pandas
 
 
 def _current_position(geo_bytes: bytes) -> tuple[float, float, float]:

@@ -244,6 +244,13 @@ to ``get_data()``.
      - %
      - Daily mean
      - – / ``hurs``
+   * - ``vapour_pressure_deficit``
+     - ✓
+     - ✓
+     - ✓
+     - kPa
+     - Daily value (FAO-56); see below
+     - derived, stored as ``vpd``
 
 * Units are those after datavia's automatic conversion (K → °C, m → mm,
   shortwave → PAR). Override them per variable with the ``unit_conversions``
@@ -252,20 +259,38 @@ to ``get_data()``.
   the shortwave flux, multiplied by 4.57 µmol J⁻¹.
 * In ``"hourly"`` mode (ERA5_land only) each value is the one at that hour;
   precipitation is the amount that fell during the hour.
+* No source publishes the vapour pressure deficit; datavia derives it when
+  downloading, after FAO-56 (Allen et al. 1998), and stores it like any
+  other variable. The method depends on what the source measures:
+
+  - ``DWD_stations``: per station and day, saturation vapour pressure from
+    the daily maximum and minimum temperature minus the measured daily mean
+    vapour pressure (CDC ``VPM``); then kriged like the other variables.
+  - ``HYRAS``: per grid cell and day, the same saturation vapour pressure
+    times ``1 - hurs / 100`` (actual vapour pressure from the mean relative
+    humidity). Requesting it downloads the ``tasmax``, ``tasmin`` and
+    ``hurs`` files of each year.
+  - ``ERA5_land``: per hour from 2 m temperature and dewpoint (an extra
+    variable in each CDS request); the ``"daily"`` value is the mean of the
+    24 hourly values.
+
+  Negative values (measurement noise) are set to 0.
 
 The variable lists come from the source registry:
 
 .. doctest::
 
     >>> from datavia.weather.source_registry import get_valid_variables
-    >>> sorted(get_valid_variables("ERA5_land"))
-    ['2m_temperature', 'surface_solar_radiation_downwards', 'total_precipitation']
+    >>> sorted(get_valid_variables("ERA5_land"))  # doctest: +NORMALIZE_WHITESPACE
+    ['2m_temperature', 'surface_solar_radiation_downwards', 'total_precipitation',
+     'vapour_pressure_deficit']
     >>> sorted(get_valid_variables("HYRAS"))  # doctest: +NORMALIZE_WHITESPACE
     ['2m_temperature', 'relative_humidity_2m', 'surface_solar_radiation_downwards',
-     'temperature_2m_max', 'temperature_2m_min', 'total_precipitation']
+     'temperature_2m_max', 'temperature_2m_min', 'total_precipitation',
+     'vapour_pressure_deficit']
     >>> sorted(get_valid_variables("DWD_stations"))  # doctest: +NORMALIZE_WHITESPACE
     ['2m_temperature', 'relative_humidity_2m', 'temperature_2m_max',
-     'temperature_2m_min', 'total_precipitation']
+     'temperature_2m_min', 'total_precipitation', 'vapour_pressure_deficit']
 
 Soil
 ~~~~

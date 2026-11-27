@@ -1,10 +1,14 @@
 """Unit tests for :class:`~datavia.weather.saver_weather.SaverWeather`.
 
 Covers save(), check_data_exists(), list_managed_files(),
-delete_registration(), and register_only mode.
+delete_registration(), register_only mode, and the ingestion of derived
+``vpd`` files as ``vapour_pressure_deficit``.
 """
 
+from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 
 def _insert_weather_layer(
@@ -1142,3 +1146,60 @@ class TestSaverWeatherSaveRegisterOnly:
 
 # ---------------------------------------------------------------------------
 # GetterWeather — apply_conversion applied correctly in get_data()
+
+
+# ---------------------------------------------------------------------------
+# Derived vapour pressure deficit files (short name "vpd")
+# ---------------------------------------------------------------------------
+
+
+class TestSaverWeatherVapourPressureDeficit:
+    """``vpd`` files from the downloaders map to ``vapour_pressure_deficit``."""
+
+    @pytest.mark.parametrize("source_name", ["ERA5_land", "HYRAS", "DWD_stations"])
+    def test_vpd_resolves_to_the_pipeline_name(
+        self, tmp_path: Path, source_name: str
+    ) -> None:
+        from datavia.weather.saver_weather import _resolve_variables
+
+        with patch(
+            "datavia.weather.saver_weather.extract_netcdf_layer_metadata",
+            return_value={"variables": ["vpd", "crs"]},
+        ):
+            variables = _resolve_variables(
+                str(tmp_path / "x.nc"), "netcdf", None, source_name
+            )
+        assert variables == ["vapour_pressure_deficit"]
+
+    def test_hyras_vpd_file_is_ingested_into_its_own_store(
+        self, tmp_path: Path
+    ) -> None:
+        import numpy as np
+        import pandas as pd
+        import xarray as xr
+        from datavia.weather.saver_weather import SaverWeather
+        from pyproj import CRS
+
+        days = pd.date_range("2024-07-01", periods=3, freq="D")
+        x = np.arange(4000500.0, 4003500.0, 1000.0)
+        y = np.arange(3000500.0, 3002500.0, 1000.0)
+        path = tmp_path / "hyras_vpd_2024.nc"
+        xr.Dataset(
+            {
+                "vpd": (
+                    ("time", "y", "x"),
+                    np.full((3, len(y), len(x)), 0.8, dtype=np.float32),
+                    {"units": "kPa", "grid_mapping": "crs"},
+                ),
+                "crs": ((), np.int32(0), CRS("EPSG:3035").to_cf()),
+            },
+            coords={"time": days, "y": y, "x": x},
+        ).to_netcdf(path)
+
+        saver = SaverWeather("HYRAS")
+        saver.data_dir = str(tmp_path)
+        assert saver.save(str(path))
+
+        store = tmp_path / "HYRAS" / "vapour_pressure_deficit" / "2024.zarr"
+        with xr.open_zarr(store, consolidated=False) as ds:
+            np.testing.assert_allclose(ds["vapour_pressure_deficit"].values, 0.8)

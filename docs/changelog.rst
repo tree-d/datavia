@@ -32,6 +32,11 @@ Added
   drift kriging onto the HYRAS 1 km grid (``DWDKrigingDownloader``) and stored
   as Zarr like HYRAS.  Variables: daily mean, maximum and minimum
   temperature, precipitation and relative humidity.
+- Weather variable ``vapour_pressure_deficit`` (kPa, FAO-56) for
+  ``ERA5_land``, ``HYRAS`` and ``DWD_stations``, and for the DWD station
+  supplement.  It is derived at download time from the variables each source
+  measures (``datavia.weather.vapour_pressure``) and stored like any other
+  variable.
 - ``datavia-kriging`` package (``packages/kriging``, ``datavia.kriging``):
   external drift and ordinary kriging with empirical variogram and variogram
   fit, computed in Mojo; self-contained so it can move to its own repository.

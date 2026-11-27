@@ -140,6 +140,9 @@ DWD Climate Data Center, then their interpolation onto the HYRAS 1 km grid
    :members:
    :undoc-members:
 
+.. automodule:: datavia.weather.vapour_pressure
+   :members:
+
 Weather Storage and Retrieval
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

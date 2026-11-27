@@ -41,6 +41,7 @@ def fake() -> FakeCDC:
         "TXK": [15.0, 16.0, 17.0],
         "TNK": [5.0, 6.0, 7.0],
         "UPM": [70.0, 71.0, 72.0],
+        "VPM": [10.0, 12.0, 14.0],
     }
     fake.add("kl", "recent", "00044", date(2026, 6, 1), kl, [(44.0, 52.9, 8.2)])
     fake.add("kl", "recent", "00073", date(2026, 6, 1), kl, [(374.0, 48.6, 13.1)])
@@ -111,6 +112,8 @@ class TestParquet:
         [
             ("2m_temperature", "2026-06-02", 11.0),
             ("total_precipitation", "2026-06-02", 4.2),
+            # FAO-56: mean of e(16 degC) and e(6 degC) minus VPM 12 hPa.
+            ("vapour_pressure_deficit", "2026-06-02", (1.8182 + 0.9351) / 2 - 1.2),
         ],
     )
     def test_daily_selection_finds_each_day(
@@ -118,7 +121,11 @@ class TestParquet:
     ):
         """The registry's daily selection reads exactly the value of the day."""
         path = _downloader(fake, tmp_path, variables=[variable]).download()
-        station = {"2m_temperature": (52.9, 8.2), "total_precipitation": (48.8, 10.1)}
+        station = {
+            "2m_temperature": (52.9, 8.2),
+            "total_precipitation": (48.8, 10.1),
+            "vapour_pressure_deficit": (52.9, 8.2),
+        }
         lat, lon = station[variable]
         got = interpolate_station_parquet(
             path,
@@ -129,7 +136,7 @@ class TestParquet:
             radius_km=1.0,
             **get_station_aggregation(variable, "daily"),
         )
-        assert got == pytest.approx(expected)
+        assert got == pytest.approx(expected, abs=1e-3)
 
     def test_station_filter(self, fake, tmp_path):
         dl = _downloader(fake, tmp_path, variables=["2m_temperature"], stations=["73"])

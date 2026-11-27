@@ -16,15 +16,11 @@ from .dwd_downloader import DWDStationDownloader
 from .dwd_kriging_downloader import DWDKrigingDownloader
 from .era5_downloader import ERA5Downloader
 from .getter_weather import GetterWeather
+from .hyras_downloader import HYRASDownloader
 from .pipeline import WeatherPipeline
 from .saver_weather import SaverWeather
 from .variogram_cache import VariogramCache
 from .zarr_store_manager import ZarrStoreManager
-
-try:
-    from .hyras_downloader import HYRASDownloader
-except ImportError:
-    HYRASDownloader = None  # type: ignore[assignment,misc]
 
 __all__ = [
     "CDCClient",

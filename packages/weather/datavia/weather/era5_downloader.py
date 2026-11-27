@@ -53,9 +53,20 @@ import os
 import tempfile
 import time
 from datetime import date, timedelta
+from types import MappingProxyType
 from typing import Any, NamedTuple
 
+import numpy as np
+
 from datavia.core.downloader_api import APIDownloader
+from datavia.library.unit_conversions import kelvin_to_celsius
+
+from .vapour_pressure import (
+    CF_ATTRIBUTES,
+    NC_NAME,
+    vapour_pressure_deficit_from_dewpoint,
+)
+from .vapour_pressure import VARIABLE as _VAPOUR_PRESSURE_DEFICIT
 
 logger = logging.getLogger(__name__)
 
@@ -64,9 +75,9 @@ logger = logging.getLogger(__name__)
 # in tests.  The module attribute is ``None`` when cdsapi is not installed;
 # the :meth:`ERA5Downloader.download` method checks and raises ImportError.
 try:
-    import cdsapi  # type: ignore[import]
+    import cdsapi
 except ImportError:
-    cdsapi = None  # type: ignore[assignment]
+    cdsapi = None
 
 #: Default bounding box covering Germany (NWSE order as required by cdsapi).
 _GERMANY_BBOX: list[float] = [55.1, 5.9, 47.3, 15.0]
@@ -97,6 +108,19 @@ _CDS_POLL_INTERVAL_S: int = 60
 ACCUMULATED_VARIABLES: frozenset[str] = frozenset(
     {"total_precipitation", "surface_solar_radiation_downwards"}
 )
+
+#: CDS variables requested in place of each derived pipeline variable.  The
+#: vapour pressure deficit is not an ERA5-Land variable; it is computed from
+#: temperature and dewpoint after each download.
+_DERIVED_INPUTS: MappingProxyType[str, tuple[str, ...]] = MappingProxyType(
+    {_VAPOUR_PRESSURE_DEFICIT: ("2m_temperature", "2m_dewpoint_temperature")}
+)
+
+#: NetCDF name of the 2 m temperature in CDS ERA5-Land files (Kelvin).
+_TEMPERATURE_NC_NAME: str = "t2m"
+
+#: NetCDF name of the 2 m dewpoint temperature in CDS ERA5-Land files (Kelvin).
+_DEWPOINT_NC_NAME: str = "d2m"
 
 #: All hours of a day, as accepted by the CDS ``time`` field.
 _ALL_TIMES: list[str] = [f"{h:02d}:00" for h in range(24)]
@@ -150,9 +174,11 @@ class ERA5Downloader(APIDownloader):
         Parameters
         ----------
         variables : list[str], optional
-            ERA5 variable names as accepted by cdsapi, e.g.
-            ``["2m_temperature", "total_precipitation"]``.
-            Defaults to ``["2m_temperature"]``.
+            Pipeline variable names, e.g.
+            ``["2m_temperature", "total_precipitation"]``; they are the CDS
+            names too, except ``"vapour_pressure_deficit"``, which is computed
+            from ``2m_temperature`` and ``2m_dewpoint_temperature`` (see
+            :meth:`download`).  Defaults to ``["2m_temperature"]``.
         date_start : date or str, optional
             First day of the download range (inclusive). Defaults to today.
         date_end : date or str, optional
@@ -215,6 +241,24 @@ class ERA5Downloader(APIDownloader):
             int(cds_queue_timeout) if cds_queue_timeout is not None else None
         )
         self.chunk_by: str = chunk_by
+
+    def _cds_variables(self) -> list[str]:
+        """Return the CDS variable names to request.
+
+        Derived variables (:data:`_DERIVED_INPUTS`) are replaced by their
+        inputs; each name appears once, in the requested order.
+
+        Returns
+        -------
+        list[str]
+            Variable names as accepted by cdsapi.
+        """
+        names: list[str] = []
+        for variable in self.variables:
+            for name in _DERIVED_INPUTS.get(variable, (variable,)):
+                if name not in names:
+                    names.append(name)
+        return names
 
     @staticmethod
     def _snap_bbox(bbox: list[float]) -> list[float]:
@@ -638,6 +682,11 @@ class ERA5Downloader(APIDownloader):
         is installed.  The inner byte-transfer bar is provided by the
         ``cdsapi`` client itself.
 
+        A requested ``vapour_pressure_deficit`` is sent to CDS as 2 m
+        temperature and dewpoint; each downloaded file then gets the hourly
+        deficit (variable ``vpd``, kPa) and loses the inputs that were not
+        requested themselves (see :func:`_add_vapour_pressure_deficit`).
+
         Returns
         -------
         str
@@ -649,7 +698,8 @@ class ERA5Downloader(APIDownloader):
         ImportError
             If the ``cdsapi`` package is not installed.
         RuntimeError
-            If a CDS request fails or the credentials file is missing.
+            If a CDS request fails or the credentials file is missing, or a
+            downloaded file lacks the inputs of the vapour pressure deficit.
         TimeoutError
             If ``cds_queue_timeout`` is set and a single job exceeds it
             while in the queued state.
@@ -673,11 +723,11 @@ class ERA5Downloader(APIDownloader):
 
         # Optional outer tqdm progress bar.
         try:
-            from tqdm import tqdm  # type: ignore[import]
+            from tqdm import tqdm
 
             chunk_iter = tqdm(chunks, desc=f"ERA5 ({self.chunk_by})", unit="chunk")
         except ImportError:
-            chunk_iter = iter(chunks)  # type: ignore[assignment]
+            chunk_iter = iter(chunks)
 
         client = cdsapi.Client()
         output_paths: list[str] = []
@@ -706,7 +756,7 @@ class ERA5Downloader(APIDownloader):
                     "reanalysis-era5-land",
                     {
                         "product_type": "reanalysis",
-                        "variable": self.variables,
+                        "variable": self._cds_variables(),
                         "year": years,
                         "month": months,
                         "day": days,
@@ -736,6 +786,8 @@ class ERA5Downloader(APIDownloader):
                 with contextlib.suppress(OSError):
                     os.unlink(output_path)
                 raise
+            # cdsapi raises bare ``Exception`` for failed, rejected and
+            # unknown-state jobs, so no narrower class catches them all.
             except Exception as exc:
                 with contextlib.suppress(OSError):
                     os.unlink(output_path)
@@ -755,7 +807,7 @@ class ERA5Downloader(APIDownloader):
                 ):
                     raise RuntimeError(
                         f"CDS request too large for chunk {chunk_start} to {chunk_end} "
-                        f"({len(self.variables)} variable(s), "
+                        f"({len(self._cds_variables())} variable(s), "
                         f"{chunk_start} to {chunk_end}). "
                         "The Copernicus CDS enforces a per-request size limit. "
                         "Solutions: use chunk_by='monthly' (default), reduce the "
@@ -767,6 +819,11 @@ class ERA5Downloader(APIDownloader):
                     f"{chunk_start} to {chunk_end}: {exc}"
                 ) from exc
 
+            if _VAPOUR_PRESSURE_DEFICIT in self.variables:
+                _add_vapour_pressure_deficit(
+                    output_path,
+                    keep_temperature="2m_temperature" in self.variables,
+                )
             job_elapsed = time.monotonic() - job_wall_start
             logger.info(
                 "ERA5Downloader: chunk %d/%d complete in %.1f s -> %s",
@@ -778,3 +835,60 @@ class ERA5Downloader(APIDownloader):
             output_paths.append(output_path)
 
         return "\n".join(output_paths)
+
+
+def _add_vapour_pressure_deficit(path: str, keep_temperature: bool) -> None:
+    """Add the hourly vapour pressure deficit to a downloaded ERA5-Land file.
+
+    ``vpd`` (kPa) is computed from 2 m temperature and dewpoint (FAO-56, see
+    :func:`~datavia.weather.vapour_pressure.vapour_pressure_deficit_from_dewpoint`)
+    for every hour and cell.  The dewpoint is then dropped, and so is the
+    temperature unless *keep_temperature*, so only requested variables are
+    ingested.  The file is replaced atomically.
+
+    Parameters
+    ----------
+    path : str
+        A downloaded CDS NetCDF file holding ``t2m`` and ``d2m`` (Kelvin).
+    keep_temperature : bool
+        Keep ``t2m`` (``2m_temperature`` was requested too).
+
+    Raises
+    ------
+    RuntimeError
+        If the file lacks ``t2m`` or ``d2m``.
+    """
+    import xarray as xr
+
+    with xr.open_dataset(path) as opened:
+        dataset = opened.load()
+    missing = {_TEMPERATURE_NC_NAME, _DEWPOINT_NC_NAME} - set(dataset.data_vars)
+    if missing:
+        raise RuntimeError(
+            f"ERA5 file {path} lacks {sorted(missing)}, needed for the vapour "
+            "pressure deficit."
+        )
+    temperature = dataset[_TEMPERATURE_NC_NAME]
+    deficit = vapour_pressure_deficit_from_dewpoint(
+        np.asarray(kelvin_to_celsius(temperature.values)),
+        np.asarray(kelvin_to_celsius(dataset[_DEWPOINT_NC_NAME].values)),
+    )
+    # A fresh variable: copying t2m would inherit its attrs and packing.
+    dataset[NC_NAME] = xr.DataArray(
+        deficit.astype(np.float32),
+        coords=temperature.coords,
+        dims=temperature.dims,
+        attrs={**CF_ATTRIBUTES, "cell_methods": "time: point"},
+    )
+    dropped = [_DEWPOINT_NC_NAME] + ([] if keep_temperature else [_TEMPERATURE_NC_NAME])
+    dataset = dataset.drop_vars(dropped)
+    directory = os.path.dirname(path)
+    fd, tmp_path = tempfile.mkstemp(suffix=".nc", prefix="era5_vpd_", dir=directory)
+    os.close(fd)
+    try:
+        dataset.to_netcdf(tmp_path)
+        os.replace(tmp_path, path)
+    except OSError:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_path)
+        raise

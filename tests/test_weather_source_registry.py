@@ -1,6 +1,7 @@
 """Unit tests for :mod:`datavia.weather.source_registry`.
 
-Covers unit conversion functions and apply_conversion().
+Covers unit conversion functions and apply_conversion(), the DWD_stations
+entry, and the vapour pressure deficit entries of every source.
 """
 
 import numpy as np
@@ -123,6 +124,7 @@ class TestDWDStationsEntry:
             "temperature_2m_min",
             "total_precipitation",
             "relative_humidity_2m",
+            "vapour_pressure_deficit",
         }
 
     def test_same_grid_envelope_and_store_layout_as_hyras(self) -> None:
@@ -138,3 +140,42 @@ class TestDWDStationsEntry:
 
         assert station_data_supports("daily")
         assert not station_data_supports("hourly")
+
+
+class TestVapourPressureDeficitEntries:
+    """Every source offers ``vapour_pressure_deficit``, stored as ``vpd`` in kPa."""
+
+    @pytest.mark.parametrize("source_name", ["ERA5_land", "HYRAS", "DWD_stations"])
+    def test_valid_and_stored_as_vpd(self, source_name: str) -> None:
+        from datavia.weather.source_registry import (
+            get_nc_variable_name,
+            get_target_unit,
+            get_valid_variables,
+        )
+
+        valid = get_valid_variables(source_name)
+        assert valid is not None and "vapour_pressure_deficit" in valid
+        assert get_nc_variable_name(source_name, "vapour_pressure_deficit") == "vpd"
+        # Stored in kPa already: no conversion.
+        assert get_target_unit(source_name, "vapour_pressure_deficit") is None
+
+    def test_station_blend_is_a_daily_mean_in_kpa(self) -> None:
+        from datavia.weather.source_registry import (
+            SOURCE_REGISTRY,
+            get_station_aggregation,
+            is_accumulated,
+        )
+
+        entry = SOURCE_REGISTRY["DWD_stations"]
+        assert entry["native_units"]["vapour_pressure_deficit"] == "kPa"
+        aggregation = get_station_aggregation("vapour_pressure_deficit", "daily")
+        assert aggregation["daily_aggregation"] == "mean"
+        assert aggregation["day_start_hour"] == 0
+        assert not aggregation["interval_end"]
+        assert not is_accumulated("ERA5_land", "vapour_pressure_deficit")
+
+    def test_hyras_grid_downloader_is_registered(self) -> None:
+        from datavia.weather.hyras_downloader import HYRASDownloader
+        from datavia.weather.source_registry import get_grid_downloader_class
+
+        assert get_grid_downloader_class("HYRAS") is HYRASDownloader
